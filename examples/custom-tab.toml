@@ -1,0 +1,112 @@
+# Example: Custom tabs that filter Terraform resources by annotation
+#
+# Each [[custom_tabs]] entry creates a new tab in the header bar.
+# Only Terraform resources carrying the specified annotation are shown.
+#
+# Tab fields:
+#   name            - tab label in the header
+#   annotation      - annotation key to filter by (resources without it are hidden)
+#   expand_json_map - if true, parse the annotation value as a JSON object
+#                     and create one row per key-value pair
+#   sort_by         - column label to sort by (case-insensitive)
+#   columns         - list of column definitions
+#
+# Column fields:
+#   label          - column header text
+#   source         - where to get the value (see below)
+#   width          - column width as percentage (should sum to ~100)
+#   color          - optional RGB color, e.g. [200, 140, 255]
+#   bold           - optional, render bold
+#   date_highlight - optional, color dates by proximity
+#                    (red = past, yellow = within 7 days, green = future)
+#
+# Column sources:
+#   "namespace"        - resource namespace
+#   "name"             - resource name
+#   "ready"            - Ready condition status (True/False/Unknown)
+#   "age"              - time since resource creation
+#   "annotation_key"   - JSON map key (requires expand_json_map = true)
+#   "annotation_value" - annotation value (or JSON map value if expanded)
+
+# ---------------------------------------------------------------------------
+# Example 1: Track deployments scheduled via annotation
+#
+# Assumes resources are annotated like:
+#   annotations:
+#     scheduled-deployment: '{"v2.1.0": "2025-03-15", "v2.2.0": "2025-04-01"}'
+# ---------------------------------------------------------------------------
+[[custom_tabs]]
+name = "Deployments"
+annotation = "scheduled-deployment"
+expand_json_map = true
+sort_by = "DATE"
+
+[[custom_tabs.columns]]
+label = "NAMESPACE"
+source = "namespace"
+width = 15
+
+[[custom_tabs.columns]]
+label = "NAME"
+source = "name"
+width = 25
+
+[[custom_tabs.columns]]
+label = "VERSION"
+source = "annotation_key"
+color = [140, 200, 255]
+bold = true
+width = 20
+
+[[custom_tabs.columns]]
+label = "DATE"
+source = "annotation_value"
+date_highlight = true
+width = 15
+
+[[custom_tabs.columns]]
+label = "READY"
+source = "ready"
+width = 10
+
+[[custom_tabs.columns]]
+label = "AGE"
+source = "age"
+width = 10
+
+# ---------------------------------------------------------------------------
+# Example 2: Simple tag-based tab (no JSON expansion)
+#
+# Assumes resources are annotated like:
+#   annotations:
+#     team-owner: "platform-infra"
+# ---------------------------------------------------------------------------
+[[custom_tabs]]
+name = "Platform"
+annotation = "team-owner"
+
+[[custom_tabs.columns]]
+label = "NAMESPACE"
+source = "namespace"
+width = 15
+
+[[custom_tabs.columns]]
+label = "NAME"
+source = "name"
+width = 30
+
+[[custom_tabs.columns]]
+label = "OWNER"
+source = "annotation_value"
+color = [240, 200, 60]
+width = 20
+
+[[custom_tabs.columns]]
+label = "READY"
+source = "ready"
+width = 10
+
+[[custom_tabs.columns]]
+label = "AGE"
+source = "age"
+width = 10

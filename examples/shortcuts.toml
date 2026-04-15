@@ -1,0 +1,35 @@
+# Example: Custom keyboard shortcuts that open URLs in the browser
+#
+# Each [[shortcuts]] entry binds a key to a URL template.
+# Press the key while a Terraform resource is selected (list or detail view).
+#
+# Template variables:
+#   {context}      - kubeconfig context name (e.g. "prod-us-east-1")
+#   {namespace}    - resource namespace (e.g. "flux-system")
+#   {name}         - resource name (e.g. "my-database")
+#   {output.KEY}   - value from the Terraform outputs secret (detail view only)
+#
+# Notes:
+#   - Keys are single characters (case-sensitive: "b" and "B" are different)
+#   - Avoid keys already used by Terrarium (see ? help screen)
+#   - {output.KEY} requires opening the detail view first to load outputs
+#   - URLs are opened with: open (macOS), xdg-open (Linux), start (Windows)
+
+# Open Grafana dashboard filtered to the cluster and resource
+[[shortcuts]]
+key = "b"
+label = "Grafana"
+url = "https://grafana.example.com/d/terraform?var-cluster={context}&var-resource={name}&var-namespace={namespace}"
+
+# Open Vault secrets for the namespace
+[[shortcuts]]
+key = "B"
+label = "Vault"
+url = "https://vault.example.com/ui/vault/secrets/{namespace}/show/{name}"
+
+# Open cloud provider console using an output value
+# (only works from detail view where outputs are loaded)
+[[shortcuts]]
+key = "L"
+label = "Cloud Console"
+url = "https://console.cloud-provider.com/clusters/{output.cluster_id}"

@@ -1,0 +1,7 @@
+/target
+*.env
+*.pem
+*.key
+kubeconfig
+terrarium_*.txt
+.DS_Store
