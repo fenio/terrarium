@@ -6,3 +6,4 @@ kubeconfig
 terrarium_*.txt
 .DS_Store
 Dockerfile
+scripts/

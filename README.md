@@ -25,29 +25,27 @@ A terminal dashboard for managing [tofu-controller](https://github.com/flux-iac/
 
 ## Prerequisites
 
-- Rust 1.88+ (automatically managed via `rust-toolchain.toml`)
 - Access to a Kubernetes cluster with tofu-controller installed
 - A valid kubeconfig (`~/.kube/config` or `KUBECONFIG`)
 
-## Setup (macOS)
+## Installation
+
+### Homebrew (macOS & Linux)
 
 ```sh
-brew install rustup
-echo 'export PATH="/opt/homebrew/opt/rustup/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
+brew install fenio/tap/terrarium
 ```
 
-No need to manually install a toolchain — the repo includes a `rust-toolchain.toml`
-that pins Rust 1.88. Running `cargo build` for the first time will automatically
-download the correct version.
+### Download binary
 
-## Build & Run
+Pre-built binaries for Linux and macOS (amd64/arm64) are available on the
+[Releases](https://github.com/fenio/terrarium/releases) page.
+
+### Build from source
+
+Requires Rust 1.88+ (automatically managed via `rust-toolchain.toml`).
 
 ```sh
-# Run directly
-cargo run
-
-# Or build a release binary
 cargo build --release
 cp target/release/terrarium /usr/local/bin/
 ```
@@ -268,6 +266,13 @@ or point to it directly:
 ```sh
 TERRARIUM_CONFIG=examples/shortcuts.toml terrarium
 ```
+
+## Screenshots
+
+![Controller Dashboard](screenshots/controller.png)
+![Terraform List](screenshots/terraform-list.png)
+![Terraform Detail](screenshots/terraform-detail.png)
+![Runners](screenshots/runners.png)
 
 ## Troubleshooting
 
