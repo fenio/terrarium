@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "terrarium", about = "TUI for managing tofu-controller resources")]
+#[command(name = "terrarium", version, about = "TUI for managing tofu-controller resources")]
 struct Cli {
     /// Kubernetes namespace to filter (default: all namespaces)
     #[arg(short, long)]
