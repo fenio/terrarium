@@ -72,3 +72,79 @@ jobs:
         with:
           generate_release_notes: true
           files: terrarium-*.tar.gz
+
+  update-formula:
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Generate SHA256 sums
+        id: sha
+        run: |
+          echo "darwin_amd64=$(sha256sum terrarium-x86_64-apple-darwin.tar.gz | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "darwin_arm64=$(sha256sum terrarium-aarch64-apple-darwin.tar.gz | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "linux_amd64=$(sha256sum terrarium-x86_64-unknown-linux-gnu.tar.gz | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "linux_arm64=$(sha256sum terrarium-aarch64-unknown-linux-gnu.tar.gz | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: fenio/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Write formula
+        run: |
+          mkdir -p Formula
+          cat > Formula/terrarium.rb << EOF
+          class Terrarium < Formula
+            desc "Terminal dashboard for managing tofu-controller Terraform and Flux Kustomization resources in Kubernetes"
+            homepage "https://github.com/fenio/terrarium"
+            version "${{ steps.version.outputs.version }}"
+            license "GPL-3.0-or-later"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/fenio/terrarium/releases/download/${{ github.ref_name }}/terrarium-aarch64-apple-darwin.tar.gz"
+                sha256 "${{ steps.sha.outputs.darwin_arm64 }}"
+              else
+                url "https://github.com/fenio/terrarium/releases/download/${{ github.ref_name }}/terrarium-x86_64-apple-darwin.tar.gz"
+                sha256 "${{ steps.sha.outputs.darwin_amd64 }}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/fenio/terrarium/releases/download/${{ github.ref_name }}/terrarium-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "${{ steps.sha.outputs.linux_arm64 }}"
+              else
+                url "https://github.com/fenio/terrarium/releases/download/${{ github.ref_name }}/terrarium-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${{ steps.sha.outputs.linux_amd64 }}"
+              end
+            end
+
+            def install
+              bin.install "terrarium"
+            end
+
+            test do
+              assert_match "terrarium", shell_output("#{bin}/terrarium --help")
+            end
+          end
+          EOF
+
+      - name: Push formula
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/terrarium.rb
+          git commit -m "Update terrarium to ${{ steps.version.outputs.version }}"
+          git push
