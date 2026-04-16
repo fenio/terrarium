@@ -10,11 +10,12 @@ A terminal dashboard for managing [tofu-controller](https://github.com/flux-iac/
 
 - **Real-time monitoring** of Terraform and Kustomization resources across all namespaces
 - **Controller health dashboard** with replica status, runner concurrency, and reconciliation backlog
+- **On-demand controller metrics panel** — port-forwards `/metrics` to show reconcile rate, errors, p50/p95/p99 latency, queue depth, and stuck workers
 - **Resource management** — approve plans, reconcile, replan, suspend/resume, force unlock, delete
 - **Live runner log streaming** with multi-container switching
 - **Content viewers** for plans, outputs, JSON resources, and events with search and line wrap
 - **Filtering** — search, namespace picker, failures-only, waiting-only (stale resources)
-- **Sorting** by namespace, name, ready status, or age
+- **Sorting** by namespace, name, ready status, last applied, or age — with direction toggle
 - **Configurable custom tabs** — filter resources by annotation with custom columns
 - **Configurable detail fields** — show extra data from Terraform outputs in the detail view
 - **Custom keyboard shortcuts** — open URLs in the browser with template variables
@@ -80,8 +81,17 @@ Press `?` at any time to see the full help overlay. Here's a summary:
 | `f` | Toggle failures-only filter (Ready != True) |
 | `w` | Toggle waiting-only filter (Ready but past reconciliation interval) |
 | `n` | Open namespace picker |
-| `o` | Cycle sort column (namespace / name / ready / age) |
+| `o` | Cycle sort column (namespace / name / ready / applied / age) |
+| `i` | Invert sort direction (ascending ↔ descending) |
 | `!` | Jump to first failure in the list |
+
+### Controller Tab
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Filter Terraform list by the selected backlog namespace |
+| `L` | Stream logs from the controller pod |
+| `M` | Toggle the on-demand metrics panel (port-forwards to controller `/metrics`) |
 
 ### Terraform Actions
 
@@ -239,6 +249,26 @@ shortcuts can be defined with different keys.
 
 See [examples/shortcuts.toml](examples/shortcuts.toml) for examples including
 Grafana, Vault, and cloud console links.
+
+## Controller Metrics Panel
+
+Press `M` on the Controller tab to enable the metrics panel. Terrarium opens a
+native port-forward (no `kubectl` required) to a controller pod, fetches
+`/metrics` every 5 seconds, and displays:
+
+| Metric | Notes |
+|--------|-------|
+| Reconciles/min | Rate, derived from `controller_runtime_reconcile_total` |
+| Errors/min | Rate of `result="error"` reconciles |
+| p50 / p95 / p99 reconcile time | Estimated from `gotk_reconcile_duration_seconds` histogram. Shows `>30m` if the quantile lands in the `+Inf` bucket. |
+| API errors/min | Rate of non-2xx responses to the Kubernetes API |
+| Tracked resources | Unique resources tf-controller has reconciled at least once (may differ from total CR count if a resource has never been reconciled) |
+| Active workers | In-process reconcile goroutines currently running |
+| Queue depth (p0 / p-100) | Workqueue backlog by priority — p0 is event-driven, p-100 is periodic resync |
+| Longest running | Duration of the longest currently-running reconcile (a high value here points to a stuck `terraform apply`) |
+
+The panel is fully optional — when disabled (default), no port-forward is
+opened. Press `M` again to disable.
 
 ## Examples
 

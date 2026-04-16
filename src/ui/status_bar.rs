@@ -89,14 +89,19 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
 fn build_help_spans(state: &AppState) -> Vec<Span<'static>> {
     let k = theme::STATUS_BAR_KEY;
     let t = theme::STATUS_BAR_TEXT;
-    let sort_label = format!("sort:{} ", state.sort_column.label());
+    let arrow = if state.sort_descending { "▼" } else { "▲" };
+    let sort_label = format!("sort:{}{} ", state.sort_column.label(), arrow);
     let mut spans = match state.current_view() {
-        ViewState::List(TabKind::Controller) => vec![
-            Span::styled(" j/k", k), Span::styled(":nav backlog ", t),
-            Span::styled("Enter", k), Span::styled(":filter ns ", t),
-            Span::styled("L", k), Span::styled(":controller logs ", t),
-            Span::styled("Tab", k), Span::styled(":next tab ", t),
-        ],
+        ViewState::List(TabKind::Controller) => {
+            let metrics_label = if state.metrics_enabled { ":metrics off " } else { ":metrics " };
+            vec![
+                Span::styled(" j/k", k), Span::styled(":nav backlog ", t),
+                Span::styled("Enter", k), Span::styled(":filter ns ", t),
+                Span::styled("L", k), Span::styled(":controller logs ", t),
+                Span::styled("M", k), Span::styled(metrics_label, t),
+                Span::styled("Tab", k), Span::styled(":next tab ", t),
+            ]
+        }
         ViewState::List(TabKind::Terraform) => vec![
             Span::styled(" j/k", k), Span::styled(":nav ", t),
             Span::styled("Enter", k), Span::styled(":detail ", t),

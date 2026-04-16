@@ -5,6 +5,7 @@ use ratatui::widgets::TableState;
 
 use crate::action::Action;
 use crate::config::Config;
+use crate::k8s::metrics::{MetricsSnapshot, PrevCounters};
 use crate::k8s::watcher::{KsStore, TfStore};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +110,7 @@ pub enum SortColumn {
     Namespace,
     Name,
     Ready,
+    LastApplied,
     Age,
 }
 
@@ -117,7 +119,8 @@ impl SortColumn {
         match self {
             SortColumn::Namespace => SortColumn::Name,
             SortColumn::Name => SortColumn::Ready,
-            SortColumn::Ready => SortColumn::Age,
+            SortColumn::Ready => SortColumn::LastApplied,
+            SortColumn::LastApplied => SortColumn::Age,
             SortColumn::Age => SortColumn::Namespace,
         }
     }
@@ -127,6 +130,7 @@ impl SortColumn {
             SortColumn::Namespace => "namespace",
             SortColumn::Name => "name",
             SortColumn::Ready => "ready",
+            SortColumn::LastApplied => "applied",
             SortColumn::Age => "age",
         }
     }
@@ -173,6 +177,7 @@ pub struct AppState {
     pub viewer_search_index: usize,
 
     pub sort_column: SortColumn,
+    pub sort_descending: bool,
 
     /// Set of (namespace, name) for bulk-selected resources
     pub bulk_selected: std::collections::HashSet<(String, String)>,
@@ -209,6 +214,17 @@ pub struct AppState {
     pub body_height: u16,
     pub mouse_enabled: bool,
     pub tick_count: usize,
+
+    /// Whether the on-demand controller metrics panel is enabled.
+    pub metrics_enabled: bool,
+    /// Most recent metrics snapshot (None if never fetched or after disable).
+    pub metrics_snapshot: Option<MetricsSnapshot>,
+    /// Previous counter values, kept across fetches to compute per-min rates.
+    pub metrics_prev: PrevCounters,
+    /// Last error from the metrics fetcher (cleared on successful fetch).
+    pub metrics_last_error: Option<String>,
+    /// Background task that fetches metrics on a timer; aborted on disable.
+    pub metrics_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,6 +265,7 @@ impl AppState {
             viewer_search_matches: Vec::new(),
             viewer_search_index: 0,
             sort_column: SortColumn::Name,
+            sort_descending: false,
             bulk_selected: std::collections::HashSet::new(),
             tf_synced: false,
             ks_synced: false,
@@ -267,6 +284,11 @@ impl AppState {
             body_height: 20,
             mouse_enabled: false,
             tick_count: 0,
+            metrics_enabled: false,
+            metrics_snapshot: None,
+            metrics_prev: PrevCounters::default(),
+            metrics_last_error: None,
+            metrics_task: None,
         }
     }
 

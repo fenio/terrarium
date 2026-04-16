@@ -7,6 +7,8 @@ use ratatui::{
     Frame,
 };
 
+use crate::ui::resource_list::sort_cell;
+
 use crate::k8s::kustomization::Kustomization;
 use crate::k8s::watcher::KsStore;
 use crate::state::store::{AppState, SortColumn};
@@ -21,25 +23,20 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
         state.show_failures_only,
         state.show_waiting_only,
         state.sort_column,
+        state.sort_descending,
     );
 
-    let sort_indicator = |col: SortColumn, label: &str| -> String {
-        if state.sort_column == col {
-            format!("{} ▾", label)
-        } else {
-            label.to_string()
-        }
-    };
-
+    let active = state.sort_column;
+    let desc = state.sort_descending;
     let header = Row::new(vec![
-        Cell::from(sort_indicator(SortColumn::Namespace, "NAMESPACE")),
-        Cell::from(sort_indicator(SortColumn::Name, "NAME")),
-        Cell::from(sort_indicator(SortColumn::Ready, "READY")),
+        sort_cell(SortColumn::Namespace, "NAMESPACE", active, desc),
+        sort_cell(SortColumn::Name, "NAME", active, desc),
+        sort_cell(SortColumn::Ready, "READY", active, desc),
         Cell::from("S"),
         Cell::from("SOURCE"),
         Cell::from("REVISION"),
-        Cell::from("LAST APPLIED"),
-        Cell::from(sort_indicator(SortColumn::Age, "AGE")),
+        sort_cell(SortColumn::LastApplied, "LAST APPLIED", active, desc),
+        sort_cell(SortColumn::Age, "AGE", active, desc),
     ])
     .style(theme::COLUMN_HEADER)
     .bottom_margin(1);
@@ -107,6 +104,7 @@ pub fn get_filtered_kustomizations(
     failures_only: bool,
     _waiting_only: bool,
     sort_column: SortColumn,
+    descending: bool,
 ) -> Vec<Kustomization> {
     let all: Vec<Kustomization> = store.state().iter().map(|arc| (**arc).clone()).collect();
     let mut filtered: Vec<Kustomization> = all
@@ -155,6 +153,17 @@ pub fn get_filtered_kustomizations(
             let ready_b = get_ready_str(b);
             ready_a.cmp(&ready_b).then(a.metadata.name.cmp(&b.metadata.name))
         }),
+        SortColumn::LastApplied => filtered.sort_by(|a, b| {
+            // Ascending = oldest first; never-applied resources sort last.
+            let ts_a = applied_ts(a);
+            let ts_b = applied_ts(b);
+            match (ts_a, ts_b) {
+                (Some(x), Some(y)) => x.cmp(&y),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        }),
         SortColumn::Age => filtered.sort_by(|a, b| {
             let age_a = a.metadata.creation_timestamp.as_ref().map(|t| t.0);
             let age_b = b.metadata.creation_timestamp.as_ref().map(|t| t.0);
@@ -162,7 +171,18 @@ pub fn get_filtered_kustomizations(
         }),
     }
 
+    if descending {
+        filtered.reverse();
+    }
     filtered
+}
+
+fn applied_ts(ks: &Kustomization) -> Option<jiff::Timestamp> {
+    ks.status
+        .as_ref()
+        .and_then(|s| s.conditions.as_ref())
+        .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready" && c.status == "True"))
+        .map(|c| c.last_transition_time.0)
 }
 
 fn get_ready_str(ks: &Kustomization) -> String {

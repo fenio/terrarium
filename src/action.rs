@@ -40,6 +40,7 @@ pub enum Action {
     ToggleWaitingOnly,
     ToggleWrap,
     CycleSort,
+    InvertSort,
     JumpToFirstFailure,
 
     // Filtering
@@ -142,6 +143,11 @@ pub enum Action {
     // Mouse
     ToggleMouse,
     MouseSelect(usize),
+
+    // Controller metrics panel (port-forward to /metrics)
+    ToggleMetrics,
+    MetricsSnapshotReceived(crate::k8s::metrics::MetricsSnapshot),
+    MetricsFetchError(String),
 
     // UI events
     #[allow(dead_code)]

@@ -1,8 +1,8 @@
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
 use ratatui::{
     layout::{Constraint, Rect},
-    style::Style,
-    text::Span,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Cell, Row, Table},
     Frame,
 };
@@ -14,25 +14,19 @@ use crate::ui::theme;
 use crate::util;
 
 pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
-    let items = get_filtered_terraforms(&state.tf_store, &state.namespace_filter, &state.search_query, state.show_failures_only, state.show_waiting_only, state.sort_column);
+    let items = get_filtered_terraforms(&state.tf_store, &state.namespace_filter, &state.search_query, state.show_failures_only, state.show_waiting_only, state.sort_column, state.sort_descending);
 
-    let sort_indicator = |col: SortColumn, label: &str| -> String {
-        if state.sort_column == col {
-            format!("{} ▾", label)
-        } else {
-            label.to_string()
-        }
-    };
-
+    let active = state.sort_column;
+    let desc = state.sort_descending;
     let header = Row::new(vec![
-        Cell::from(sort_indicator(SortColumn::Namespace, "NAMESPACE")),
-        Cell::from(sort_indicator(SortColumn::Name, "NAME")),
-        Cell::from(sort_indicator(SortColumn::Ready, "READY")),
+        sort_cell(SortColumn::Namespace, "NAMESPACE", active, desc),
+        sort_cell(SortColumn::Name, "NAME", active, desc),
+        sort_cell(SortColumn::Ready, "READY", active, desc),
         Cell::from("S"),
         Cell::from("PLAN"),
         Cell::from("REVISION"),
-        Cell::from("LAST APPLIED"),
-        Cell::from(sort_indicator(SortColumn::Age, "AGE")),
+        sort_cell(SortColumn::LastApplied, "LAST APPLIED", active, desc),
+        sort_cell(SortColumn::Age, "AGE", active, desc),
     ])
     .style(theme::COLUMN_HEADER)
     .bottom_margin(1);
@@ -106,6 +100,7 @@ pub fn get_filtered_terraforms(
     failures_only: bool,
     waiting_only: bool,
     sort_column: SortColumn,
+    descending: bool,
 ) -> Vec<Terraform> {
     let all: Vec<Terraform> = store.state().iter().map(|arc| (**arc).clone()).collect();
     let mut filtered: Vec<Terraform> = all
@@ -157,15 +152,59 @@ pub fn get_filtered_terraforms(
             let ready_b = get_ready_str(b);
             ready_a.cmp(&ready_b).then(a.metadata.name.cmp(&b.metadata.name))
         }),
+        SortColumn::LastApplied => filtered.sort_by(|a, b| {
+            // Ascending = oldest applied first; resources that have never applied sort last.
+            let ts_a = applied_ts(a);
+            let ts_b = applied_ts(b);
+            match (ts_a, ts_b) {
+                (Some(x), Some(y)) => x.cmp(&y),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        }),
         SortColumn::Age => filtered.sort_by(|a, b| {
+            // Ascending by creation timestamp = oldest first.
             let age_a = a.metadata.creation_timestamp.as_ref().map(|t| t.0);
             let age_b = b.metadata.creation_timestamp.as_ref().map(|t| t.0);
-            // Older first (earlier timestamp = smaller)
             age_a.cmp(&age_b)
         }),
     }
 
+    if descending {
+        filtered.reverse();
+    }
     filtered
+}
+
+/// Build a column header cell that highlights when it's the active sort.
+/// Arrow indicates direction: ▲ ascending, ▼ descending.
+pub(crate) fn sort_cell(
+    col: SortColumn,
+    label: &'static str,
+    active: SortColumn,
+    descending: bool,
+) -> Cell<'static> {
+    if col == active {
+        let style = Style::default()
+            .fg(Color::Rgb(140, 200, 255))
+            .add_modifier(Modifier::BOLD);
+        let arrow = if descending { " ▼" } else { " ▲" };
+        Cell::from(Line::from(vec![
+            Span::styled(label, style),
+            Span::styled(arrow, style),
+        ]))
+    } else {
+        Cell::from(label)
+    }
+}
+
+fn applied_ts(tf: &Terraform) -> Option<jiff::Timestamp> {
+    tf.status
+        .as_ref()
+        .and_then(|s| s.conditions.as_ref())
+        .and_then(|cs| cs.iter().find(|c| c.type_ == "Apply"))
+        .map(|c| c.last_transition_time.0)
 }
 
 fn get_ready_str(tf: &Terraform) -> String {

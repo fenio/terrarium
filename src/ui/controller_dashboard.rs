@@ -8,25 +8,42 @@ use ratatui::{
     Frame,
 };
 
+use crate::k8s::metrics::MetricsSnapshot;
 use crate::state::store::AppState;
 use crate::ui::theme;
 use crate::util;
 
 pub fn render(f: &mut Frame, area: Rect, state: &mut AppState) {
+    // When the metrics panel is on, split horizontally so the existing
+    // dashboard sits on the left half and metrics fill the right half.
+    let (left_area, metrics_area) = if state.metrics_enabled {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+        (cols[0], Some(cols[1]))
+    } else {
+        (area, None)
+    };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(9),  // Controller info
             Constraint::Length(10), // Terraform stats
             Constraint::Length(6),  // Kustomization stats
-            Constraint::Min(3),    // Backlog / stale
+            Constraint::Min(3),     // Backlog / stale
         ])
-        .split(area);
+        .split(left_area);
 
     render_controller_info(f, chunks[0], state);
     render_tf_stats(f, chunks[1], state);
     render_ks_stats(f, chunks[2], state);
     render_backlog(f, chunks[3], state);
+
+    if let Some(metrics_area) = metrics_area {
+        render_metrics_panel(f, metrics_area, state);
+    }
 }
 
 fn render_controller_info(f: &mut Frame, area: Rect, state: &AppState) {
@@ -432,4 +449,265 @@ fn is_condition_true(
         .and_then(|cs| cs.iter().find(|c| c.type_ == type_name))
         .map(|c| c.status == "True")
         .unwrap_or(false)
+}
+
+// ----- Metrics panel -----
+
+fn render_metrics_panel(f: &mut Frame, area: Rect, state: &AppState) {
+    let title = Span::styled(
+        " Metrics (port-forward) ",
+        Style::default()
+            .fg(Color::Rgb(140, 200, 255))
+            .add_modifier(Modifier::BOLD),
+    );
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(50, 55, 70)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    // Reserve a final line for the status footer (last fetch / error).
+    let body_area = Rect {
+        height: inner.height.saturating_sub(1),
+        ..inner
+    };
+    let footer_area = Rect {
+        y: inner.y + inner.height.saturating_sub(1),
+        height: 1,
+        ..inner
+    };
+
+    let snap = state.metrics_snapshot.clone().unwrap_or_default();
+    let waiting = state.metrics_snapshot.is_none() && state.metrics_last_error.is_none();
+
+    if waiting {
+        let lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  fetching metrics...",
+                Style::default().fg(Color::Rgb(140, 145, 165)),
+            )),
+        ];
+        f.render_widget(Paragraph::new(lines), body_area);
+    } else {
+        render_metrics_body(f, body_area, &snap);
+    }
+
+    render_metrics_footer(f, footer_area, state);
+}
+
+fn render_metrics_body(f: &mut Frame, area: Rect, snap: &MetricsSnapshot) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+
+    let left = vec![
+        kv_metric("Reconciles/min", fmt_rate(snap.reconcile_per_min), Color::White),
+        kv_metric(
+            "Errors/min",
+            fmt_rate(snap.error_per_min),
+            color_for_error_rate(snap.error_per_min),
+        ),
+        kv_metric(
+            "p50 reconcile time",
+            fmt_p99(snap.p50_reconcile_secs, snap.p50_off_scale_above),
+            color_for_p99(snap.p50_reconcile_secs, snap.p50_off_scale_above),
+        ),
+        kv_metric(
+            "p95 reconcile time",
+            fmt_p99(snap.p95_reconcile_secs, snap.p95_off_scale_above),
+            color_for_p99(snap.p95_reconcile_secs, snap.p95_off_scale_above),
+        ),
+        kv_metric(
+            "p99 reconcile time",
+            fmt_p99(snap.p99_reconcile_secs, snap.p99_off_scale_above),
+            color_for_p99(snap.p99_reconcile_secs, snap.p99_off_scale_above),
+        ),
+        kv_metric(
+            "API errors/min",
+            fmt_rate(snap.api_error_per_min),
+            color_for_error_rate(snap.api_error_per_min),
+        ),
+        kv_metric(
+            "Tracked resources",
+            format!("{}", snap.tracked_resources),
+            Color::White,
+        ),
+    ];
+
+    let right = vec![
+        kv_metric(
+            "Active workers",
+            fmt_ratio(snap.active_workers, snap.max_workers),
+            color_for_workers(snap.active_workers, snap.max_workers),
+        ),
+        kv_metric(
+            "Queue depth (p0)",
+            fmt_int(snap.queue_depth_p0),
+            color_for_queue(snap.queue_depth_p0),
+        ),
+        kv_metric(
+            "Queue depth (p-100)",
+            fmt_int(snap.queue_depth_pneg100),
+            color_for_queue(snap.queue_depth_pneg100),
+        ),
+        kv_metric(
+            "Longest running",
+            fmt_secs(snap.longest_running_secs),
+            color_for_long_running(snap.longest_running_secs),
+        ),
+    ];
+
+    f.render_widget(Paragraph::new(left), cols[0]);
+    f.render_widget(Paragraph::new(right), cols[1]);
+}
+
+fn render_metrics_footer(f: &mut Frame, area: Rect, state: &AppState) {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    if let Some(err) = &state.metrics_last_error {
+        spans.push(Span::styled(
+            format!("  err: {}", err),
+            Style::default().fg(Color::Rgb(220, 90, 90)),
+        ));
+    } else if let Some(snap) = &state.metrics_snapshot {
+        if let Some(t) = snap.fetched_at {
+            let ago = t.elapsed().as_secs();
+            spans.push(Span::styled(
+                format!("  fetched {}s ago ({} ms)", ago, snap.fetch_ms),
+                Style::default().fg(Color::Rgb(110, 115, 135)),
+            ));
+        }
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn kv_metric(label: &str, value: String, value_color: Color) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("  {:21}", label), theme::LABEL),
+        Span::styled(
+            value,
+            Style::default()
+                .fg(value_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
+fn fmt_int(v: Option<f64>) -> String {
+    match v {
+        Some(n) => format!("{}", n as i64),
+        None => "-".into(),
+    }
+}
+
+fn fmt_ratio(a: Option<f64>, b: Option<f64>) -> String {
+    match (a, b) {
+        (Some(x), Some(y)) => format!("{} / {}", x as i64, y as i64),
+        (Some(x), None) => format!("{}", x as i64),
+        _ => "-".into(),
+    }
+}
+
+fn fmt_rate(v: Option<f64>) -> String {
+    match v {
+        None => "-".into(),
+        Some(n) if n.abs() < 0.05 => "0".into(),
+        Some(n) => format!("{:.1}", n),
+    }
+}
+
+fn fmt_secs(v: Option<f64>) -> String {
+    match v {
+        None => "-".into(),
+        Some(s) if s < 60.0 => format!("{:.2}s", s),
+        Some(s) if s < 3600.0 => {
+            let m = (s / 60.0) as i64;
+            let r = (s - (m as f64) * 60.0) as i64;
+            format!("{}m {}s", m, r)
+        }
+        Some(s) if s < 86400.0 => {
+            let h = (s / 3600.0) as i64;
+            let m = ((s - (h as f64) * 3600.0) / 60.0) as i64;
+            format!("{}h {}m", h, m)
+        }
+        Some(s) => {
+            let d = (s / 86400.0) as i64;
+            let h = ((s - (d as f64) * 86400.0) / 3600.0) as i64;
+            format!("{}d {}h", d, h)
+        }
+    }
+}
+
+fn fmt_p99(value: Option<f64>, off_scale_above: Option<f64>) -> String {
+    if let Some(le) = off_scale_above {
+        return format!(">{}", fmt_secs_short(le));
+    }
+    fmt_secs(value)
+}
+
+fn fmt_secs_short(s: f64) -> String {
+    if s < 60.0 {
+        format!("{:.0}s", s)
+    } else if s < 3600.0 {
+        format!("{:.0}m", (s / 60.0).round())
+    } else {
+        format!("{:.0}h", (s / 3600.0).round())
+    }
+}
+
+fn color_for_workers(active: Option<f64>, max: Option<f64>) -> Color {
+    match (active, max) {
+        (Some(a), Some(m)) if m > 0.0 => {
+            let ratio = a / m;
+            if ratio >= 0.9 {
+                Color::Rgb(220, 90, 90)
+            } else if ratio >= 0.6 {
+                Color::Rgb(240, 200, 60)
+            } else {
+                Color::Rgb(110, 200, 110)
+            }
+        }
+        _ => Color::White,
+    }
+}
+
+fn color_for_error_rate(v: Option<f64>) -> Color {
+    match v {
+        Some(n) if n >= 1.0 => Color::Rgb(220, 90, 90),
+        Some(n) if n >= 0.1 => Color::Rgb(240, 200, 60),
+        Some(_) => Color::Rgb(110, 200, 110),
+        None => Color::White,
+    }
+}
+
+fn color_for_queue(v: Option<f64>) -> Color {
+    match v {
+        Some(n) if n >= 50.0 => Color::Rgb(220, 90, 90),
+        Some(n) if n >= 10.0 => Color::Rgb(240, 200, 60),
+        Some(_) => Color::Rgb(110, 200, 110),
+        None => Color::White,
+    }
+}
+
+fn color_for_long_running(v: Option<f64>) -> Color {
+    match v {
+        Some(s) if s >= 600.0 => Color::Rgb(220, 90, 90),
+        Some(s) if s >= 120.0 => Color::Rgb(240, 200, 60),
+        Some(_) => Color::Rgb(110, 200, 110),
+        None => Color::White,
+    }
+}
+
+fn color_for_p99(value: Option<f64>, off_scale: Option<f64>) -> Color {
+    if off_scale.is_some() {
+        return Color::Rgb(220, 90, 90);
+    }
+    match value {
+        Some(s) if s >= 60.0 => Color::Rgb(220, 90, 90),
+        Some(s) if s >= 10.0 => Color::Rgb(240, 200, 60),
+        Some(_) => Color::Rgb(110, 200, 110),
+        None => Color::White,
+    }
 }

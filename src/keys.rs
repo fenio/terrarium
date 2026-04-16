@@ -102,12 +102,14 @@ fn handle_list_key(key: KeyEvent) -> Action {
         KeyCode::Char('f') => Action::ToggleFailuresOnly,
         KeyCode::Char('w') => Action::ToggleWaitingOnly,
         KeyCode::Char('o') => Action::CycleSort,
+        KeyCode::Char('i') => Action::InvertSort,
         KeyCode::Char('n') => Action::OpenNamespacePicker,
         KeyCode::Char('g') => Action::ScrollTop,
         KeyCode::Char('G') => Action::ScrollBottom,
         KeyCode::Char('!') => Action::JumpToFirstFailure,
         KeyCode::Char(' ') => Action::ToggleSelect,
         KeyCode::Char('m') => Action::ToggleMouse,
+        KeyCode::Char('M') => Action::ToggleMetrics,
         // Context-dependent actions resolved in app.rs
         KeyCode::Char('a') | KeyCode::Char('r') | KeyCode::Char('R') | KeyCode::Char('s')
         | KeyCode::Char('u') | KeyCode::Char('d') | KeyCode::Char('p') | KeyCode::Char('F')

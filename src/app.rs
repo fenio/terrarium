@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 
 use crate::action::{Action, ResourceKind};
 use crate::k8s::actions as k8s_actions;
+use crate::k8s::metrics;
 use crate::keys::handle_key;
 use crate::state::store::{AppState, DialogState, FlashKind, InputMode, TabKind, ViewState};
 use crate::ui::kustomization_list::get_filtered_kustomizations;
@@ -349,6 +350,7 @@ impl App {
             self.state.show_failures_only,
             self.state.show_waiting_only,
             self.state.sort_column,
+            self.state.sort_descending,
         );
         let tf = items.get(selected_idx)?;
         Some((
@@ -366,6 +368,7 @@ impl App {
             self.state.show_failures_only,
             self.state.show_waiting_only,
             self.state.sort_column,
+            self.state.sort_descending,
         );
         let ks = items.get(selected_idx)?;
         Some((
@@ -411,6 +414,7 @@ impl App {
                 self.state.show_failures_only,
                 self.state.show_waiting_only,
                 self.state.sort_column,
+                self.state.sort_descending,
             )
             .len(),
             TabKind::Kustomizations => get_filtered_kustomizations(
@@ -420,6 +424,7 @@ impl App {
                 self.state.show_failures_only,
                 self.state.show_waiting_only,
                 self.state.sort_column,
+                self.state.sort_descending,
             )
             .len(),
             TabKind::Runners => get_filtered_runners(
@@ -494,6 +499,90 @@ impl App {
         }
     }
 
+    /// Toggle the on-demand controller-metrics panel. When enabled, spawns
+    /// a background task that fetches /metrics on a fixed interval; when
+    /// disabled, aborts the task and clears the snapshot.
+    fn toggle_metrics(&mut self) {
+        // Only meaningful on the Controller tab.
+        if !matches!(self.state.active_tab, TabKind::Controller) {
+            return;
+        }
+
+        if self.state.metrics_enabled {
+            // Disable
+            if let Some(h) = self.state.metrics_task.take() {
+                h.abort();
+            }
+            self.state.metrics_enabled = false;
+            self.state.metrics_snapshot = None;
+            self.state.metrics_prev = crate::k8s::metrics::PrevCounters::default();
+            self.state.metrics_last_error = None;
+            return;
+        }
+
+        // Enable — need a client and a controller pod
+        let Some(client) = self.require_client() else {
+            self.state.flash_message = Some((
+                "K8s client not ready yet".to_string(),
+                Instant::now(),
+                FlashKind::Error,
+            ));
+            return;
+        };
+        let namespace = self.state.controller_info.deploy_namespace.clone();
+        let pod_name = self
+            .state
+            .controller_info
+            .pods
+            .iter()
+            .find(|p| p.ready)
+            .or_else(|| self.state.controller_info.pods.first())
+            .map(|p| p.name.clone());
+        if namespace.is_empty() {
+            self.state.flash_message = Some((
+                "Controller info not loaded yet — try again in a moment".to_string(),
+                Instant::now(),
+                FlashKind::Error,
+            ));
+            return;
+        }
+
+        self.state.metrics_enabled = true;
+        let tx = self.action_tx.clone();
+        let handle = tokio::spawn(async move {
+            // Fetch immediately, then every 5s.
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(5));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                match metrics::fetch(
+                    &client,
+                    &namespace,
+                    pod_name.as_deref(),
+                    metrics::DEFAULT_METRICS_PORT,
+                )
+                .await
+                {
+                    Ok(snap) => {
+                        if tx.send(Action::MetricsSnapshotReceived(snap)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        if tx
+                            .send(Action::MetricsFetchError(format!("{:#}", e)))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        self.state.metrics_task = Some(handle);
+    }
+
     async fn dispatch(&mut self, action: Action) {
         match action {
             Action::Quit => self.should_quit = true,
@@ -532,8 +621,25 @@ impl App {
                 let label = if self.state.mouse_enabled { "Mouse enabled" } else { "Mouse disabled" };
                 self.state.flash_message = Some((label.to_string(), std::time::Instant::now(), crate::state::store::FlashKind::Success));
             }
+            Action::ToggleMetrics => {
+                self.toggle_metrics();
+            }
+            Action::MetricsSnapshotReceived(mut snap) => {
+                let now = Instant::now();
+                metrics::fill_rates(&mut snap, &self.state.metrics_prev, now);
+                metrics::update_prev(&mut self.state.metrics_prev, &snap, now);
+                self.state.metrics_snapshot = Some(snap);
+                self.state.metrics_last_error = None;
+            }
+            Action::MetricsFetchError(msg) => {
+                self.state.metrics_last_error = Some(msg);
+            }
             Action::CycleSort => {
                 self.state.sort_column = self.state.sort_column.next();
+                self.state.current_table_state().select(Some(0));
+            }
+            Action::InvertSort => {
+                self.state.sort_descending = !self.state.sort_descending;
                 self.state.current_table_state().select(Some(0));
             }
             Action::ScrollTop => {
@@ -1207,6 +1313,7 @@ impl App {
                     self.state.show_failures_only,
                     self.state.show_waiting_only,
                     self.state.sort_column,
+                    self.state.sort_descending,
                 );
                 for (i, tf) in items.iter().enumerate() {
                     let is_ready = tf
@@ -1230,6 +1337,7 @@ impl App {
                     self.state.show_failures_only,
                     self.state.show_waiting_only,
                     self.state.sort_column,
+                    self.state.sort_descending,
                 );
                 for (i, ks) in items.iter().enumerate() {
                     let is_ready = ks
