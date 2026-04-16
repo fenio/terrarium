@@ -1,12 +1,10 @@
-# Terrarium
-
-A terminal dashboard for managing [tofu-controller](https://github.com/flux-iac/tofu-controller) Terraform and [Flux](https://fluxcd.io/) Kustomization resources in Kubernetes.
-
 ```
  ▄▖          ▘
  ▐ █▌▛▘▛▘▀▌▛▘▌▌▌▛▛▌
  ▐ ▙▖▌ ▌ █▌▌ ▌▙▌▌▌▌
 ```
+
+A terminal dashboard for managing [tofu-controller](https://github.com/flux-iac/tofu-controller) Terraform and [Flux](https://fluxcd.io/) Kustomization resources in Kubernetes.
 
 ## Features
 
@@ -40,15 +38,6 @@ brew install fenio/tap/terrarium
 
 Pre-built binaries for Linux and macOS (amd64/arm64) are available on the
 [Releases](https://github.com/fenio/terrarium/releases) page.
-
-### Build from source
-
-Requires Rust 1.88+ (automatically managed via `rust-toolchain.toml`).
-
-```sh
-cargo build --release
-cp target/release/terrarium /usr/local/bin/
-```
 
 ### CLI Options
 
@@ -273,6 +262,15 @@ TERRARIUM_CONFIG=examples/shortcuts.toml terrarium
 ![Terraform List](screenshots/terraform-list.png)
 ![Terraform Detail](screenshots/terraform-detail.png)
 ![Runners](screenshots/runners.png)
+
+## Build from source
+
+Requires Rust 1.88+ (automatically managed via `rust-toolchain.toml`).
+
+```sh
+cargo build --release
+cp target/release/terrarium /usr/local/bin/
+```
 
 ## Troubleshooting
 
