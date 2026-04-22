@@ -74,7 +74,7 @@ pub async fn resume(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
 
 pub async fn force_unlock(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
     let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
-    let patch = json!({ "spec": { "tfstate": { "forceUnlock": "yes" } } });
+    let patch = json!({ "spec": { "tfstate": { "forceUnlock": "auto" } } });
     api.patch(name, &PatchParams::apply("terrarium"), &Patch::Merge(&patch))
         .await?;
     Ok(())
@@ -247,7 +247,17 @@ pub async fn resume_kustomization(
     Ok(())
 }
 
-// -- YAML view --
+// -- JSON / YAML view --
+
+pub async fn fetch_resource_json(
+    client: &kube::Client,
+    kind: &ResourceKind,
+    ns: &str,
+    name: &str,
+) -> Result<String> {
+    let value = fetch_resource_value(client, kind, ns, name).await?;
+    Ok(serde_json::to_string_pretty(&value)?)
+}
 
 pub async fn fetch_resource_yaml(
     client: &kube::Client,
@@ -255,16 +265,31 @@ pub async fn fetch_resource_yaml(
     ns: &str,
     name: &str,
 ) -> Result<String> {
+    let value = fetch_resource_value(client, kind, ns, name).await?;
+    Ok(serde_yaml::to_string(&value)?)
+}
+
+async fn fetch_resource_value(
+    client: &kube::Client,
+    kind: &ResourceKind,
+    ns: &str,
+    name: &str,
+) -> Result<serde_json::Value> {
     match kind {
         ResourceKind::Terraform => {
             let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
             let tf = api.get(name).await?;
-            Ok(serde_json::to_string_pretty(&tf)?)
+            Ok(serde_json::to_value(&tf)?)
         }
         ResourceKind::Kustomization => {
             let api: Api<Kustomization> = Api::namespaced(client.clone(), ns);
             let ks = api.get(name).await?;
-            Ok(serde_json::to_string_pretty(&ks)?)
+            Ok(serde_json::to_value(&ks)?)
+        }
+        ResourceKind::Pod => {
+            let api: Api<k8s_openapi::api::core::v1::Pod> = Api::namespaced(client.clone(), ns);
+            let pod = api.get(name).await?;
+            Ok(serde_json::to_value(&pod)?)
         }
     }
 }
@@ -360,6 +385,7 @@ pub async fn fetch_events(
     let api_kind = match kind {
         ResourceKind::Terraform => "Terraform",
         ResourceKind::Kustomization => "Kustomization",
+        ResourceKind::Pod => "Pod",
     };
 
     let api: Api<Event> = Api::namespaced(client.clone(), ns);

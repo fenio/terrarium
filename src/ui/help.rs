@@ -86,10 +86,11 @@ fn build_right_column() -> Vec<Line<'static>> {
     lines.push(help_line("R", "Replan"));
     lines.push(help_line("p", "View plan"));
     lines.push(help_line("O", "View outputs"));
-    lines.push(help_line("y", "View JSON"));
+    lines.push(help_line("y / Y", "View JSON / YAML"));
     lines.push(help_line("e", "View events"));
     lines.push(help_line("s / u", "Suspend / Resume"));
     lines.push(help_line("F", "Force unlock state"));
+    lines.push(help_line("L", "Stream runner logs"));
     lines.push(help_line("x", "Break the glass (tfctl)"));
     lines.push(help_line("d", "Delete resource"));
     lines.push(Line::from(""));
@@ -97,9 +98,16 @@ fn build_right_column() -> Vec<Line<'static>> {
     // Kustomization Actions
     lines.push(section_header("Kustomization Actions"));
     lines.push(help_line("r", "Reconcile"));
-    lines.push(help_line("y", "View JSON"));
+    lines.push(help_line("y / Y", "View JSON / YAML"));
     lines.push(help_line("e", "View events"));
     lines.push(help_line("s / u", "Suspend / Resume"));
+    lines.push(Line::from(""));
+
+    // Runner Actions
+    lines.push(section_header("Runner Actions"));
+    lines.push(help_line("e", "View events"));
+    lines.push(help_line("T", "Jump to Terraform detail"));
+    lines.push(help_line("d", "Kill runner pod"));
     lines.push(Line::from(""));
 
     // Viewer

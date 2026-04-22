@@ -244,6 +244,11 @@ impl App {
                 namespace: ns.clone(),
                 name: name.clone(),
             }),
+            KeyCode::Char('Y') => Some(Action::FetchYaml {
+                kind: ResourceKind::Terraform,
+                namespace: ns.clone(),
+                name: name.clone(),
+            }),
             KeyCode::Char('e') => Some(Action::FetchEvents {
                 kind: ResourceKind::Terraform,
                 namespace: ns,
@@ -254,6 +259,10 @@ impl App {
                 name,
             }),
             KeyCode::Char('x') => Some(Action::ExecBreakTheGlass {
+                namespace: ns,
+                name,
+            }),
+            KeyCode::Char('L') => Some(Action::StreamRunnerLogs {
                 namespace: ns,
                 name,
             }),
@@ -306,6 +315,11 @@ impl App {
                 namespace: ns.clone(),
                 name: name.clone(),
             }),
+            KeyCode::Char('Y') => Some(Action::FetchYaml {
+                kind: ResourceKind::Kustomization,
+                namespace: ns.clone(),
+                name: name.clone(),
+            }),
             KeyCode::Char('e') => Some(Action::FetchEvents {
                 kind: ResourceKind::Kustomization,
                 namespace: ns,
@@ -337,6 +351,18 @@ impl App {
                 }),
                 format!("Kill runner pod {}/{}?", ns, name),
             )),
+            KeyCode::Char('e') => Some(Action::FetchEvents {
+                kind: ResourceKind::Pod,
+                namespace: ns,
+                name,
+            }),
+            KeyCode::Char('T') => {
+                let tf_name = name.strip_suffix("-tf-runner").unwrap_or(&name).to_string();
+                Some(Action::JumpToTerraformDetail {
+                    namespace: ns,
+                    name: tf_name,
+                })
+            }
             _ => None,
         }
     }
@@ -1001,6 +1027,44 @@ impl App {
             // ExecBreakTheGlass is handled directly in the run loop (needs terminal access)
             Action::ExecBreakTheGlass { .. } => {}
 
+            Action::StreamRunnerLogs { namespace, name } => {
+                let runner_pod = format!("{}-tf-runner", name);
+                // Check if the runner pod exists
+                if self.state.runner_pods.iter().any(|p| {
+                    p.metadata.namespace.as_deref() == Some(&namespace)
+                        && p.metadata.name.as_deref() == Some(runner_pod.as_str())
+                }) {
+                    self.start_log_stream(&namespace, &runner_pod).await;
+                } else {
+                    self.state.flash_message = Some((
+                        format!("Runner pod {} not found", runner_pod),
+                        Instant::now(),
+                        FlashKind::Error,
+                    ));
+                }
+            }
+
+            Action::JumpToTerraformDetail { namespace, name } => {
+                // Verify the Terraform resource exists in the store
+                let exists = self.state.tf_store.state().iter().any(|tf| {
+                    tf.metadata.namespace.as_deref() == Some(&namespace)
+                        && tf.metadata.name.as_deref() == Some(&name)
+                });
+                if exists {
+                    self.spawn_detail_outputs_fetch(&namespace, &name);
+                    self.state.view_stack.push(ViewState::TerraformDetail {
+                        namespace,
+                        name,
+                    });
+                } else {
+                    self.state.flash_message = Some((
+                        format!("Terraform resource {}/{} not found", namespace, name),
+                        Instant::now(),
+                        FlashKind::Error,
+                    ));
+                }
+            }
+
             Action::StreamControllerLogs { namespace, pod_name } => {
                 self.start_log_stream(&namespace, &pod_name).await;
             }
@@ -1056,7 +1120,7 @@ impl App {
                     Some((format!("Error: {}", e), Instant::now(), FlashKind::Error));
             }
 
-            // YAML view (async)
+            // JSON view (async)
             Action::FetchJson {
                 kind,
                 namespace,
@@ -1064,6 +1128,35 @@ impl App {
             } => {
                 self.state.flash_message = Some((
                     format!("Fetching JSON for {}/{}...", namespace, name),
+                    Instant::now(),
+                    FlashKind::Success,
+                ));
+                let Some(client) = self.require_client() else {
+                    self.state.flash_message = Some(("K8s client not ready yet".to_string(), Instant::now(), FlashKind::Error));
+                    return;
+                };
+                let tx = self.action_tx.clone();
+                tokio::spawn(async move {
+                    match k8s_actions::fetch_resource_json(&client, &kind, &namespace, &name).await
+                    {
+                        Ok(json) => {
+                            let _ = tx.send(Action::JsonFetched(json));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::JsonFetchError(format!("{}", e)));
+                        }
+                    }
+                });
+            }
+
+            // YAML view (async)
+            Action::FetchYaml {
+                kind,
+                namespace,
+                name,
+            } => {
+                self.state.flash_message = Some((
+                    format!("Fetching YAML for {}/{}...", namespace, name),
                     Instant::now(),
                     FlashKind::Success,
                 ));
@@ -1692,6 +1785,7 @@ async fn execute_k8s_action(client: &kube::Client, action: &Action) -> anyhow::R
             ResourceKind::Kustomization => {
                 k8s_actions::reconcile_kustomization(client, namespace, name).await
             }
+            ResourceKind::Pod => Ok(()),
         },
         Action::Replan { namespace, name } => {
             k8s_actions::replan(client, namespace, name).await
@@ -1707,6 +1801,7 @@ async fn execute_k8s_action(client: &kube::Client, action: &Action) -> anyhow::R
             ResourceKind::Kustomization => {
                 k8s_actions::suspend_kustomization(client, namespace, name).await
             }
+            ResourceKind::Pod => Ok(()),
         },
         Action::Resume {
             kind,
@@ -1719,6 +1814,7 @@ async fn execute_k8s_action(client: &kube::Client, action: &Action) -> anyhow::R
             ResourceKind::Kustomization => {
                 k8s_actions::resume_kustomization(client, namespace, name).await
             }
+            ResourceKind::Pod => Ok(()),
         },
         Action::ForceUnlock { namespace, name } => {
             k8s_actions::force_unlock(client, namespace, name).await

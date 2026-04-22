@@ -70,8 +70,21 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
 fn render_error_overlay(f: &mut Frame, message: &str) {
     let area = f.area();
     let width = 65u16.min(area.width.saturating_sub(4));
-    let msg_lines = message.lines().count() as u16;
-    let height = (msg_lines + 6).min(area.height.saturating_sub(4));
+    // Border eats 2 columns on each side
+    let inner_width = width.saturating_sub(2) as usize;
+
+    // Count wrapped lines so the popup is tall enough
+    let wrapped_lines: u16 = message
+        .lines()
+        .map(|l| {
+            if l.is_empty() || inner_width == 0 {
+                1
+            } else {
+                ((l.len() as u16).div_ceil(inner_width as u16)).max(1)
+            }
+        })
+        .sum();
+    let height = (wrapped_lines + 2).min(area.height.saturating_sub(4));
 
     let popup = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
@@ -101,7 +114,10 @@ fn render_error_overlay(f: &mut Frame, message: &str) {
         .map(|l| Line::from(Span::styled(l, Style::default().fg(Color::Rgb(200, 200, 220)))))
         .collect();
 
-    f.render_widget(Paragraph::new(lines), inner);
+    f.render_widget(
+        Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }),
+        inner,
+    );
 }
 
 fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {

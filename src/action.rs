@@ -14,6 +14,7 @@ impl std::fmt::Debug for K8sClient {
 pub enum ResourceKind {
     Terraform,
     Kustomization,
+    Pod,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +83,8 @@ pub enum Action {
     ExecBreakTheGlass { namespace: String, name: String },
     DeleteResource { namespace: String, name: String },
     KillRunner { namespace: String, name: String },
+    StreamRunnerLogs { namespace: String, name: String },
+    JumpToTerraformDetail { namespace: String, name: String },
     StreamControllerLogs { namespace: String, pod_name: String },
     OpenShortcut { namespace: String, name: String, shortcut_idx: usize },
     FetchPlan { namespace: String, name: String, workspace: Option<String> },
@@ -91,8 +94,9 @@ pub enum Action {
     Suspend { kind: ResourceKind, namespace: String, name: String },
     Resume { kind: ResourceKind, namespace: String, name: String },
 
-    // JSON resource view
+    // JSON / YAML resource view
     FetchJson { kind: ResourceKind, namespace: String, name: String },
+    FetchYaml { kind: ResourceKind, namespace: String, name: String },
 
     // Outputs view (Terraform only)
     FetchOutputs { namespace: String, name: String },
