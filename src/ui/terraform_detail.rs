@@ -358,7 +358,11 @@ fn render_conditions_compact(f: &mut Frame, area: Rect, tf: &Terraform) {
                 let mut pos = 0;
                 let mut first = true;
                 while pos < msg.len() {
-                    let end = (pos + msg_width).min(msg.len());
+                    let mut end = (pos + msg_width).min(msg.len());
+                    // Ensure we don't split in the middle of a multi-byte UTF-8 character
+                    while end < msg.len() && !msg.is_char_boundary(end) {
+                        end -= 1;
+                    }
                     let chunk = &msg[pos..end];
                     if first {
                         lines.push(Line::from(vec![
