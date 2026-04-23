@@ -29,7 +29,7 @@ pub fn render_custom_tab(f: &mut Frame, area: Rect, state: &mut AppState, tab_id
     let items = get_filtered_entries(
         &state.tf_store,
         &state.namespace_filter,
-        &state.search_query,
+        state.effective_search_query(),
         tab_config,
     );
 

@@ -99,6 +99,7 @@ fn handle_list_key(key: KeyEvent) -> Action {
         KeyCode::Char('4') => Action::GoToTab(3),
         KeyCode::Char('5') => Action::GoToTab(4),
         KeyCode::Char('/') => Action::SearchStart,
+        KeyCode::Char('\\') => Action::ToggleSearchSuspend,
         KeyCode::Char('f') => Action::ToggleFailuresOnly,
         KeyCode::Char('w') => Action::ToggleWaitingOnly,
         KeyCode::Char('o') => Action::CycleSort,

@@ -78,6 +78,7 @@ Press `?` at any time to see the full help overlay. Here's a summary:
 | Key | Action |
 |-----|--------|
 | `/` | Search / filter by name or namespace |
+| `\` | Pause / resume active filter (keeps the query) |
 | `f` | Toggle failures-only filter (Ready != True) |
 | `w` | Toggle waiting-only filter (Ready but past reconciliation interval) |
 | `n` | Open namespace picker |
@@ -104,11 +105,12 @@ These work in both the Terraform list and detail views:
 | `R` | Force a replan |
 | `p` | View the Terraform plan |
 | `O` | View outputs from the outputs secret |
-| `y` | View the full resource as JSON |
+| `y` / `Y` | View the full resource as JSON / YAML |
 | `e` | View Kubernetes events |
 | `s` / `u` | Suspend / Resume |
 | `F` | Force unlock state (with confirmation) |
 | `x` | Break the glass — drop into `tfctl` shell |
+| `L` | Stream runner logs |
 | `d` | Delete the resource (with confirmation) |
 
 ### Kustomization Actions
@@ -116,7 +118,7 @@ These work in both the Terraform list and detail views:
 | Key | Action |
 |-----|--------|
 | `r` | Trigger reconciliation |
-| `y` | View the full resource as JSON |
+| `y` / `Y` | View the full resource as JSON / YAML |
 | `e` | View Kubernetes events |
 | `s` / `u` | Suspend / Resume |
 
@@ -125,6 +127,8 @@ These work in both the Terraform list and detail views:
 | Key | Action |
 |-----|--------|
 | `Enter` | Stream live logs from the runner pod |
+| `e` | View Kubernetes events |
+| `T` | Jump to the associated Terraform detail |
 | `d` | Kill the runner pod (with confirmation) |
 
 ### Viewer (Plan / Logs / JSON / Events / Outputs)

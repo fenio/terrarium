@@ -19,7 +19,7 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
     let items = get_filtered_kustomizations(
         &state.ks_store,
         &state.namespace_filter,
-        &state.search_query,
+        state.effective_search_query(),
         state.show_failures_only,
         state.show_waiting_only,
         state.sort_column,

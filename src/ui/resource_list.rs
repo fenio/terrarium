@@ -14,7 +14,7 @@ use crate::ui::theme;
 use crate::util;
 
 pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
-    let items = get_filtered_terraforms(&state.tf_store, &state.namespace_filter, &state.search_query, state.show_failures_only, state.show_waiting_only, state.sort_column, state.sort_descending);
+    let items = get_filtered_terraforms(&state.tf_store, &state.namespace_filter, state.effective_search_query(), state.show_failures_only, state.show_waiting_only, state.sort_column, state.sort_descending);
 
     let active = state.sort_column;
     let desc = state.sort_descending;

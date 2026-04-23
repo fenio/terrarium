@@ -12,9 +12,10 @@ pub fn render_help(f: &mut Frame) {
     let area = centered_rect(80, 85, f.area());
     f.render_widget(Clear, area);
 
+    let title = format!(" Terrarium v{} — press ? or Esc to close ", env!("CARGO_PKG_VERSION"));
     let block = Block::default()
         .title(Span::styled(
-            " Help — press ? or Esc to close ",
+            title,
             Style::default().fg(Color::Rgb(140, 200, 255)).add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
@@ -60,10 +61,12 @@ fn build_left_column() -> Vec<Line<'static>> {
     // Filtering & Search
     lines.push(section_header("Filtering"));
     lines.push(help_line("/", "Search / filter list"));
+    lines.push(help_line("\\", "Pause / resume filter"));
     lines.push(help_line("f", "Toggle failures only"));
     lines.push(help_line("w", "Toggle waiting only"));
     lines.push(help_line("n", "Namespace picker"));
     lines.push(help_line("o", "Cycle sort column"));
+    lines.push(help_line("i", "Invert sort direction"));
     lines.push(help_line("!", "Jump to first failure"));
     lines.push(Line::from(""));
 

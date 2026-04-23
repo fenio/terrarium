@@ -147,7 +147,9 @@ fn build_help_spans(state: &AppState) -> Vec<Span<'static>> {
             Span::styled("e", k), Span::styled(":events ", t),
             Span::styled("L", k), Span::styled(":runner logs ", t),
             Span::styled("x", k), Span::styled(":btg ", t),
-            Span::styled("s", k), Span::styled(":suspend", t),
+            Span::styled("s/u", k), Span::styled(":sus/res ", t),
+            Span::styled("R", k), Span::styled(":replan ", t),
+            Span::styled("d", k), Span::styled(":delete", t),
         ],
         ViewState::KustomizationDetail { .. } => vec![
             Span::styled(" Esc", k), Span::styled(":back ", t),
@@ -207,6 +209,11 @@ fn build_help_spans(state: &AppState) -> Vec<Span<'static>> {
             spans.push(Span::styled(format!(" {}", shortcut.key), k));
             spans.push(Span::styled(format!(":{}", shortcut.label), t));
         }
+    }
+    if !state.search_query.is_empty() && !is_viewer(state.current_view()) {
+        let label = if state.search_suspended { ":resume filter" } else { ":pause filter" };
+        spans.push(Span::styled(" \\", k));
+        spans.push(Span::styled(label, t));
     }
     if state.mouse_enabled {
         spans.push(Span::styled(

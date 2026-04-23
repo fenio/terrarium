@@ -155,6 +155,7 @@ pub struct AppState {
     pub view_stack: Vec<ViewState>,
     pub namespace_filter: Option<String>,
     pub search_query: String,
+    pub search_suspended: bool,
     pub show_failures_only: bool,
     pub show_waiting_only: bool,
     pub input_mode: InputMode,
@@ -249,6 +250,7 @@ impl AppState {
             view_stack: vec![ViewState::List(TabKind::Controller)],
             namespace_filter: None,
             search_query: String::new(),
+            search_suspended: false,
             show_failures_only: false,
             show_waiting_only: false,
             input_mode: InputMode::Normal,
@@ -289,6 +291,15 @@ impl AppState {
             metrics_prev: PrevCounters::default(),
             metrics_last_error: None,
             metrics_task: None,
+        }
+    }
+
+    /// Returns the search query used for filtering. Empty when search is suspended.
+    pub fn effective_search_query(&self) -> &str {
+        if self.search_suspended {
+            ""
+        } else {
+            &self.search_query
         }
     }
 

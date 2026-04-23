@@ -165,6 +165,23 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
             Paragraph::new(Span::styled(format!(" {}", logo_line), logo_style)),
             logo_area,
         );
+
+        // Show version next to the last logo line
+        if i == logo_lines.len() - 1 {
+            let version = env!("CARGO_PKG_VERSION");
+            let ver_x = area.x + logo_width;
+            let ver_width = area.width.saturating_sub(logo_width);
+            if ver_width > 6 {
+                let ver_area = Rect { x: ver_x, width: ver_width, ..row_area };
+                f.render_widget(
+                    Paragraph::new(Span::styled(
+                        format!(" v{}", version),
+                        Style::default().fg(Color::Rgb(80, 90, 120)).bg(theme::HEADER_BAR_BG),
+                    )),
+                    ver_area,
+                );
+            }
+        }
     }
 
     // Info to the right of the logo
@@ -356,12 +373,21 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
                 info_spans.push(Span::styled(" ", hdr_bg));
             }
             if !state.search_query.is_empty() {
-                info_spans.push(Span::styled(
-                    format!(" filter: {} ", state.search_query),
-                    Style::default()
-                        .fg(Color::Rgb(140, 200, 255))
-                        .bg(Color::Rgb(30, 40, 60)),
-                ));
+                if state.search_suspended {
+                    info_spans.push(Span::styled(
+                        format!(" filter: {} [paused] ", state.search_query),
+                        Style::default()
+                            .fg(Color::Rgb(120, 120, 140))
+                            .bg(Color::Rgb(30, 40, 60)),
+                    ));
+                } else {
+                    info_spans.push(Span::styled(
+                        format!(" filter: {} ", state.search_query),
+                        Style::default()
+                            .fg(Color::Rgb(140, 200, 255))
+                            .bg(Color::Rgb(30, 40, 60)),
+                    ));
+                }
                 info_spans.push(Span::styled(" ", hdr_bg));
             }
             let sort_label = state.sort_column.label();

@@ -50,6 +50,7 @@ pub enum Action {
     SearchPop,
     SearchConfirm,
     SearchCancel,
+    ToggleSearchSuspend,
 
     // Viewer search
     ViewerSearchStart,
@@ -137,6 +138,7 @@ pub enum Action {
     // K8s client initialization
     K8sClientReady { client: K8sClient, context_name: String },
     ConnectionError(String),
+    DismissError,
 
     // Async K8s action results
     K8sActionSuccess(String),

@@ -15,7 +15,7 @@ pub fn render_runner_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     let items = get_filtered_runners(
         &state.runner_pods,
         &state.namespace_filter,
-        &state.search_query,
+        state.effective_search_query(),
     );
 
     let header = Row::new(vec![

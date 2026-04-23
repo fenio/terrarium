@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::time::Instant;
 
-use crossterm::event::{self, Event, EventStream, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
+use crossterm::event::{self, Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use futures::StreamExt;
 use tokio::sync::mpsc;
 
@@ -110,6 +110,16 @@ impl App {
     fn handle_crossterm_event(&self, event: Event) -> Option<Action> {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
+                // Dismiss connection error overlay on any key (except Ctrl-C which quits)
+                if self.state.connection_error.is_some() {
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && key.code == KeyCode::Char('c')
+                    {
+                        return Some(Action::Quit);
+                    }
+                    return Some(Action::DismissError);
+                }
+
                 let action = handle_key(key, self.state.current_view(), &self.state.input_mode);
 
                 // Resolve context-dependent actions
@@ -372,7 +382,7 @@ impl App {
         let items = get_filtered_terraforms(
             &self.state.tf_store,
             &self.state.namespace_filter,
-            &self.state.search_query,
+            self.state.effective_search_query(),
             self.state.show_failures_only,
             self.state.show_waiting_only,
             self.state.sort_column,
@@ -390,7 +400,7 @@ impl App {
         let items = get_filtered_kustomizations(
             &self.state.ks_store,
             &self.state.namespace_filter,
-            &self.state.search_query,
+            self.state.effective_search_query(),
             self.state.show_failures_only,
             self.state.show_waiting_only,
             self.state.sort_column,
@@ -409,7 +419,7 @@ impl App {
         let items = get_filtered_entries(
             &self.state.tf_store,
             &self.state.namespace_filter,
-            &self.state.search_query,
+            self.state.effective_search_query(),
             tab_config,
         );
         let entry = items.get(selected_idx)?;
@@ -421,7 +431,7 @@ impl App {
         let items = get_filtered_runners(
             &self.state.runner_pods,
             &self.state.namespace_filter,
-            &self.state.search_query,
+            self.state.effective_search_query(),
         );
         let pod = items.get(selected_idx)?;
         Some((
@@ -436,7 +446,7 @@ impl App {
             TabKind::Terraform => get_filtered_terraforms(
                 &self.state.tf_store,
                 &self.state.namespace_filter,
-                &self.state.search_query,
+                self.state.effective_search_query(),
                 self.state.show_failures_only,
                 self.state.show_waiting_only,
                 self.state.sort_column,
@@ -446,7 +456,7 @@ impl App {
             TabKind::Kustomizations => get_filtered_kustomizations(
                 &self.state.ks_store,
                 &self.state.namespace_filter,
-                &self.state.search_query,
+                self.state.effective_search_query(),
                 self.state.show_failures_only,
                 self.state.show_waiting_only,
                 self.state.sort_column,
@@ -456,7 +466,7 @@ impl App {
             TabKind::Runners => get_filtered_runners(
                 &self.state.runner_pods,
                 &self.state.namespace_filter,
-                &self.state.search_query,
+                self.state.effective_search_query(),
             )
             .len(),
             TabKind::CustomTab(i) => {
@@ -464,7 +474,7 @@ impl App {
                     get_filtered_entries(
                         &self.state.tf_store,
                         &self.state.namespace_filter,
-                        &self.state.search_query,
+                        self.state.effective_search_query(),
                         tab_config,
                     )
                     .len()
@@ -831,6 +841,7 @@ impl App {
                     // Peel off filters one at a time: search → failures/waiting → namespace
                     if !self.state.search_query.is_empty() {
                         self.state.search_query.clear();
+                        self.state.search_suspended = false;
                     } else if self.state.show_failures_only {
                         self.state.show_failures_only = false;
                     } else if self.state.show_waiting_only {
@@ -857,6 +868,7 @@ impl App {
             Action::SearchStart => {
                 self.state.input_mode = InputMode::Search;
                 self.state.search_query.clear();
+                self.state.search_suspended = false;
             }
             Action::SearchPush(c) => {
                 self.state.search_query.push(c);
@@ -875,6 +887,13 @@ impl App {
             Action::SearchCancel => {
                 self.state.input_mode = InputMode::Normal;
                 self.state.search_query.clear();
+                self.state.search_suspended = false;
+            }
+            Action::ToggleSearchSuspend => {
+                if !self.state.search_query.is_empty() {
+                    self.state.search_suspended = !self.state.search_suspended;
+                    self.state.current_table_state().select(None);
+                }
             }
 
             // Namespace picker
@@ -1319,6 +1338,9 @@ impl App {
             Action::ConnectionError(msg) => {
                 self.state.connection_error = Some(msg);
             }
+            Action::DismissError => {
+                self.state.connection_error = None;
+            }
 
             // CRD missing indicators
             Action::TerraformCrdMissing => {
@@ -1402,7 +1424,7 @@ impl App {
                 let items = get_filtered_terraforms(
                     &self.state.tf_store,
                     &self.state.namespace_filter,
-                    &self.state.search_query,
+                    self.state.effective_search_query(),
                     self.state.show_failures_only,
                     self.state.show_waiting_only,
                     self.state.sort_column,
@@ -1426,7 +1448,7 @@ impl App {
                 let items = get_filtered_kustomizations(
                     &self.state.ks_store,
                     &self.state.namespace_filter,
-                    &self.state.search_query,
+                    self.state.effective_search_query(),
                     self.state.show_failures_only,
                     self.state.show_waiting_only,
                     self.state.sort_column,
