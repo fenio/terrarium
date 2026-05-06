@@ -1532,42 +1532,63 @@ impl App {
             None => return,
         };
 
+        let needs_outputs = shortcut.url.contains("{output.");
+        if needs_outputs {
+            let cached_match = self
+                .state
+                .cached_outputs
+                .as_ref()
+                .map(|((ns, n), _)| ns == namespace && n == name)
+                .unwrap_or(false);
+            if !cached_match {
+                let Some(client) = self.require_client() else {
+                    self.state.flash_message = Some((
+                        "K8s client not ready yet".to_string(),
+                        Instant::now(),
+                        FlashKind::Error,
+                    ));
+                    return;
+                };
+                self.state.flash_message = Some((
+                    format!("Loading outputs for {}/{}...", namespace, name),
+                    Instant::now(),
+                    FlashKind::Success,
+                ));
+                let tx = self.action_tx.clone();
+                let ns = namespace.to_string();
+                let nm = name.to_string();
+                tokio::spawn(async move {
+                    match k8s_actions::fetch_output_values(&client, &ns, &nm).await {
+                        Ok(values) => {
+                            let _ = tx.send(Action::DetailOutputsFetched {
+                                namespace: ns.clone(),
+                                name: nm.clone(),
+                                values,
+                            });
+                            let _ = tx.send(Action::OpenShortcut {
+                                namespace: ns,
+                                name: nm,
+                                shortcut_idx,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::OutputsFetchError(format!("{}", e)));
+                        }
+                    }
+                });
+                return;
+            }
+        }
+
         // Resolve template variables
         let mut url = shortcut.url.clone();
         url = url.replace("{context}", &self.state.context_name);
         url = url.replace("{namespace}", namespace);
         url = url.replace("{name}", name);
 
-        // Resolve {output.KEY} from cached outputs
-        if url.contains("{output.") {
-            if let Some(((cached_ns, cached_name), outputs)) = &self.state.cached_outputs {
-                if cached_ns == namespace && cached_name == name {
-                    // Replace all {output.KEY} patterns
-                    while let Some(start) = url.find("{output.") {
-                        if let Some(end) = url[start..].find('}') {
-                            let key = &url[start + 8..start + end];
-                            let value = outputs.get(key).map(|s| s.as_str()).unwrap_or("");
-                            let placeholder = format!("{{output.{}}}", key);
-                            url = url.replace(&placeholder, value);
-                        } else {
-                            break;
-                        }
-                    }
-                } else {
-                    self.state.flash_message = Some((
-                        "Open detail view first to load outputs".to_string(),
-                        Instant::now(),
-                        FlashKind::Error,
-                    ));
-                    return;
-                }
-            } else {
-                self.state.flash_message = Some((
-                    "Open detail view first to load outputs".to_string(),
-                    Instant::now(),
-                    FlashKind::Error,
-                ));
-                return;
+        if needs_outputs {
+            if let Some((_, outputs)) = &self.state.cached_outputs {
+                url = resolve_output_placeholders(&url, outputs);
             }
         }
 
@@ -1892,4 +1913,159 @@ fn create_private_file(path: &str) -> std::io::Result<std::fs::File> {
 #[cfg(not(unix))]
 fn create_private_file(path: &str) -> std::io::Result<std::fs::File> {
     std::fs::File::create(path)
+}
+
+/// Substitute `{output.PATH}` placeholders in a URL.
+///
+/// `PATH` is dot-separated. The first segment indexes into the outputs secret
+/// (a flat key/value map). If more segments follow, the value is parsed as
+/// JSON and traversed by object key. Missing keys substitute as empty.
+fn resolve_output_placeholders(
+    url: &str,
+    outputs: &std::collections::HashMap<String, String>,
+) -> String {
+    let mut result = String::with_capacity(url.len());
+    let mut rest = url;
+    while let Some(start) = rest.find("{output.") {
+        result.push_str(&rest[..start]);
+        let after = &rest[start + 8..];
+        match after.find('}') {
+            Some(end) => {
+                let path = &after[..end];
+                result.push_str(&lookup_output_path(outputs, path));
+                rest = &after[end + 1..];
+            }
+            None => {
+                result.push_str(&rest[start..]);
+                return result;
+            }
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
+fn lookup_output_path(
+    outputs: &std::collections::HashMap<String, String>,
+    path: &str,
+) -> String {
+    let mut parts = path.split('.');
+    let head = match parts.next() {
+        Some(h) => h,
+        None => return String::new(),
+    };
+    let raw = match outputs.get(head) {
+        Some(v) => v,
+        None => return String::new(),
+    };
+    let remaining: Vec<&str> = parts.collect();
+    if remaining.is_empty() {
+        return raw.clone();
+    }
+    let json: serde_json::Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(_) => return String::new(),
+    };
+    let mut cur = &json;
+    for seg in &remaining {
+        cur = match cur.get(*seg) {
+            Some(v) => v,
+            None => return String::new(),
+        };
+    }
+    match cur {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_output_placeholders;
+    use std::collections::HashMap;
+
+    fn outputs(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn flat_key_substitutes_value() {
+        let out = outputs(&[("lke_id", "531022")]);
+        let result = resolve_output_placeholders("https://x/{output.lke_id}", &out);
+        assert_eq!(result, "https://x/531022");
+    }
+
+    #[test]
+    fn nested_json_path_walks_object() {
+        let out = outputs(&[("metadata", r#"{"tenant":"acme","region":"us-east"}"#)]);
+        let result = resolve_output_placeholders(
+            "https://x/{output.metadata.tenant}/{output.metadata.region}",
+            &out,
+        );
+        assert_eq!(result, "https://x/acme/us-east");
+    }
+
+    #[test]
+    fn missing_top_level_key_substitutes_empty() {
+        let out = outputs(&[("foo", "bar")]);
+        let result = resolve_output_placeholders("https://x/{output.absent}", &out);
+        assert_eq!(result, "https://x/");
+    }
+
+    #[test]
+    fn missing_nested_key_substitutes_empty() {
+        let out = outputs(&[("metadata", r#"{"tenant":"acme"}"#)]);
+        let result = resolve_output_placeholders("https://x/{output.metadata.absent}", &out);
+        assert_eq!(result, "https://x/");
+    }
+
+    #[test]
+    fn nested_path_on_non_json_value_substitutes_empty() {
+        let out = outputs(&[("plain", "not-json")]);
+        let result = resolve_output_placeholders("https://x/{output.plain.field}", &out);
+        assert_eq!(result, "https://x/");
+    }
+
+    #[test]
+    fn flat_lookup_on_non_json_value_works() {
+        let out = outputs(&[("plain", "not-json")]);
+        let result = resolve_output_placeholders("https://x/{output.plain}", &out);
+        assert_eq!(result, "https://x/not-json");
+    }
+
+    #[test]
+    fn non_string_json_leaf_is_stringified() {
+        let out = outputs(&[("metadata", r#"{"clusterId":531022,"ready":true}"#)]);
+        let result = resolve_output_placeholders(
+            "https://x/{output.metadata.clusterId}/{output.metadata.ready}",
+            &out,
+        );
+        assert_eq!(result, "https://x/531022/true");
+    }
+
+    #[test]
+    fn unterminated_placeholder_is_left_as_is() {
+        let out = outputs(&[("foo", "bar")]);
+        let result = resolve_output_placeholders("https://x/{output.foo", &out);
+        assert_eq!(result, "https://x/{output.foo");
+    }
+
+    #[test]
+    fn url_without_placeholders_is_unchanged() {
+        let out = outputs(&[("foo", "bar")]);
+        let result = resolve_output_placeholders("https://x/static", &out);
+        assert_eq!(result, "https://x/static");
+    }
+
+    #[test]
+    fn multiple_placeholders_resolve_independently() {
+        let out = outputs(&[
+            ("a", "1"),
+            ("metadata", r#"{"b":"2"}"#),
+        ]);
+        let result =
+            resolve_output_placeholders("{output.a}-{output.metadata.b}-{output.a}", &out);
+        assert_eq!(result, "1-2-1");
+    }
 }

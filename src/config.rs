@@ -22,6 +22,7 @@ pub struct Config {
     ///   {namespace}    - resource namespace
     ///   {name}         - resource name
     ///   {output.KEY}   - value from the Terraform outputs secret
+    ///                    (nested JSON paths supported, e.g. {output.metadata.tenant})
     ///
     /// Example:
     ///   [[shortcuts]]
