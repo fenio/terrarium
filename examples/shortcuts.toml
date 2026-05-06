@@ -4,15 +4,17 @@
 # Press the key while a Terraform resource is selected (list or detail view).
 #
 # Template variables:
-#   {context}      - kubeconfig context name (e.g. "prod-us-east-1")
-#   {namespace}    - resource namespace (e.g. "flux-system")
-#   {name}         - resource name (e.g. "my-database")
-#   {output.KEY}   - value from the Terraform outputs secret (detail view only)
+#   {context}                - kubeconfig context name (e.g. "prod-us-east-1")
+#   {namespace}              - resource namespace (e.g. "flux-system")
+#   {name}                   - resource name (e.g. "my-database")
+#   {output.KEY}             - value from the Terraform outputs secret
+#   {output.KEY.sub.path}    - nested field if the output value is JSON
 #
 # Notes:
 #   - Keys are single characters (case-sensitive: "b" and "B" are different)
 #   - Avoid keys already used by Terrarium (see ? help screen)
-#   - {output.KEY} requires opening the detail view first to load outputs
+#   - {output.…} placeholders lazily fetch the outputs secret on first use
+#   - Missing keys substitute as empty strings (no error)
 #   - URLs are opened with: open (macOS), xdg-open (Linux), start (Windows)
 
 # Open Grafana dashboard filtered to the cluster and resource
@@ -28,8 +30,14 @@ label = "Vault"
 url = "https://vault.example.com/ui/vault/secrets/{namespace}/show/{name}"
 
 # Open cloud provider console using an output value
-# (only works from detail view where outputs are loaded)
 [[shortcuts]]
-key = "L"
+key = "C"
 label = "Cloud Console"
 url = "https://console.cloud-provider.com/clusters/{output.cluster_id}"
+
+# Drill into a JSON-valued output (e.g. a "metadata" output that bundles
+# multiple fields as JSON). Dot-separated paths walk the JSON object.
+[[shortcuts]]
+key = "K"
+label = "Region Console"
+url = "https://console.cloud-provider.com/regions/{output.metadata.region}"

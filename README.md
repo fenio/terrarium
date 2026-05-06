@@ -238,15 +238,22 @@ url = "https://grafana.example.com/explore?cluster={context}&namespace={namespac
 
 **Template variables:**
 
-| Variable | Description | Available |
-|----------|-------------|-----------|
-| `{context}` | Kubeconfig context name | Always |
-| `{namespace}` | Resource namespace | Always |
-| `{name}` | Resource name | Always |
-| `{output.KEY}` | Value from the Terraform outputs secret | Detail view only |
+| Variable | Description |
+|----------|-------------|
+| `{context}` | Kubeconfig context name |
+| `{namespace}` | Resource namespace |
+| `{name}` | Resource name |
+| `{output.KEY}` | Value from the Terraform outputs secret |
+| `{output.KEY.subkey...}` | Nested JSON path into a JSON-valued output |
 
-When using `{output.KEY}`, the outputs must be loaded first by opening the detail
-view. If outputs aren't cached, Terrarium shows an error flash.
+For `{output.KEY}`, `KEY` is a top-level entry in the secret written via the
+controller's `spec.writeOutputsToSecret`. If the value is itself a JSON object,
+you can drill in with dot-separated paths — e.g. `{output.metadata.region}`
+parses the `metadata` value as JSON and reads its `region` field. Missing keys
+substitute as empty strings.
+
+Shortcuts that use `{output.…}` lazily fetch the outputs secret when first
+pressed, so they work from the list view without opening the detail view first.
 
 Shortcuts appear in the status bar when viewing Terraform resources. Multiple
 shortcuts can be defined with different keys.
