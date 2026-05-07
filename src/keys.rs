@@ -126,6 +126,13 @@ fn handle_detail_key(key: KeyEvent) -> Action {
         KeyCode::Char('q') | KeyCode::Esc => Action::Back,
         KeyCode::Char('?') => Action::ToggleHelp,
         KeyCode::Char('m') => Action::ToggleMouse,
+        KeyCode::Tab => Action::NextTab,
+        KeyCode::BackTab => Action::PrevTab,
+        KeyCode::Char('1') => Action::GoToTab(0),
+        KeyCode::Char('2') => Action::GoToTab(1),
+        KeyCode::Char('3') => Action::GoToTab(2),
+        KeyCode::Char('4') => Action::GoToTab(3),
+        KeyCode::Char('5') => Action::GoToTab(4),
         // Context-dependent actions resolved in app.rs
         KeyCode::Char('a') | KeyCode::Char('r') | KeyCode::Char('R') | KeyCode::Char('s')
         | KeyCode::Char('u') | KeyCode::Char('p') | KeyCode::Char('F')
@@ -163,6 +170,13 @@ fn handle_viewer_key(key: KeyEvent) -> Action {
         KeyCode::Char('S') => Action::SaveViewerContent,
         KeyCode::Tab => Action::NextContainer,
         KeyCode::BackTab => Action::PrevContainer,
+        // Tab-jumps work from viewers too — Tab/BackTab are taken by the
+        // log container cycler, but the digits are free.
+        KeyCode::Char('1') => Action::GoToTab(0),
+        KeyCode::Char('2') => Action::GoToTab(1),
+        KeyCode::Char('3') => Action::GoToTab(2),
+        KeyCode::Char('4') => Action::GoToTab(3),
+        KeyCode::Char('5') => Action::GoToTab(4),
         _ => Action::None,
     }
 }

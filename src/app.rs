@@ -636,9 +636,18 @@ impl App {
             Action::Quit => self.should_quit = true,
 
             // Navigation
-            Action::NextTab => self.state.next_tab(),
-            Action::PrevTab => self.state.prev_tab(),
-            Action::GoToTab(idx) => self.state.go_to_tab(idx),
+            Action::NextTab => {
+                self.cancel_log_stream();
+                self.state.next_tab();
+            }
+            Action::PrevTab => {
+                self.cancel_log_stream();
+                self.state.prev_tab();
+            }
+            Action::GoToTab(idx) => {
+                self.cancel_log_stream();
+                self.state.go_to_tab(idx);
+            }
             Action::ToggleHelp => {
                 if self.state.input_mode == InputMode::Help {
                     self.state.input_mode = InputMode::Normal;
