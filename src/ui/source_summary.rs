@@ -75,7 +75,12 @@ pub fn source_line<'a>(
                     };
                     ("✗ ", theme::STATUS_NOT_READY, reason, DIM)
                 }
-                None => ("? ", theme::STATUS_UNKNOWN, "no conditions".to_string(), DIM),
+                None => (
+                    "? ",
+                    theme::STATUS_UNKNOWN,
+                    "no conditions".to_string(),
+                    DIM,
+                ),
             };
             Line::from(vec![
                 Span::styled(label, label_style),
@@ -138,10 +143,7 @@ mod tests {
         // 7 bytes of "héllo" lands mid char-boundary; trimmer must back off.
         // ("héllo" is 6 bytes, so pad it to 8+ with multibyte chars.)
         let rev = short_revision("v1@héllo🌱world");
-        assert!(
-            rev.starts_with("v1@"),
-            "tag prefix must survive: {rev}"
-        );
+        assert!(rev.starts_with("v1@"), "tag prefix must survive: {rev}");
         // Body must still be valid UTF-8 (just compiling/asserting len works).
         assert!(rev.is_char_boundary(rev.len()));
     }

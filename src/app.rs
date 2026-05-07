@@ -1,7 +1,9 @@
 use std::io::Write;
 use std::time::Instant;
 
-use crossterm::event::{self, Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{
+    self, Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use futures::StreamExt;
 use tokio::sync::mpsc;
 
@@ -10,11 +12,11 @@ use crate::k8s::actions as k8s_actions;
 use crate::k8s::metrics;
 use crate::keys::handle_key;
 use crate::state::store::{AppState, DialogState, FlashKind, InputMode, TabKind, ViewState};
+use crate::ui::custom_tab::get_filtered_entries;
 use crate::ui::kustomization_list::get_filtered_kustomizations;
 use crate::ui::layout;
 use crate::ui::resource_list::get_filtered_terraforms;
 use crate::ui::runner_list::get_filtered_runners;
-use crate::ui::custom_tab::get_filtered_entries;
 
 pub struct App {
     pub state: AppState,
@@ -158,7 +160,8 @@ impl App {
                 // Tab bar is row 1 (0-indexed)
                 if mouse.row == 1 {
                     // Approximate tab positions — each tab is roughly area.width / 4
-                    let tab_idx = (mouse.column as usize * 4) / self.state.body_height.max(1) as usize;
+                    let tab_idx =
+                        (mouse.column as usize * 4) / self.state.body_height.max(1) as usize;
                     // Simpler: just map column to tab quadrants
                     // Tab bar width is the terminal width, tabs are roughly evenly spaced
                     return Some(Action::GoToTab(tab_idx.min(3)));
@@ -281,15 +284,17 @@ impl App {
                 namespace: ns,
                 name,
             }),
-            KeyCode::Char(c) => {
-                self.state.config.shortcuts.iter().position(|s| s.key == c).map(|idx| {
-                    Action::OpenShortcut {
-                        namespace: ns.clone(),
-                        name: name.clone(),
-                        shortcut_idx: idx,
-                    }
-                })
-            }
+            KeyCode::Char(c) => self
+                .state
+                .config
+                .shortcuts
+                .iter()
+                .position(|s| s.key == c)
+                .map(|idx| Action::OpenShortcut {
+                    namespace: ns.clone(),
+                    name: name.clone(),
+                    shortcut_idx: idx,
+                }),
             _ => None,
         }
     }
@@ -355,7 +360,10 @@ impl App {
                 // Stream logs from the first controller pod
                 let pod_name = self.state.controller_info.pods.first()?.name.clone();
                 let ns = self.state.controller_info.deploy_namespace.clone();
-                Some(Action::StreamControllerLogs { namespace: ns, pod_name })
+                Some(Action::StreamControllerLogs {
+                    namespace: ns,
+                    pod_name,
+                })
             }
             _ => None,
         }
@@ -536,7 +544,11 @@ impl App {
     }
 
     fn jump_to_viewer_search_match(&mut self) {
-        if let Some(&line) = self.state.viewer_search_matches.get(self.state.viewer_search_index) {
+        if let Some(&line) = self
+            .state
+            .viewer_search_matches
+            .get(self.state.viewer_search_index)
+        {
             self.state.plan_scroll = line;
         }
     }
@@ -599,8 +611,7 @@ impl App {
         let tx = self.action_tx.clone();
         let handle = tokio::spawn(async move {
             // Fetch immediately, then every 5s.
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_secs(5));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 interval.tick().await;
@@ -668,8 +679,16 @@ impl App {
             Action::ToggleMouse => {
                 self.state.mouse_enabled = !self.state.mouse_enabled;
                 let _ = crate::tui::set_mouse_capture(self.state.mouse_enabled);
-                let label = if self.state.mouse_enabled { "Mouse enabled" } else { "Mouse disabled" };
-                self.state.flash_message = Some((label.to_string(), std::time::Instant::now(), crate::state::store::FlashKind::Success));
+                let label = if self.state.mouse_enabled {
+                    "Mouse enabled"
+                } else {
+                    "Mouse disabled"
+                };
+                self.state.flash_message = Some((
+                    label.to_string(),
+                    std::time::Instant::now(),
+                    crate::state::store::FlashKind::Success,
+                ));
             }
             Action::ToggleMetrics => {
                 self.toggle_metrics();
@@ -736,7 +755,15 @@ impl App {
             }
             Action::PageDown => {
                 let half = self.half_page();
-                if matches!(self.state.current_view(), ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::ConditionsViewer { .. } | ViewState::LogViewer { .. }) {
+                if matches!(
+                    self.state.current_view(),
+                    ViewState::PlanViewer { .. }
+                        | ViewState::JsonViewer { .. }
+                        | ViewState::EventsViewer { .. }
+                        | ViewState::OutputsViewer { .. }
+                        | ViewState::ConditionsViewer { .. }
+                        | ViewState::LogViewer { .. }
+                ) {
                     self.state.plan_scroll = self.state.plan_scroll.saturating_add(half);
                 } else {
                     let current = self.state.current_table_state().selected().unwrap_or(0);
@@ -750,24 +777,36 @@ impl App {
             }
             Action::PageUp => {
                 let half = self.half_page();
-                if matches!(self.state.current_view(), ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::ConditionsViewer { .. } | ViewState::LogViewer { .. }) {
+                if matches!(
+                    self.state.current_view(),
+                    ViewState::PlanViewer { .. }
+                        | ViewState::JsonViewer { .. }
+                        | ViewState::EventsViewer { .. }
+                        | ViewState::OutputsViewer { .. }
+                        | ViewState::ConditionsViewer { .. }
+                        | ViewState::LogViewer { .. }
+                ) {
                     self.state.plan_scroll = self.state.plan_scroll.saturating_sub(half);
                     if matches!(self.state.current_view(), ViewState::LogViewer { .. }) {
                         self.state.log_auto_follow = false;
                     }
                 } else {
-                    let current = self
-                        .state
-                        .current_table_state()
-                        .selected()
-                        .unwrap_or(0);
+                    let current = self.state.current_table_state().selected().unwrap_or(0);
                     self.state
                         .current_table_state()
                         .select(Some(current.saturating_sub(half)));
                 }
             }
             Action::SelectNext => {
-                if matches!(self.state.current_view(), ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::ConditionsViewer { .. } | ViewState::LogViewer { .. }) {
+                if matches!(
+                    self.state.current_view(),
+                    ViewState::PlanViewer { .. }
+                        | ViewState::JsonViewer { .. }
+                        | ViewState::EventsViewer { .. }
+                        | ViewState::OutputsViewer { .. }
+                        | ViewState::ConditionsViewer { .. }
+                        | ViewState::LogViewer { .. }
+                ) {
                     self.state.plan_scroll = self.state.plan_scroll.saturating_add(1);
                 } else {
                     let current = self.state.current_table_state().selected().unwrap_or(0);
@@ -780,17 +819,21 @@ impl App {
                 }
             }
             Action::SelectPrev => {
-                if matches!(self.state.current_view(), ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::ConditionsViewer { .. } | ViewState::LogViewer { .. }) {
+                if matches!(
+                    self.state.current_view(),
+                    ViewState::PlanViewer { .. }
+                        | ViewState::JsonViewer { .. }
+                        | ViewState::EventsViewer { .. }
+                        | ViewState::OutputsViewer { .. }
+                        | ViewState::ConditionsViewer { .. }
+                        | ViewState::LogViewer { .. }
+                ) {
                     self.state.plan_scroll = self.state.plan_scroll.saturating_sub(1);
                     if matches!(self.state.current_view(), ViewState::LogViewer { .. }) {
                         self.state.log_auto_follow = false;
                     }
                 } else {
-                    let current = self
-                        .state
-                        .current_table_state()
-                        .selected()
-                        .unwrap_or(0);
+                    let current = self.state.current_table_state().selected().unwrap_or(0);
                     self.state
                         .current_table_state()
                         .select(Some(current.saturating_sub(1)));
@@ -823,10 +866,12 @@ impl App {
                 TabKind::Terraform => {
                     if let Some((ns, name)) = self.get_selected_terraform() {
                         self.spawn_detail_outputs_fetch(&ns, &name);
-                        self.state.current_view_stack_mut().push(ViewState::TerraformDetail {
-                            namespace: ns,
-                            name,
-                        });
+                        self.state
+                            .current_view_stack_mut()
+                            .push(ViewState::TerraformDetail {
+                                namespace: ns,
+                                name,
+                            });
                     }
                 }
                 TabKind::Kustomizations => {
@@ -847,10 +892,12 @@ impl App {
                 TabKind::CustomTab(i) => {
                     if let Some((ns, name)) = self.get_selected_custom_tab(i) {
                         self.spawn_detail_outputs_fetch(&ns, &name);
-                        self.state.current_view_stack_mut().push(ViewState::TerraformDetail {
-                            namespace: ns,
-                            name,
-                        });
+                        self.state
+                            .current_view_stack_mut()
+                            .push(ViewState::TerraformDetail {
+                                namespace: ns,
+                                name,
+                            });
                     }
                 }
             },
@@ -937,8 +984,7 @@ impl App {
                 }
             }
             Action::NamespacePickerPrev => {
-                self.state.ns_picker_selected =
-                    self.state.ns_picker_selected.saturating_sub(1);
+                self.state.ns_picker_selected = self.state.ns_picker_selected.saturating_sub(1);
             }
             Action::NamespacePickerSelect => {
                 self.state.input_mode = InputMode::Normal;
@@ -988,8 +1034,8 @@ impl App {
             }
             Action::ViewerSearchNext => {
                 if !self.state.viewer_search_matches.is_empty() {
-                    self.state.viewer_search_index =
-                        (self.state.viewer_search_index + 1) % self.state.viewer_search_matches.len();
+                    self.state.viewer_search_index = (self.state.viewer_search_index + 1)
+                        % self.state.viewer_search_matches.len();
                     self.jump_to_viewer_search_match();
                 }
             }
@@ -1011,7 +1057,8 @@ impl App {
                     _ => None,
                 };
                 if let Some(key) = selected
-                    && !self.state.bulk_selected.remove(&key) {
+                    && !self.state.bulk_selected.remove(&key)
+                {
                     self.state.bulk_selected.insert(key);
                 }
             }
@@ -1106,11 +1153,18 @@ impl App {
                 }
             }
 
-            Action::StreamControllerLogs { namespace, pod_name } => {
+            Action::StreamControllerLogs {
+                namespace,
+                pod_name,
+            } => {
                 self.start_log_stream(&namespace, &pod_name).await;
             }
 
-            Action::OpenShortcut { namespace, name, shortcut_idx } => {
+            Action::OpenShortcut {
+                namespace,
+                name,
+                shortcut_idx,
+            } => {
                 self.open_shortcut(&namespace, &name, shortcut_idx);
             }
 
@@ -1131,7 +1185,11 @@ impl App {
                     FlashKind::Success,
                 ));
                 let Some(client) = self.require_client() else {
-                    self.state.flash_message = Some(("K8s client not ready yet".to_string(), Instant::now(), FlashKind::Error));
+                    self.state.flash_message = Some((
+                        "K8s client not ready yet".to_string(),
+                        Instant::now(),
+                        FlashKind::Error,
+                    ));
                     return;
                 };
                 let tx = self.action_tx.clone();
@@ -1173,7 +1231,11 @@ impl App {
                     FlashKind::Success,
                 ));
                 let Some(client) = self.require_client() else {
-                    self.state.flash_message = Some(("K8s client not ready yet".to_string(), Instant::now(), FlashKind::Error));
+                    self.state.flash_message = Some((
+                        "K8s client not ready yet".to_string(),
+                        Instant::now(),
+                        FlashKind::Error,
+                    ));
                     return;
                 };
                 let tx = self.action_tx.clone();
@@ -1202,7 +1264,11 @@ impl App {
                     FlashKind::Success,
                 ));
                 let Some(client) = self.require_client() else {
-                    self.state.flash_message = Some(("K8s client not ready yet".to_string(), Instant::now(), FlashKind::Error));
+                    self.state.flash_message = Some((
+                        "K8s client not ready yet".to_string(),
+                        Instant::now(),
+                        FlashKind::Error,
+                    ));
                     return;
                 };
                 let tx = self.action_tx.clone();
@@ -1239,7 +1305,11 @@ impl App {
                     FlashKind::Success,
                 ));
                 let Some(client) = self.require_client() else {
-                    self.state.flash_message = Some(("K8s client not ready yet".to_string(), Instant::now(), FlashKind::Error));
+                    self.state.flash_message = Some((
+                        "K8s client not ready yet".to_string(),
+                        Instant::now(),
+                        FlashKind::Error,
+                    ));
                     return;
                 };
                 let tx = self.action_tx.clone();
@@ -1280,7 +1350,11 @@ impl App {
                     FlashKind::Success,
                 ));
                 let Some(client) = self.require_client() else {
-                    self.state.flash_message = Some(("K8s client not ready yet".to_string(), Instant::now(), FlashKind::Error));
+                    self.state.flash_message = Some((
+                        "K8s client not ready yet".to_string(),
+                        Instant::now(),
+                        FlashKind::Error,
+                    ));
                     return;
                 };
                 let tx = self.action_tx.clone();
@@ -1304,7 +1378,11 @@ impl App {
                 self.state.horizontal_scroll = 0;
                 self.state.viewer_wrap = false;
             }
-            Action::DetailOutputsFetched { namespace, name, values } => {
+            Action::DetailOutputsFetched {
+                namespace,
+                name,
+                values,
+            } => {
                 self.state.cached_outputs = Some(((namespace, name), values));
             }
             Action::EventsFetchError(e) => {
@@ -1319,11 +1397,16 @@ impl App {
                 name,
             } => {
                 let content = match kind {
-                    ResourceKind::Terraform => {
-                        self.state.tf_store.state().iter().find(|t| {
+                    ResourceKind::Terraform => self
+                        .state
+                        .tf_store
+                        .state()
+                        .iter()
+                        .find(|t| {
                             t.metadata.namespace.as_deref() == Some(namespace.as_str())
                                 && t.metadata.name.as_deref() == Some(name.as_str())
-                        }).map(|tf| {
+                        })
+                        .map(|tf| {
                             let conds = tf
                                 .status
                                 .as_ref()
@@ -1336,13 +1419,17 @@ impl App {
                                 &name,
                                 conds,
                             )
-                        })
-                    }
-                    ResourceKind::Kustomization => {
-                        self.state.ks_store.state().iter().find(|k| {
+                        }),
+                    ResourceKind::Kustomization => self
+                        .state
+                        .ks_store
+                        .state()
+                        .iter()
+                        .find(|k| {
                             k.metadata.namespace.as_deref() == Some(namespace.as_str())
                                 && k.metadata.name.as_deref() == Some(name.as_str())
-                        }).map(|ks| {
+                        })
+                        .map(|ks| {
                             let conds = ks
                                 .status
                                 .as_ref()
@@ -1355,12 +1442,13 @@ impl App {
                                 &name,
                                 conds,
                             )
-                        })
-                    }
+                        }),
                     ResourceKind::Pod => None,
                 };
                 if let Some(content) = content {
-                    self.state.current_view_stack_mut().push(ViewState::ConditionsViewer { content });
+                    self.state
+                        .current_view_stack_mut()
+                        .push(ViewState::ConditionsViewer { content });
                     self.state.plan_scroll = 0;
                     self.state.horizontal_scroll = 0;
                     self.state.viewer_wrap = false;
@@ -1379,10 +1467,8 @@ impl App {
                 // The LogViewer might be on a tab the user has navigated
                 // away from — chunks still need to find it. Capture flags
                 // we'll need before taking a mutable borrow on the viewer.
-                let on_active_tab = matches!(
-                    self.state.current_view(),
-                    ViewState::LogViewer { .. }
-                );
+                let on_active_tab =
+                    matches!(self.state.current_view(), ViewState::LogViewer { .. });
                 let auto_follow = self.state.log_auto_follow;
                 let body_height = self.state.body_height as usize;
                 let mut new_scroll: Option<usize> = None;
@@ -1424,7 +1510,10 @@ impl App {
             }
 
             // K8s client initialization
-            Action::K8sClientReady { client, context_name } => {
+            Action::K8sClientReady {
+                client,
+                context_name,
+            } => {
                 self.client = Some(client.0);
                 self.state.context_name = context_name;
                 self.state.connection_error = None;
@@ -1468,8 +1557,7 @@ impl App {
                 self.state.gr_synced = true;
                 self.state.last_data_update = Some(Instant::now());
             }
-            Action::Resize(_, _)
-            | Action::None => {}
+            Action::Resize(_, _) | Action::None => {}
 
             _ => {}
         }
@@ -1480,7 +1568,9 @@ impl App {
     }
 
     fn spawn_detail_outputs_fetch(&self, ns: &str, name: &str) {
-        let Some(client) = self.require_client() else { return };
+        let Some(client) = self.require_client() else {
+            return;
+        };
         let tx = self.action_tx.clone();
         let ns = ns.to_string();
         let name = name.to_string();
@@ -1499,7 +1589,9 @@ impl App {
         let client = match self.require_client() {
             Some(c) => c,
             None => {
-                let _ = self.action_tx.send(Action::K8sActionError("K8s client not ready yet".to_string()));
+                let _ = self.action_tx.send(Action::K8sActionError(
+                    "K8s client not ready yet".to_string(),
+                ));
                 return;
             }
         };
@@ -1618,11 +1710,8 @@ impl App {
                     }
                 }
                 Err(e) => {
-                    self.state.flash_message = Some((
-                        format!("Save error: {e}"),
-                        Instant::now(),
-                        FlashKind::Error,
-                    ));
+                    self.state.flash_message =
+                        Some((format!("Save error: {e}"), Instant::now(), FlashKind::Error));
                 }
             }
         }
@@ -1805,39 +1894,39 @@ impl App {
         let first_container = containers.first().cloned();
 
         // Push the log viewer immediately with empty content
-        self.state.current_view_stack_mut().push(ViewState::LogViewer {
-            namespace: namespace.to_string(),
-            pod_name: name.to_string(),
-            containers: containers.clone(),
-            active_container: 0,
-            content: String::new(),
-        });
+        self.state
+            .current_view_stack_mut()
+            .push(ViewState::LogViewer {
+                namespace: namespace.to_string(),
+                pod_name: name.to_string(),
+                containers: containers.clone(),
+                active_container: 0,
+                content: String::new(),
+            });
         self.state.plan_scroll = 0;
         self.state.viewer_wrap = false;
         self.state.log_auto_follow = true;
 
         // Start streaming
         let Some(client) = self.require_client() else {
-                    self.state.flash_message = Some(("K8s client not ready yet".to_string(), Instant::now(), FlashKind::Error));
-                    return;
-                };
+            self.state.flash_message = Some((
+                "K8s client not ready yet".to_string(),
+                Instant::now(),
+                FlashKind::Error,
+            ));
+            return;
+        };
         let tx = self.action_tx.clone();
         let ns = namespace.to_string();
         let pod_name = name.to_string();
         // Strip "init:" prefix for the API call
-        let api_container = first_container.map(|c| {
-            c.strip_prefix("init:").unwrap_or(&c).to_string()
-        });
+        let api_container =
+            first_container.map(|c| c.strip_prefix("init:").unwrap_or(&c).to_string());
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = k8s_actions::stream_pod_logs(
-                &client,
-                &ns,
-                &pod_name,
-                api_container.as_deref(),
-                tx,
-            )
-            .await
+            if let Err(e) =
+                k8s_actions::stream_pod_logs(&client, &ns, &pod_name, api_container.as_deref(), tx)
+                    .await
             {
                 tracing::debug!("Log stream ended: {}", e);
             }
@@ -1846,19 +1935,18 @@ impl App {
     }
 
     async fn switch_log_container(&mut self, direction: isize) {
-        let (namespace, pod_name, containers, active) =
-            if let ViewState::LogViewer {
-                namespace,
-                pod_name,
-                containers,
-                active_container,
-                ..
-            } = self.state.current_view().clone()
-            {
-                (namespace, pod_name, containers, active_container)
-            } else {
-                return;
-            };
+        let (namespace, pod_name, containers, active) = if let ViewState::LogViewer {
+            namespace,
+            pod_name,
+            containers,
+            active_container,
+            ..
+        } = self.state.current_view().clone()
+        {
+            (namespace, pod_name, containers, active_container)
+        } else {
+            return;
+        };
 
         if containers.len() <= 1 {
             return;
@@ -1876,21 +1964,27 @@ impl App {
         self.state.current_view_stack_mut().pop();
 
         // Push new log viewer with empty content
-        self.state.current_view_stack_mut().push(ViewState::LogViewer {
-            namespace: namespace.clone(),
-            pod_name: pod_name.clone(),
-            containers: containers.clone(),
-            active_container: new_idx,
-            content: String::new(),
-        });
+        self.state
+            .current_view_stack_mut()
+            .push(ViewState::LogViewer {
+                namespace: namespace.clone(),
+                pod_name: pod_name.clone(),
+                containers: containers.clone(),
+                active_container: new_idx,
+                content: String::new(),
+            });
         self.state.plan_scroll = 0;
         self.state.log_auto_follow = true;
 
         // Start new stream
         let Some(client) = self.require_client() else {
-                    self.state.flash_message = Some(("K8s client not ready yet".to_string(), Instant::now(), FlashKind::Error));
-                    return;
-                };
+            self.state.flash_message = Some((
+                "K8s client not ready yet".to_string(),
+                Instant::now(),
+                FlashKind::Error,
+            ));
+            return;
+        };
         let tx = self.action_tx.clone();
         let api_container = new_container
             .strip_prefix("init:")
@@ -1924,25 +2018,19 @@ async fn execute_k8s_action(client: &kube::Client, action: &Action) -> anyhow::R
             namespace,
             name,
         } => match kind {
-            ResourceKind::Terraform => {
-                k8s_actions::force_reconcile(client, namespace, name).await
-            }
+            ResourceKind::Terraform => k8s_actions::force_reconcile(client, namespace, name).await,
             ResourceKind::Kustomization => {
                 k8s_actions::reconcile_kustomization(client, namespace, name).await
             }
             ResourceKind::Pod => Ok(()),
         },
-        Action::Replan { namespace, name } => {
-            k8s_actions::replan(client, namespace, name).await
-        }
+        Action::Replan { namespace, name } => k8s_actions::replan(client, namespace, name).await,
         Action::Suspend {
             kind,
             namespace,
             name,
         } => match kind {
-            ResourceKind::Terraform => {
-                k8s_actions::suspend(client, namespace, name).await
-            }
+            ResourceKind::Terraform => k8s_actions::suspend(client, namespace, name).await,
             ResourceKind::Kustomization => {
                 k8s_actions::suspend_kustomization(client, namespace, name).await
             }
@@ -1953,9 +2041,7 @@ async fn execute_k8s_action(client: &kube::Client, action: &Action) -> anyhow::R
             namespace,
             name,
         } => match kind {
-            ResourceKind::Terraform => {
-                k8s_actions::resume(client, namespace, name).await
-            }
+            ResourceKind::Terraform => k8s_actions::resume(client, namespace, name).await,
             ResourceKind::Kustomization => {
                 k8s_actions::resume_kustomization(client, namespace, name).await
             }
@@ -1979,14 +2065,20 @@ fn format_success_message(action: &Action) -> String {
         Action::ApprovePlan { namespace, name } => {
             format!("Approved plan for {namespace}/{name}")
         }
-        Action::Reconcile { namespace, name, .. } => {
+        Action::Reconcile {
+            namespace, name, ..
+        } => {
             format!("Triggered reconciliation for {namespace}/{name}")
         }
         Action::Replan { namespace, name } => {
             format!("Triggered replan for {namespace}/{name}")
         }
-        Action::Suspend { namespace, name, .. } => format!("Suspended {namespace}/{name}"),
-        Action::Resume { namespace, name, .. } => format!("Resumed {namespace}/{name}"),
+        Action::Suspend {
+            namespace, name, ..
+        } => format!("Suspended {namespace}/{name}"),
+        Action::Resume {
+            namespace, name, ..
+        } => format!("Resumed {namespace}/{name}"),
         Action::ForceUnlock { namespace, name } => {
             format!("Force unlocked {namespace}/{name}")
         }
@@ -2047,10 +2139,7 @@ fn resolve_output_placeholders(
     result
 }
 
-fn lookup_output_path(
-    outputs: &std::collections::HashMap<String, String>,
-    path: &str,
-) -> String {
+fn lookup_output_path(outputs: &std::collections::HashMap<String, String>, path: &str) -> String {
     let mut parts = path.split('.');
     let head = match parts.next() {
         Some(h) => h,
@@ -2088,7 +2177,10 @@ mod tests {
     use std::collections::HashMap;
 
     fn outputs(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -2162,12 +2254,8 @@ mod tests {
 
     #[test]
     fn multiple_placeholders_resolve_independently() {
-        let out = outputs(&[
-            ("a", "1"),
-            ("metadata", r#"{"b":"2"}"#),
-        ]);
-        let result =
-            resolve_output_placeholders("{output.a}-{output.metadata.b}-{output.a}", &out);
+        let out = outputs(&[("a", "1"), ("metadata", r#"{"b":"2"}"#)]);
+        let result = resolve_output_placeholders("{output.a}-{output.metadata.b}-{output.a}", &out);
         assert_eq!(result, "1-2-1");
     }
 }

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use anyhow::Result;
 use k8s_openapi::api::core::v1::Pod;
 use kube::{
-    api::{Api, ListParams, LogParams},
     Client,
+    api::{Api, ListParams, LogParams},
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -102,11 +102,14 @@ async fn fetch_active_runner_logs(
                 .await;
 
             match result {
-                Ok(log_text) if !log_text.is_empty() => {
-                    Some(((ns_owned, tf_name), log_text))
-                }
+                Ok(log_text) if !log_text.is_empty() => Some(((ns_owned, tf_name), log_text)),
                 Err(e) => {
-                    tracing::debug!("Failed to fetch logs for {}/{}: {}", ns_owned, pod_name_owned, e);
+                    tracing::debug!(
+                        "Failed to fetch logs for {}/{}: {}",
+                        ns_owned,
+                        pod_name_owned,
+                        e
+                    );
                     None
                 }
                 _ => None,

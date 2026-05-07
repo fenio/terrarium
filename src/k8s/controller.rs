@@ -49,15 +49,12 @@ async fn fetch_controller_info(client: &kube::Client, ns: &str) -> ControllerInf
         // Try label-based search
         let lp = ListParams::default().labels(CONTROLLER_LABEL);
         if let Ok(deploys) = deploy_api.list(&lp).await
-            && let Some(deploy) = deploys.items.first() {
-                info.deploy_name = deploy
-                    .metadata
-                    .name
-                    .clone()
-                    .unwrap_or_default();
-                populate_from_deploy(&mut info, deploy);
-                found_deploy = true;
-            }
+            && let Some(deploy) = deploys.items.first()
+        {
+            info.deploy_name = deploy.metadata.name.clone().unwrap_or_default();
+            populate_from_deploy(&mut info, deploy);
+            found_deploy = true;
+        }
     }
 
     if !found_deploy {
@@ -142,21 +139,17 @@ fn populate_from_deploy(info: &mut ControllerInfo, deploy: &Deployment) {
         .and_then(|s| s.template.spec.as_ref())
         .and_then(|ps| ps.containers.first());
 
-    info.image = container
-        .and_then(|c| c.image.clone())
-        .unwrap_or_default();
+    info.image = container.and_then(|c| c.image.clone()).unwrap_or_default();
 
     // Extract --concurrent from container args
-    info.max_concurrent = container
-        .and_then(|c| c.args.as_ref())
-        .and_then(|args| {
-            args.iter()
-                .find_map(|arg| arg.strip_prefix("--concurrent="))
-                .and_then(|v| v.parse::<i32>().ok())
-                .or_else(|| {
-                    // Handle "--concurrent 10" (two separate args)
-                    let pos = args.iter().position(|a| a == "--concurrent")?;
-                    args.get(pos + 1)?.parse::<i32>().ok()
-                })
-        });
+    info.max_concurrent = container.and_then(|c| c.args.as_ref()).and_then(|args| {
+        args.iter()
+            .find_map(|arg| arg.strip_prefix("--concurrent="))
+            .and_then(|v| v.parse::<i32>().ok())
+            .or_else(|| {
+                // Handle "--concurrent 10" (two separate args)
+                let pos = args.iter().position(|a| a == "--concurrent")?;
+                args.get(pos + 1)?.parse::<i32>().ok()
+            })
+    });
 }

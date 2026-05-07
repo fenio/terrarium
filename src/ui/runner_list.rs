@@ -1,10 +1,10 @@
 use k8s_openapi::api::core::v1::Pod;
 use ratatui::{
+    Frame,
     layout::{Constraint, Rect},
     style::Style,
     text::Span,
     widgets::{Cell, Row, Table},
-    Frame,
 };
 
 use crate::state::store::AppState;
@@ -34,9 +34,7 @@ pub fn render_runner_list(f: &mut Frame, area: Rect, state: &mut AppState) {
         .map(|pod| {
             let ns = pod.metadata.namespace.as_deref().unwrap_or("-");
             let name = pod.metadata.name.as_deref().unwrap_or("-");
-            let tf_name = name
-                .strip_suffix("-tf-runner")
-                .unwrap_or("-");
+            let tf_name = name.strip_suffix("-tf-runner").unwrap_or("-");
             let phase = pod
                 .status
                 .as_ref()

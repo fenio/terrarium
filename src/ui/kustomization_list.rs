@@ -1,10 +1,10 @@
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
 use ratatui::{
+    Frame,
     layout::{Constraint, Rect},
     style::Style,
     text::Span,
     widgets::{Cell, Row, Table},
-    Frame,
 };
 
 use crate::ui::resource_list::sort_cell;
@@ -52,10 +52,7 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
             } else {
                 Cell::from(" ")
             };
-            let source = format!(
-                "{:?}/{}",
-                ks.spec.source_ref.kind, ks.spec.source_ref.name
-            );
+            let source = format!("{:?}/{}", ks.spec.source_ref.kind, ks.spec.source_ref.name);
             let revision = ks
                 .status
                 .as_ref()
@@ -140,16 +137,18 @@ pub fn get_filtered_kustomizations(
 
     match sort_column {
         SortColumn::Namespace => filtered.sort_by(|a, b| {
-            a.metadata.namespace.cmp(&b.metadata.namespace)
+            a.metadata
+                .namespace
+                .cmp(&b.metadata.namespace)
                 .then(a.metadata.name.cmp(&b.metadata.name))
         }),
-        SortColumn::Name => filtered.sort_by(|a, b| {
-            a.metadata.name.cmp(&b.metadata.name)
-        }),
+        SortColumn::Name => filtered.sort_by(|a, b| a.metadata.name.cmp(&b.metadata.name)),
         SortColumn::Ready => filtered.sort_by(|a, b| {
             let ready_a = get_ready_str(a);
             let ready_b = get_ready_str(b);
-            ready_a.cmp(&ready_b).then(a.metadata.name.cmp(&b.metadata.name))
+            ready_a
+                .cmp(&ready_b)
+                .then(a.metadata.name.cmp(&b.metadata.name))
         }),
         SortColumn::LastApplied => filtered.sort_by(|a, b| {
             // Ascending = oldest first; never-applied resources sort last.

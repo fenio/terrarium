@@ -144,8 +144,7 @@ pub async fn fetch(
     drop(stream);
     pf.abort();
 
-    let split = find_subseq(&buf, b"\r\n\r\n")
-        .ok_or_else(|| anyhow!("malformed HTTP response"))?;
+    let split = find_subseq(&buf, b"\r\n\r\n").ok_or_else(|| anyhow!("malformed HTTP response"))?;
     let body_raw = &buf[split + 4..];
     let body_bytes = if chunked {
         decode_chunked(body_raw)?
@@ -173,9 +172,10 @@ async fn find_controller_pod(pods: &Api<Pod>) -> Result<String> {
     for sel in SELECTORS {
         let lp = kube::api::ListParams::default().labels(sel);
         let list = pods.list(&lp).await?;
-        let found = list.items.into_iter().find(|p| {
-            p.status.as_ref().and_then(|s| s.phase.as_deref()) == Some("Running")
-        });
+        let found = list
+            .items
+            .into_iter()
+            .find(|p| p.status.as_ref().and_then(|s| s.phase.as_deref()) == Some("Running"));
         if let Some(pod) = found
             && let Some(name) = pod.metadata.name
         {
@@ -198,8 +198,7 @@ pub fn fill_rates(snap: &mut MetricsSnapshot, prev: &PrevCounters, now: Instant)
     if dt < 0.5 {
         return;
     }
-    snap.reconcile_per_min =
-        rate_per_min(prev.reconcile_success, snap.reconcile_success_total, dt);
+    snap.reconcile_per_min = rate_per_min(prev.reconcile_success, snap.reconcile_success_total, dt);
     snap.error_per_min = rate_per_min(prev.reconcile_error, snap.reconcile_error_total, dt);
     snap.api_error_per_min = rate_per_min(prev.api_non2xx, snap.api_non2xx_total, dt);
 }
@@ -311,14 +310,12 @@ fn parse_snapshot(body: &str) -> MetricsSnapshot {
         &|v| v != "error",
     );
 
-    s.api_2xx_total =
-        sum_where_pred("rest_client_requests_total", &[], "code", &|v| {
-            v.starts_with('2')
-        });
-    s.api_non2xx_total =
-        sum_where_pred("rest_client_requests_total", &[], "code", &|v| {
-            !v.starts_with('2')
-        });
+    s.api_2xx_total = sum_where_pred("rest_client_requests_total", &[], "code", &|v| {
+        v.starts_with('2')
+    });
+    s.api_non2xx_total = sum_where_pred("rest_client_requests_total", &[], "code", &|v| {
+        !v.starts_with('2')
+    });
 
     let quantile = |q: f64| {
         histogram_quantile_aggregated(
@@ -447,9 +444,7 @@ fn histogram_quantile_aggregated(
                 return QuantileResult::Value(*le);
             }
             let position = target - prev_count;
-            return QuantileResult::Value(
-                prev_le + (position / bucket_size) * (le - prev_le),
-            );
+            return QuantileResult::Value(prev_le + (position / bucket_size) * (le - prev_le));
         }
         prev_le = *le;
         prev_count = *count;

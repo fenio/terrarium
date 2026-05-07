@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
 
 use crate::ui::theme;
@@ -12,11 +12,16 @@ pub fn render_help(f: &mut Frame) {
     let area = centered_rect(80, 85, f.area());
     f.render_widget(Clear, area);
 
-    let title = format!(" Terrarium v{} — press ? or Esc to close ", env!("CARGO_PKG_VERSION"));
+    let title = format!(
+        " Terrarium v{} — press ? or Esc to close ",
+        env!("CARGO_PKG_VERSION")
+    );
     let block = Block::default()
         .title(Span::styled(
             title,
-            Style::default().fg(Color::Rgb(140, 200, 255)).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Rgb(140, 200, 255))
+                .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Rgb(80, 90, 120)))
@@ -130,7 +135,11 @@ fn help_line(key: &str, desc: &'static str) -> Line<'static> {
     // Unicode arrows (↑↓) are 1 display column each but multi-byte in UTF-8,
     // so we count unicode width for correct alignment.
     let display_width: usize = key.chars().count(); // good enough — all chars here are 1-wide
-    let padded = format!("{}{}", key, " ".repeat(16usize.saturating_sub(display_width)));
+    let padded = format!(
+        "{}{}",
+        key,
+        " ".repeat(16usize.saturating_sub(display_width))
+    );
     Line::from(vec![
         Span::raw("  "),
         Span::styled(padded, theme::STATUS_PENDING),

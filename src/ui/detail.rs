@@ -1,10 +1,10 @@
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
-    Frame,
 };
 
 use crate::ui::theme;

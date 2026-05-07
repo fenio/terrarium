@@ -1,8 +1,8 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
 
 use crate::k8s::kustomization::Kustomization;
@@ -27,9 +27,9 @@ pub fn render(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),                   // Title
-            Constraint::Length(spec_status_height),  // Spec + Status
-            Constraint::Length(conditions_height),   // Conditions
+            Constraint::Length(1),                  // Title
+            Constraint::Length(spec_status_height), // Spec + Status
+            Constraint::Length(conditions_height),  // Conditions
             Constraint::Min(0),                     // Remaining
         ])
         .split(area);
@@ -74,7 +74,12 @@ fn render_spec(
         .spec
         .depends_on
         .as_ref()
-        .map(|deps| deps.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(", "))
+        .map(|deps| {
+            deps.iter()
+                .map(|d| d.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
         .unwrap_or_else(|| "-".to_string());
 
     let lines = vec![

@@ -1,10 +1,10 @@
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
 use ratatui::{
+    Frame,
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Cell, Row, Table},
-    Frame,
 };
 
 use crate::k8s::terraform::Terraform;
@@ -14,7 +14,15 @@ use crate::ui::theme;
 use crate::util;
 
 pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
-    let items = get_filtered_terraforms(&state.tf_store, &state.namespace_filter, state.effective_search_query(), state.show_failures_only, state.show_waiting_only, state.sort_column, state.sort_descending);
+    let items = get_filtered_terraforms(
+        &state.tf_store,
+        &state.namespace_filter,
+        state.effective_search_query(),
+        state.show_failures_only,
+        state.show_waiting_only,
+        state.sort_column,
+        state.sort_descending,
+    );
 
     let active = state.sort_column;
     let desc = state.sort_descending;
@@ -34,16 +42,8 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     let rows: Vec<Row> = items
         .iter()
         .map(|tf| {
-            let ns = tf
-                .metadata
-                .namespace
-                .as_deref()
-                .unwrap_or("-");
-            let name = tf
-                .metadata
-                .name
-                .as_deref()
-                .unwrap_or("-");
+            let ns = tf.metadata.namespace.as_deref().unwrap_or("-");
+            let name = tf.metadata.name.as_deref().unwrap_or("-");
 
             let (ready_text, ready_style) = get_ready_status(tf);
             let suspended_cell = if tf.spec.suspend.unwrap_or(false) {
@@ -140,16 +140,18 @@ pub fn get_filtered_terraforms(
 
     match sort_column {
         SortColumn::Namespace => filtered.sort_by(|a, b| {
-            a.metadata.namespace.cmp(&b.metadata.namespace)
+            a.metadata
+                .namespace
+                .cmp(&b.metadata.namespace)
                 .then(a.metadata.name.cmp(&b.metadata.name))
         }),
-        SortColumn::Name => filtered.sort_by(|a, b| {
-            a.metadata.name.cmp(&b.metadata.name)
-        }),
+        SortColumn::Name => filtered.sort_by(|a, b| a.metadata.name.cmp(&b.metadata.name)),
         SortColumn::Ready => filtered.sort_by(|a, b| {
             let ready_a = get_ready_str(a);
             let ready_b = get_ready_str(b);
-            ready_a.cmp(&ready_b).then(a.metadata.name.cmp(&b.metadata.name))
+            ready_a
+                .cmp(&ready_b)
+                .then(a.metadata.name.cmp(&b.metadata.name))
         }),
         SortColumn::LastApplied => filtered.sort_by(|a, b| {
             // Ascending = oldest applied first; resources that have never applied sort last.
@@ -216,10 +218,7 @@ fn get_ready_str(tf: &Terraform) -> String {
 }
 
 fn get_ready_status(tf: &Terraform) -> (String, Style) {
-    let conditions = tf
-        .status
-        .as_ref()
-        .and_then(|s| s.conditions.as_ref());
+    let conditions = tf.status.as_ref().and_then(|s| s.conditions.as_ref());
 
     if let Some(conditions) = conditions {
         if let Some(ready) = find_condition(conditions, "Ready") {
@@ -298,9 +297,7 @@ fn is_waiting(tf: &Terraform) -> bool {
         .as_ref()
         .and_then(|s| s.conditions.as_ref())
         .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"));
-    let is_ready = ready_condition
-        .map(|c| c.status == "True")
-        .unwrap_or(false);
+    let is_ready = ready_condition.map(|c| c.status == "True").unwrap_or(false);
     if !is_ready {
         return false;
     }

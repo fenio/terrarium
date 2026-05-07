@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
 
 use crate::ui::theme;
@@ -40,9 +40,7 @@ pub fn render_confirm(f: &mut Frame, message: &str) {
         Span::raw("  "),
         Span::styled(
             " [n]o ",
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
     ]);
     let buttons_para = Paragraph::new(buttons);

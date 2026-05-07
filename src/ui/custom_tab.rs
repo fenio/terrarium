@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
     text::Span,
     widgets::{Cell, Row, Table},
-    Frame,
 };
 
 use crate::config::{CustomColumn, CustomColumnSource, CustomTab};
@@ -192,7 +192,11 @@ pub fn get_filtered_entries(
     // Sort by the configured sort column
     if let Some(sort_col) = &tab.sort_by {
         let sort_lower = sort_col.to_lowercase();
-        if let Some(col) = tab.columns.iter().find(|c| c.label.to_lowercase() == sort_lower) {
+        if let Some(col) = tab
+            .columns
+            .iter()
+            .find(|c| c.label.to_lowercase() == sort_lower)
+        {
             entries.sort_by(|a, b| {
                 let va = entry_value(a, &col.source);
                 let vb = entry_value(b, &col.source);
@@ -256,7 +260,11 @@ fn classify_date_style(date_str: &str) -> Style {
             Style::default()
                 .fg(Color::Rgb(240, 80, 80))
                 .add_modifier(Modifier::BOLD)
-        } else if date <= today.checked_add(jiff::Span::new().days(7)).unwrap_or(today) {
+        } else if date
+            <= today
+                .checked_add(jiff::Span::new().days(7))
+                .unwrap_or(today)
+        {
             Style::default()
                 .fg(Color::Rgb(240, 200, 60))
                 .add_modifier(Modifier::BOLD)

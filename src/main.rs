@@ -14,7 +14,11 @@ use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "terrarium", version, about = "TUI for managing tofu-controller resources")]
+#[command(
+    name = "terrarium",
+    version,
+    about = "TUI for managing tofu-controller resources"
+)]
 struct Cli {
     /// Kubernetes namespace to filter (default: all namespaces)
     #[arg(short, long)]
@@ -97,9 +101,9 @@ async fn main() -> anyhow::Result<()> {
                 let c = client.clone();
                 tokio::spawn(async move {
                     if let Err(e) = k8s::watcher::run_tf_watcher(c, tf_writer, wtx.clone()).await {
-                        let _ = wtx.send(action::Action::ConnectionError(
-                            format!("Terraform watcher failed: {e}"),
-                        ));
+                        let _ = wtx.send(action::Action::ConnectionError(format!(
+                            "Terraform watcher failed: {e}"
+                        )));
                     }
                 });
 
@@ -107,9 +111,9 @@ async fn main() -> anyhow::Result<()> {
                 let c = client.clone();
                 tokio::spawn(async move {
                     if let Err(e) = k8s::watcher::run_ks_watcher(c, ks_writer, wtx.clone()).await {
-                        let _ = wtx.send(action::Action::ConnectionError(
-                            format!("Kustomization watcher failed: {e}"),
-                        ));
+                        let _ = wtx.send(action::Action::ConnectionError(format!(
+                            "Kustomization watcher failed: {e}"
+                        )));
                     }
                 });
 
@@ -119,9 +123,9 @@ async fn main() -> anyhow::Result<()> {
                     if let Err(e) =
                         k8s::watcher::run_gitrepo_watcher(c, gr_writer, wtx.clone()).await
                     {
-                        let _ = wtx.send(action::Action::ConnectionError(
-                            format!("GitRepository watcher failed: {e}"),
-                        ));
+                        let _ = wtx.send(action::Action::ConnectionError(format!(
+                            "GitRepository watcher failed: {e}"
+                        )));
                     }
                 });
 
@@ -130,9 +134,9 @@ async fn main() -> anyhow::Result<()> {
                 let ns_clone = namespace.clone();
                 tokio::spawn(async move {
                     if let Err(e) = k8s::runners::poll_runner_pods(c, wtx.clone(), ns_clone).await {
-                        let _ = wtx.send(action::Action::ConnectionError(
-                            format!("Runner poller failed: {e}"),
-                        ));
+                        let _ = wtx.send(action::Action::ConnectionError(format!(
+                            "Runner poller failed: {e}"
+                        )));
                     }
                 });
 
@@ -142,9 +146,9 @@ async fn main() -> anyhow::Result<()> {
                     if let Err(e) =
                         k8s::controller::poll_controller_info(c, wtx.clone(), controller_ns).await
                     {
-                        let _ = wtx.send(action::Action::ConnectionError(
-                            format!("Controller poller failed: {e}"),
-                        ));
+                        let _ = wtx.send(action::Action::ConnectionError(format!(
+                            "Controller poller failed: {e}"
+                        )));
                     }
                 });
             }

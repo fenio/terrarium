@@ -78,29 +78,87 @@ pub enum Action {
     BulkResume,
 
     // K8s mutations (Terraform-specific)
-    ApprovePlan { namespace: String, name: String },
-    Replan { namespace: String, name: String },
-    ForceUnlock { namespace: String, name: String },
-    ExecBreakTheGlass { namespace: String, name: String },
-    DeleteResource { namespace: String, name: String },
-    KillRunner { namespace: String, name: String },
-    StreamRunnerLogs { namespace: String, name: String },
-    JumpToTerraformDetail { namespace: String, name: String },
-    StreamControllerLogs { namespace: String, pod_name: String },
-    OpenShortcut { namespace: String, name: String, shortcut_idx: usize },
-    FetchPlan { namespace: String, name: String, workspace: Option<String> },
+    ApprovePlan {
+        namespace: String,
+        name: String,
+    },
+    Replan {
+        namespace: String,
+        name: String,
+    },
+    ForceUnlock {
+        namespace: String,
+        name: String,
+    },
+    ExecBreakTheGlass {
+        namespace: String,
+        name: String,
+    },
+    DeleteResource {
+        namespace: String,
+        name: String,
+    },
+    KillRunner {
+        namespace: String,
+        name: String,
+    },
+    StreamRunnerLogs {
+        namespace: String,
+        name: String,
+    },
+    JumpToTerraformDetail {
+        namespace: String,
+        name: String,
+    },
+    StreamControllerLogs {
+        namespace: String,
+        pod_name: String,
+    },
+    OpenShortcut {
+        namespace: String,
+        name: String,
+        shortcut_idx: usize,
+    },
+    FetchPlan {
+        namespace: String,
+        name: String,
+        workspace: Option<String>,
+    },
 
     // K8s mutations (shared TF + KS)
-    Reconcile { kind: ResourceKind, namespace: String, name: String },
-    Suspend { kind: ResourceKind, namespace: String, name: String },
-    Resume { kind: ResourceKind, namespace: String, name: String },
+    Reconcile {
+        kind: ResourceKind,
+        namespace: String,
+        name: String,
+    },
+    Suspend {
+        kind: ResourceKind,
+        namespace: String,
+        name: String,
+    },
+    Resume {
+        kind: ResourceKind,
+        namespace: String,
+        name: String,
+    },
 
     // JSON / YAML resource view
-    FetchJson { kind: ResourceKind, namespace: String, name: String },
-    FetchYaml { kind: ResourceKind, namespace: String, name: String },
+    FetchJson {
+        kind: ResourceKind,
+        namespace: String,
+        name: String,
+    },
+    FetchYaml {
+        kind: ResourceKind,
+        namespace: String,
+        name: String,
+    },
 
     // Outputs view (Terraform only)
-    FetchOutputs { namespace: String, name: String },
+    FetchOutputs {
+        namespace: String,
+        name: String,
+    },
     OutputsFetched(String),
     OutputsFetchError(String),
 
@@ -114,12 +172,20 @@ pub enum Action {
     JsonFetchError(String),
 
     // Events view
-    FetchEvents { kind: ResourceKind, namespace: String, name: String },
+    FetchEvents {
+        kind: ResourceKind,
+        namespace: String,
+        name: String,
+    },
     EventsFetched(String),
     EventsFetchError(String),
 
     // Conditions viewer (no fetch — sourced from in-memory store)
-    ViewConditions { kind: ResourceKind, namespace: String, name: String },
+    ViewConditions {
+        kind: ResourceKind,
+        namespace: String,
+        name: String,
+    },
 
     // Save viewer content to file
     SaveViewerContent,
@@ -141,7 +207,10 @@ pub enum Action {
     GitRepoCrdMissing,
 
     // K8s client initialization
-    K8sClientReady { client: K8sClient, context_name: String },
+    K8sClientReady {
+        client: K8sClient,
+        context_name: String,
+    },
     ConnectionError(String),
     DismissError,
 

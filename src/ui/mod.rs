@@ -1,4 +1,5 @@
 pub mod controller_dashboard;
+pub mod custom_tab;
 pub mod detail;
 pub mod dialog;
 pub mod help;
@@ -12,4 +13,3 @@ pub mod source_summary;
 pub mod status_bar;
 pub mod terraform_detail;
 pub mod theme;
-pub mod custom_tab;

@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Paragraph},
-    Frame,
 };
 
 use crate::state::store::{AppState, FlashKind, InputMode, TabKind, ViewState};
@@ -40,7 +40,12 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
                     state.search_query.clone(),
                     Style::default().fg(Color::White).bg(theme::STATUS_BAR_BG),
                 ),
-                Span::styled("_", Style::default().fg(Color::Rgb(140, 200, 255)).bg(theme::STATUS_BAR_BG)),
+                Span::styled(
+                    "_",
+                    Style::default()
+                        .fg(Color::Rgb(140, 200, 255))
+                        .bg(theme::STATUS_BAR_BG),
+                ),
             ]);
             f.render_widget(Paragraph::new(line), rows[0]);
         }
@@ -49,7 +54,9 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
                 let line = Line::from(vec![
                     Span::styled(
                         format!(" {} ", &dialog.message),
-                        Style::default().fg(Color::Rgb(240, 200, 60)).bg(theme::STATUS_BAR_BG),
+                        Style::default()
+                            .fg(Color::Rgb(240, 200, 60))
+                            .bg(theme::STATUS_BAR_BG),
                     ),
                     Span::styled(" [y]es  [n]o ", theme::STATUS_BAR_KEY),
                 ]);
@@ -85,8 +92,18 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
                     state.viewer_search_query.clone(),
                     Style::default().fg(Color::White).bg(theme::STATUS_BAR_BG),
                 ),
-                Span::styled("_", Style::default().fg(Color::Rgb(140, 200, 255)).bg(theme::STATUS_BAR_BG)),
-                Span::styled(match_info, Style::default().fg(Color::Rgb(140, 145, 165)).bg(theme::STATUS_BAR_BG)),
+                Span::styled(
+                    "_",
+                    Style::default()
+                        .fg(Color::Rgb(140, 200, 255))
+                        .bg(theme::STATUS_BAR_BG),
+                ),
+                Span::styled(
+                    match_info,
+                    Style::default()
+                        .fg(Color::Rgb(140, 145, 165))
+                        .bg(theme::STATUS_BAR_BG),
+                ),
             ]);
             f.render_widget(Paragraph::new(line), rows[0]);
         }
@@ -188,7 +205,11 @@ fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>
         ]),
         ViewState::TerraformDetail { .. } => render_groups(&[
             Group(&[("Esc", "back")]),
-            Group(&[("r", "reconcile"), ("R", "replan"), ("s/u", "suspend/resume")]),
+            Group(&[
+                ("r", "reconcile"),
+                ("R", "replan"),
+                ("s/u", "suspend/resume"),
+            ]),
             Group(&[("a", "approve"), ("p", "plan"), ("F", "unlock")]),
             Group(&[("x", "btg"), ("d", "delete")]),
         ]),
@@ -243,12 +264,9 @@ fn build_meta_line(state: &AppState) -> Vec<Span<'static>> {
             ("O", "outputs"),
             ("L", "runner logs"),
         ],
-        ViewState::List(TabKind::Kustomizations)
-        | ViewState::KustomizationDetail { .. } => vec![
-            ("y/Y", "json/yaml"),
-            ("e", "events"),
-            ("c", "conditions"),
-        ],
+        ViewState::List(TabKind::Kustomizations) | ViewState::KustomizationDetail { .. } => {
+            vec![("y/Y", "json/yaml"), ("e", "events"), ("c", "conditions")]
+        }
         _ => Vec::new(),
     };
     if !inspect.is_empty() {
@@ -345,7 +363,9 @@ fn build_meta_line(state: &AppState) -> Vec<Span<'static>> {
     if state.mouse_enabled {
         spans.push(Span::styled(
             "  [MOUSE]",
-            Style::default().fg(Color::Rgb(80, 200, 120)).bg(theme::STATUS_BAR_BG),
+            Style::default()
+                .fg(Color::Rgb(80, 200, 120))
+                .bg(theme::STATUS_BAR_BG),
         ));
     }
 

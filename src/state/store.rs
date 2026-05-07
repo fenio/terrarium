@@ -50,13 +50,29 @@ pub fn tab_from_index(idx: usize, config: &Config) -> Option<TabKind> {
 #[derive(Debug, Clone)]
 pub enum ViewState {
     List(TabKind),
-    TerraformDetail { namespace: String, name: String },
-    KustomizationDetail { namespace: String, name: String },
-    PlanViewer { content: String },
-    JsonViewer { content: String },
-    EventsViewer { content: String },
-    OutputsViewer { content: String },
-    ConditionsViewer { content: String },
+    TerraformDetail {
+        namespace: String,
+        name: String,
+    },
+    KustomizationDetail {
+        namespace: String,
+        name: String,
+    },
+    PlanViewer {
+        content: String,
+    },
+    JsonViewer {
+        content: String,
+    },
+    EventsViewer {
+        content: String,
+    },
+    OutputsViewer {
+        content: String,
+    },
+    ConditionsViewer {
+        content: String,
+    },
     LogViewer {
         namespace: String,
         pod_name: String,
@@ -280,7 +296,9 @@ impl AppState {
             ks_table_state: TableState::default(),
             runner_table_state: TableState::default(),
             backlog_table_state: TableState::default(),
-            custom_tab_states: (0..custom_tab_count).map(|_| TableState::default()).collect(),
+            custom_tab_states: (0..custom_tab_count)
+                .map(|_| TableState::default())
+                .collect(),
             backlog_namespaces: Vec::new(),
             plan_scroll: 0,
             horizontal_scroll: 0,
@@ -497,16 +515,22 @@ mod tests {
     #[test]
     fn next_and_prev_tab_change_active_without_touching_stacks() {
         let mut state = make_state();
-        state
-            .current_view_stack_mut()
-            .push(ViewState::JsonViewer { content: "x".into() });
+        state.current_view_stack_mut().push(ViewState::JsonViewer {
+            content: "x".into(),
+        });
         let depths_before: Vec<usize> = state.view_stacks.iter().map(Vec::len).collect();
         let active_before = state.active_tab.clone();
 
         state.next_tab();
-        assert_ne!(state.active_tab, active_before, "next_tab must change active");
+        assert_ne!(
+            state.active_tab, active_before,
+            "next_tab must change active"
+        );
         let depths_after: Vec<usize> = state.view_stacks.iter().map(Vec::len).collect();
-        assert_eq!(depths_before, depths_after, "tab nav must not mutate stacks");
+        assert_eq!(
+            depths_before, depths_after,
+            "tab nav must not mutate stacks"
+        );
 
         state.prev_tab();
         assert_eq!(state.active_tab, active_before, "prev_tab should land back");
@@ -515,9 +539,9 @@ mod tests {
     #[test]
     fn pushed_view_survives_round_trip_across_tabs() {
         let mut state = make_state();
-        state
-            .current_view_stack_mut()
-            .push(ViewState::JsonViewer { content: "preserved".into() });
+        state.current_view_stack_mut().push(ViewState::JsonViewer {
+            content: "preserved".into(),
+        });
         match state.current_view() {
             ViewState::JsonViewer { content } => assert_eq!(content, "preserved"),
             other => panic!("expected JsonViewer at start, got {other:?}"),

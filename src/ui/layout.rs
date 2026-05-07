@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Paragraph, Wrap},
-    Frame,
 };
 
 use crate::k8s::kustomization::KustomizationSourceRefKind;
@@ -20,7 +20,7 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(6), // Header: 3 logo/info + 3-row tab strip
-            Constraint::Min(5),   // Body
+            Constraint::Min(5),    // Body
             Constraint::Length(2), // Status bar (two rows)
         ])
         .split(f.area());
@@ -114,7 +114,12 @@ fn render_error_overlay(f: &mut Frame, message: &str) {
 
     let lines: Vec<Line> = message
         .lines()
-        .map(|l| Line::from(Span::styled(l, Style::default().fg(Color::Rgb(200, 200, 220)))))
+        .map(|l| {
+            Line::from(Span::styled(
+                l,
+                Style::default().fg(Color::Rgb(200, 200, 220)),
+            ))
+        })
         .collect();
 
     f.render_widget(
@@ -138,8 +143,12 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
     let hdr_bg = Style::default().bg(theme::HEADER_BAR_BG);
     // Same brightness as the bottom status bar text — discoverable
     // at a glance instead of fading into the header background.
-    let dim = Style::default().fg(Color::Rgb(140, 145, 165)).bg(theme::HEADER_BAR_BG);
-    let bright = Style::default().fg(Color::Rgb(200, 210, 230)).bg(theme::HEADER_BAR_BG);
+    let dim = Style::default()
+        .fg(Color::Rgb(140, 145, 165))
+        .bg(theme::HEADER_BAR_BG);
+    let bright = Style::default()
+        .fg(Color::Rgb(200, 210, 230))
+        .bg(theme::HEADER_BAR_BG);
     let fail_style = Style::default()
         .fg(Color::Rgb(240, 80, 80))
         .bg(theme::HEADER_BAR_BG)
@@ -165,7 +174,10 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         };
 
         // Render logo on the left
-        let logo_area = Rect { width: logo_width.min(area.width), ..row_area };
+        let logo_area = Rect {
+            width: logo_width.min(area.width),
+            ..row_area
+        };
         f.render_widget(
             Paragraph::new(Span::styled(format!(" {logo_line}"), logo_style)),
             logo_area,
@@ -177,11 +189,17 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
             let ver_x = area.x + logo_width;
             let ver_width = area.width.saturating_sub(logo_width);
             if ver_width > 6 {
-                let ver_area = Rect { x: ver_x, width: ver_width, ..row_area };
+                let ver_area = Rect {
+                    x: ver_x,
+                    width: ver_width,
+                    ..row_area
+                };
                 f.render_widget(
                     Paragraph::new(Span::styled(
                         format!(" v{version}"),
-                        Style::default().fg(Color::Rgb(80, 90, 120)).bg(theme::HEADER_BAR_BG),
+                        Style::default()
+                            .fg(Color::Rgb(80, 90, 120))
+                            .bg(theme::HEADER_BAR_BG),
                     )),
                     ver_area,
                 );
@@ -215,41 +233,111 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         };
 
         // Info row 0: context
-        let ctx_area = Rect { x: info_x, y: area.y, width: info_width, height: 1 };
-        f.render_widget(Paragraph::new(Line::from(vec![
-            Span::styled("ctx: ", info_label),
-            Span::styled(format!(" {} ", state.context_name), theme::HEADER_CONTEXT),
-        ])), ctx_area);
+        let ctx_area = Rect {
+            x: info_x,
+            y: area.y,
+            width: info_width,
+            height: 1,
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("ctx: ", info_label),
+                Span::styled(format!(" {} ", state.context_name), theme::HEADER_CONTEXT),
+            ])),
+            ctx_area,
+        );
 
         // Info row 1: namespace
-        let ns_area = Rect { x: info_x, y: area.y + 1, width: info_width, height: 1 };
-        f.render_widget(Paragraph::new(Line::from(vec![
-            Span::styled(" ns: ", theme::HEADER_NS_LABEL),
-            Span::styled(format!(" {ns_text} "), theme::HEADER_NS),
-        ])), ns_area);
+        let ns_area = Rect {
+            x: info_x,
+            y: area.y + 1,
+            width: info_width,
+            height: 1,
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" ns: ", theme::HEADER_NS_LABEL),
+                Span::styled(format!(" {ns_text} "), theme::HEADER_NS),
+            ])),
+            ns_area,
+        );
 
         // Info row 2: freshness
-        let fr_area = Rect { x: info_x, y: area.y + 2, width: info_width, height: 1 };
-        f.render_widget(Paragraph::new(Line::from(vec![
-            Span::styled("  ⟳  ", Style::default().fg(freshness_color).bg(theme::HEADER_BAR_BG)),
-            Span::styled(&freshness_text, Style::default().fg(freshness_color).bg(theme::HEADER_BAR_BG)),
-        ])), fr_area);
+        let fr_area = Rect {
+            x: info_x,
+            y: area.y + 2,
+            width: info_width,
+            height: 1,
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    "  ⟳  ",
+                    Style::default()
+                        .fg(freshness_color)
+                        .bg(theme::HEADER_BAR_BG),
+                ),
+                Span::styled(
+                    &freshness_text,
+                    Style::default()
+                        .fg(freshness_color)
+                        .bg(theme::HEADER_BAR_BG),
+                ),
+            ])),
+            fr_area,
+        );
     }
 
     // -- Rows 3-4: Browser-tab-style navigation --
     // (number, label, count_or_none, failures, crd_missing)
     type NavItem = (usize, String, Option<usize>, Option<usize>, bool);
-    let tf_count_opt = if state.tf_synced { Some(tf_count) } else { None };
-    let ks_count_opt = if state.ks_synced { Some(ks_count) } else { None };
-    let runners_count_opt = if state.runners_synced { Some(runner_count) } else { None };
+    let tf_count_opt = if state.tf_synced {
+        Some(tf_count)
+    } else {
+        None
+    };
+    let ks_count_opt = if state.ks_synced {
+        Some(ks_count)
+    } else {
+        None
+    };
+    let runners_count_opt = if state.runners_synced {
+        Some(runner_count)
+    } else {
+        None
+    };
     let mut nav_items: Vec<NavItem> = vec![
-        (1, "Controller".to_string(),      None,             None,              false),
-        (2, "Terraform".to_string(),       tf_count_opt,     if tf_failures > 0 { Some(tf_failures) } else { None }, state.tf_crd_missing),
-        (3, "Kustomizations".to_string(),  ks_count_opt,     if ks_failures > 0 { Some(ks_failures) } else { None }, state.ks_crd_missing),
-        (4, "Runners".to_string(),         runners_count_opt,  None,            false),
+        (1, "Controller".to_string(), None, None, false),
+        (
+            2,
+            "Terraform".to_string(),
+            tf_count_opt,
+            if tf_failures > 0 {
+                Some(tf_failures)
+            } else {
+                None
+            },
+            state.tf_crd_missing,
+        ),
+        (
+            3,
+            "Kustomizations".to_string(),
+            ks_count_opt,
+            if ks_failures > 0 {
+                Some(ks_failures)
+            } else {
+                None
+            },
+            state.ks_crd_missing,
+        ),
+        (4, "Runners".to_string(), runners_count_opt, None, false),
     ];
     for (i, ct) in state.config.custom_tabs.iter().enumerate() {
-        let count = if state.tf_synced { Some(custom_tab::count_entries(&state.tf_store, ct)) } else { None };
+        let count = if state.tf_synced {
+            Some(custom_tab::count_entries(&state.tf_store, ct))
+        } else {
+            None
+        };
         nav_items.push((5 + i, ct.name.clone(), count, None, false));
     }
 
@@ -352,11 +440,23 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         }
     }
 
-    let r3_area = Rect { y: area.y + 3, height: 1, ..area };
+    let r3_area = Rect {
+        y: area.y + 3,
+        height: 1,
+        ..area
+    };
     f.render_widget(Paragraph::new(Line::from(top_spans)), r3_area);
-    let r4_area = Rect { y: area.y + 4, height: 1, ..area };
+    let r4_area = Rect {
+        y: area.y + 4,
+        height: 1,
+        ..area
+    };
     f.render_widget(Paragraph::new(Line::from(body_spans)), r4_area);
-    let r5_area = Rect { y: area.y + 5, height: 1, ..area };
+    let r5_area = Rect {
+        y: area.y + 5,
+        height: 1,
+        ..area
+    };
     f.render_widget(Paragraph::new(Line::from(bot_spans)), r5_area);
 
     // Right-side indicators on the tab body row: FAILURES ONLY /
@@ -561,23 +661,48 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
             }
         }
         ViewState::PlanViewer { ref content } => {
-            let vp = ViewerParams { scroll: state.plan_scroll, hscroll: state.horizontal_scroll, wrap: state.viewer_wrap, search_query: &state.viewer_search_query };
+            let vp = ViewerParams {
+                scroll: state.plan_scroll,
+                hscroll: state.horizontal_scroll,
+                wrap: state.viewer_wrap,
+                search_query: &state.viewer_search_query,
+            };
             render_plan_viewer(f, area, content, &vp);
         }
         ViewState::JsonViewer { ref content } => {
-            let vp = ViewerParams { scroll: state.plan_scroll, hscroll: state.horizontal_scroll, wrap: state.viewer_wrap, search_query: &state.viewer_search_query };
+            let vp = ViewerParams {
+                scroll: state.plan_scroll,
+                hscroll: state.horizontal_scroll,
+                wrap: state.viewer_wrap,
+                search_query: &state.viewer_search_query,
+            };
             render_json_viewer(f, area, content, &vp);
         }
         ViewState::EventsViewer { ref content } => {
-            let vp = ViewerParams { scroll: state.plan_scroll, hscroll: state.horizontal_scroll, wrap: state.viewer_wrap, search_query: &state.viewer_search_query };
+            let vp = ViewerParams {
+                scroll: state.plan_scroll,
+                hscroll: state.horizontal_scroll,
+                wrap: state.viewer_wrap,
+                search_query: &state.viewer_search_query,
+            };
             render_viewer(f, area, content, &vp);
         }
         ViewState::OutputsViewer { ref content } => {
-            let vp = ViewerParams { scroll: state.plan_scroll, hscroll: state.horizontal_scroll, wrap: state.viewer_wrap, search_query: &state.viewer_search_query };
+            let vp = ViewerParams {
+                scroll: state.plan_scroll,
+                hscroll: state.horizontal_scroll,
+                wrap: state.viewer_wrap,
+                search_query: &state.viewer_search_query,
+            };
             render_json_viewer(f, area, content, &vp);
         }
         ViewState::ConditionsViewer { ref content } => {
-            let vp = ViewerParams { scroll: state.plan_scroll, hscroll: state.horizontal_scroll, wrap: state.viewer_wrap, search_query: &state.viewer_search_query };
+            let vp = ViewerParams {
+                scroll: state.plan_scroll,
+                hscroll: state.horizontal_scroll,
+                wrap: state.viewer_wrap,
+                search_query: &state.viewer_search_query,
+            };
             render_viewer(f, area, content, &vp);
         }
         ViewState::LogViewer {
@@ -587,14 +712,26 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
             active_container,
             ref content,
         } => {
-            let vp = ViewerParams { scroll: state.plan_scroll, hscroll: state.horizontal_scroll, wrap: state.viewer_wrap, search_query: &state.viewer_search_query };
+            let vp = ViewerParams {
+                scroll: state.plan_scroll,
+                hscroll: state.horizontal_scroll,
+                wrap: state.viewer_wrap,
+                search_query: &state.viewer_search_query,
+            };
             // Reserve a top row for the container picker so it stays close
             // to the log content it controls.
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(1), Constraint::Min(0)])
                 .split(area);
-            render_log_picker(f, chunks[0], namespace, pod_name, containers, active_container);
+            render_log_picker(
+                f,
+                chunks[0],
+                namespace,
+                pod_name,
+                containers,
+                active_container,
+            );
             render_viewer(f, chunks[1], content, &vp);
         }
     }
@@ -753,10 +890,7 @@ fn highlight_search_in_spans<'a>(line: Line<'a>, query: &str) -> Line<'a> {
 
         // Remaining text after last match in this span
         if pos < span_text.len() {
-            result.push(Span::styled(
-                span_text[pos..].to_string(),
-                span_style,
-            ));
+            result.push(Span::styled(span_text[pos..].to_string(), span_style));
         }
 
         char_offset = span_end;
@@ -771,7 +905,10 @@ fn render_viewer(f: &mut Frame, area: Rect, content: &str, vp: &ViewerParams) {
 
     if !vp.search_query.is_empty() {
         let base = Style::default().fg(Color::White);
-        let lines: Vec<Line> = content.lines().map(|l| highlight_search_in_line(l, vp.search_query, base)).collect();
+        let lines: Vec<Line> = content
+            .lines()
+            .map(|l| highlight_search_in_line(l, vp.search_query, base))
+            .collect();
         let mut para = Paragraph::new(lines).scroll((scroll_u16, hscroll_u16));
         if vp.wrap {
             para = para.wrap(Wrap { trim: false });
@@ -793,9 +930,14 @@ fn render_plan_viewer(f: &mut Frame, area: Rect, content: &str, vp: &ViewerParam
         .lines()
         .map(|line| {
             let trimmed = line.trim_start();
-            let style = if trimmed.starts_with("+ ") || trimmed.starts_with("+\t") || trimmed == "+" {
+            let style = if trimmed.starts_with("+ ") || trimmed.starts_with("+\t") || trimmed == "+"
+            {
                 theme::PLAN_CREATE
-            } else if trimmed.starts_with("- ") || trimmed.starts_with("-\t") || trimmed == "-" || trimmed.starts_with("-/") {
+            } else if trimmed.starts_with("- ")
+                || trimmed.starts_with("-\t")
+                || trimmed == "-"
+                || trimmed.starts_with("-/")
+            {
                 theme::PLAN_DESTROY
             } else if trimmed.starts_with("~ ") || trimmed.starts_with("~\t") || trimmed == "~" {
                 theme::PLAN_CHANGE
@@ -851,8 +993,14 @@ fn colorize_json_line<'a>(line: &'a str) -> Line<'a> {
     }
 
     // Braces and brackets
-    if trimmed == "{" || trimmed == "}" || trimmed == "{}" || trimmed == "},"
-        || trimmed == "[" || trimmed == "]" || trimmed == "[]" || trimmed == "],"
+    if trimmed == "{"
+        || trimmed == "}"
+        || trimmed == "{}"
+        || trimmed == "},"
+        || trimmed == "["
+        || trimmed == "]"
+        || trimmed == "[]"
+        || trimmed == "],"
     {
         return Line::styled(line, theme::JSON_BRACE);
     }
@@ -884,10 +1032,7 @@ fn colorize_json_line<'a>(line: &'a str) -> Line<'a> {
 
     // Bare values in arrays
     let value_style = colorize_json_value(trimmed.trim_end_matches(','));
-    Line::from(vec![
-        Span::raw(indent),
-        Span::styled(trimmed, value_style),
-    ])
+    Line::from(vec![Span::raw(indent), Span::styled(trimmed, value_style)])
 }
 
 fn colorize_json_value(value: &str) -> Style {

@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::Span,
     widgets::{Block, Borders, Clear, List, ListItem, ListState},
-    Frame,
 };
 
 use crate::state::store::AppState;
@@ -28,7 +28,7 @@ pub fn render(f: &mut Frame, state: &AppState) {
         .enumerate()
         .map(|(i, ns)| {
             let is_current = match &state.namespace_filter {
-                None => i == 0,    // "(all namespaces)" is index 0
+                None => i == 0, // "(all namespaces)" is index 0
                 Some(f) => ns == f,
             };
             let style = if is_current {
@@ -39,20 +39,15 @@ pub fn render(f: &mut Frame, state: &AppState) {
                 Style::default().fg(Color::White)
             };
             let marker = if is_current { " * " } else { "   " };
-            ListItem::new(Span::styled(
-                format!("{marker}{ns}"),
-                style,
-            ))
+            ListItem::new(Span::styled(format!("{marker}{ns}"), style))
         })
         .collect();
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(
-            Style::default()
-                .bg(Color::Rgb(45, 50, 70))
-                .add_modifier(Modifier::BOLD),
-        );
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .bg(Color::Rgb(45, 50, 70))
+            .add_modifier(Modifier::BOLD),
+    );
 
     let mut list_state = ListState::default();
     list_state.select(Some(state.ns_picker_selected));

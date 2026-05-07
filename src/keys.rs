@@ -65,11 +65,12 @@ pub fn handle_key(key: KeyEvent, view: &ViewState, input_mode: &InputMode) -> Ac
         ViewState::TerraformDetail { .. } | ViewState::KustomizationDetail { .. } => {
             handle_detail_key(key)
         }
-        ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. }
-        | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. }
-        | ViewState::ConditionsViewer { .. } | ViewState::LogViewer { .. } => {
-            handle_viewer_key(key)
-        }
+        ViewState::PlanViewer { .. }
+        | ViewState::JsonViewer { .. }
+        | ViewState::EventsViewer { .. }
+        | ViewState::OutputsViewer { .. }
+        | ViewState::ConditionsViewer { .. }
+        | ViewState::LogViewer { .. } => handle_viewer_key(key),
     }
 }
 
@@ -112,10 +113,21 @@ fn handle_list_key(key: KeyEvent) -> Action {
         KeyCode::Char('m') => Action::ToggleMouse,
         KeyCode::Char('M') => Action::ToggleMetrics,
         // Context-dependent actions resolved in app.rs
-        KeyCode::Char('a') | KeyCode::Char('r') | KeyCode::Char('R') | KeyCode::Char('s')
-        | KeyCode::Char('u') | KeyCode::Char('d') | KeyCode::Char('p') | KeyCode::Char('F')
-        | KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('e') | KeyCode::Char('T')
-        | KeyCode::Char('O') | KeyCode::Char('x') | KeyCode::Char('L') => Action::None,
+        KeyCode::Char('a')
+        | KeyCode::Char('r')
+        | KeyCode::Char('R')
+        | KeyCode::Char('s')
+        | KeyCode::Char('u')
+        | KeyCode::Char('d')
+        | KeyCode::Char('p')
+        | KeyCode::Char('F')
+        | KeyCode::Char('y')
+        | KeyCode::Char('Y')
+        | KeyCode::Char('e')
+        | KeyCode::Char('T')
+        | KeyCode::Char('O')
+        | KeyCode::Char('x')
+        | KeyCode::Char('L') => Action::None,
         KeyCode::Esc => Action::Back,
         _ => Action::None,
     }
@@ -134,10 +146,19 @@ fn handle_detail_key(key: KeyEvent) -> Action {
         KeyCode::Char('4') => Action::GoToTab(3),
         KeyCode::Char('5') => Action::GoToTab(4),
         // Context-dependent actions resolved in app.rs
-        KeyCode::Char('a') | KeyCode::Char('r') | KeyCode::Char('R') | KeyCode::Char('s')
-        | KeyCode::Char('u') | KeyCode::Char('p') | KeyCode::Char('F')
-        | KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('e')
-        | KeyCode::Char('c') | KeyCode::Char('O') | KeyCode::Char('x')
+        KeyCode::Char('a')
+        | KeyCode::Char('r')
+        | KeyCode::Char('R')
+        | KeyCode::Char('s')
+        | KeyCode::Char('u')
+        | KeyCode::Char('p')
+        | KeyCode::Char('F')
+        | KeyCode::Char('y')
+        | KeyCode::Char('Y')
+        | KeyCode::Char('e')
+        | KeyCode::Char('c')
+        | KeyCode::Char('O')
+        | KeyCode::Char('x')
         | KeyCode::Char('L') => Action::None,
         _ => Action::None,
     }
@@ -207,7 +228,10 @@ mod tests {
 
     #[test]
     fn detail_key_maps_tab_keys_to_tab_nav() {
-        assert!(matches!(handle_detail_key(key(KeyCode::Tab)), Action::NextTab));
+        assert!(matches!(
+            handle_detail_key(key(KeyCode::Tab)),
+            Action::NextTab
+        ));
         assert!(matches!(
             handle_detail_key(key(KeyCode::BackTab)),
             Action::PrevTab

@@ -3,8 +3,9 @@ use futures::TryStreamExt;
 use kube::{
     api::Api,
     runtime::{
+        WatchStreamExt,
         reflector::{self, store::Writer},
-        watcher, WatchStreamExt,
+        watcher,
     },
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -48,7 +49,10 @@ pub async fn run_tf_watcher(
 
     if let Err(e) = &result {
         let msg = format!("{e}");
-        if msg.contains("404") || msg.contains("not found") || msg.contains("the server could not find the requested resource") {
+        if msg.contains("404")
+            || msg.contains("not found")
+            || msg.contains("the server could not find the requested resource")
+        {
             let _ = tx.send(Action::TerraformCrdMissing);
             return Ok(());
         }
@@ -75,7 +79,10 @@ pub async fn run_ks_watcher(
 
     if let Err(e) = &result {
         let msg = format!("{e}");
-        if msg.contains("404") || msg.contains("not found") || msg.contains("the server could not find the requested resource") {
+        if msg.contains("404")
+            || msg.contains("not found")
+            || msg.contains("the server could not find the requested resource")
+        {
             let _ = tx.send(Action::KustomizationCrdMissing);
             return Ok(());
         }
@@ -102,7 +109,10 @@ pub async fn run_gitrepo_watcher(
 
     if let Err(e) = &result {
         let msg = format!("{e}");
-        if msg.contains("404") || msg.contains("not found") || msg.contains("the server could not find the requested resource") {
+        if msg.contains("404")
+            || msg.contains("not found")
+            || msg.contains("the server could not find the requested resource")
+        {
             let _ = tx.send(Action::GitRepoCrdMissing);
             return Ok(());
         }

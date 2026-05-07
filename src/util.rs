@@ -167,8 +167,14 @@ mod tests {
             "error running Plan: rpc error: code = Internal desc = exit status 1\n\nError: boom",
         )];
         let out = format_conditions_viewer("Terraform", "ns", "name", &conds);
-        assert!(!out.contains("rpc error"), "framing should be stripped: {out}");
-        assert!(out.contains("Error: boom"), "humanized body should appear: {out}");
+        assert!(
+            !out.contains("rpc error"),
+            "framing should be stripped: {out}"
+        );
+        assert!(
+            out.contains("Error: boom"),
+            "humanized body should appear: {out}"
+        );
     }
 
     #[test]
@@ -182,7 +188,8 @@ mod tests {
 
     #[test]
     fn humanize_strips_apply_rpc_framing() {
-        let raw = "error running Apply: rpc error: code = Internal desc = exit status 2\nError: boom";
+        let raw =
+            "error running Apply: rpc error: code = Internal desc = exit status 2\nError: boom";
         let lines = humanize_condition_message(raw);
         assert_eq!(lines, vec!["Error: boom"]);
     }

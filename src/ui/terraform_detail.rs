@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
-    Frame,
 };
 
 use crate::config::DetailField;
@@ -35,9 +35,9 @@ pub fn render(f: &mut Frame, area: Rect, tf: &Terraform, ctx: &RenderCtx<'_>) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),                   // Title
-                Constraint::Length(spec_status_height),  // Spec + Status
-                Constraint::Length(conditions_height),   // Conditions
+                Constraint::Length(1),                  // Title
+                Constraint::Length(spec_status_height), // Spec + Status
+                Constraint::Length(conditions_height),  // Conditions
                 Constraint::Min(5),                     // Logs
             ])
             .split(area);
@@ -52,9 +52,9 @@ pub fn render(f: &mut Frame, area: Rect, tf: &Terraform, ctx: &RenderCtx<'_>) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),                   // Title
-                Constraint::Length(spec_status_height),  // Spec + Status
-                Constraint::Length(conditions_height),   // Conditions
+                Constraint::Length(1),                  // Title
+                Constraint::Length(spec_status_height), // Spec + Status
+                Constraint::Length(conditions_height),  // Conditions
                 Constraint::Min(0),                     // Remaining
             ])
             .split(area);
@@ -242,11 +242,8 @@ fn render_status(
                     .unwrap_or("-");
                 let padded_label = format!("{}: ", field.label);
                 spans.push(Span::styled(padded_label, theme::LABEL));
-                let mut style = Style::default().fg(Color::Rgb(
-                    field.color[0],
-                    field.color[1],
-                    field.color[2],
-                ));
+                let mut style =
+                    Style::default().fg(Color::Rgb(field.color[0], field.color[1], field.color[2]));
                 if field.bold {
                     style = style.add_modifier(Modifier::BOLD);
                 }

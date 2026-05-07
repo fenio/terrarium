@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, StreamExt};
 use k8s_openapi::api::core::v1::{ConfigMap, Event, Pod};
 use kube::api::{Api, ListParams, LogParams, Patch, PatchParams};
@@ -23,8 +23,12 @@ pub async fn approve_plan(client: &kube::Client, ns: &str, name: &str) -> Result
         .ok_or_else(|| anyhow!("No pending plan for {ns}/{name}"))?;
 
     let patch = json!({ "spec": { "approvePlan": plan_name } });
-    api.patch(name, &PatchParams::apply("terrarium"), &Patch::Merge(&patch))
-        .await?;
+    api.patch(
+        name,
+        &PatchParams::apply("terrarium"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
     Ok(())
 }
 
@@ -37,8 +41,12 @@ pub async fn force_reconcile(client: &kube::Client, ns: &str, name: &str) -> Res
             }
         }
     });
-    api.patch(name, &PatchParams::apply("terrarium"), &Patch::Merge(&patch))
-        .await?;
+    api.patch(
+        name,
+        &PatchParams::apply("terrarium"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
     Ok(())
 }
 
@@ -51,32 +59,48 @@ pub async fn replan(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
             }
         }
     });
-    api.patch(name, &PatchParams::apply("terrarium"), &Patch::Merge(&patch))
-        .await?;
+    api.patch(
+        name,
+        &PatchParams::apply("terrarium"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
     Ok(())
 }
 
 pub async fn suspend(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
     let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
     let patch = json!({ "spec": { "suspend": true } });
-    api.patch(name, &PatchParams::apply("terrarium"), &Patch::Merge(&patch))
-        .await?;
+    api.patch(
+        name,
+        &PatchParams::apply("terrarium"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
     Ok(())
 }
 
 pub async fn resume(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
     let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
     let patch = json!({ "spec": { "suspend": false } });
-    api.patch(name, &PatchParams::apply("terrarium"), &Patch::Merge(&patch))
-        .await?;
+    api.patch(
+        name,
+        &PatchParams::apply("terrarium"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
     Ok(())
 }
 
 pub async fn force_unlock(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
     let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
     let patch = json!({ "spec": { "tfstate": { "forceUnlock": "auto" } } });
-    api.patch(name, &PatchParams::apply("terrarium"), &Patch::Merge(&patch))
-        .await?;
+    api.patch(
+        name,
+        &PatchParams::apply("terrarium"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
     Ok(())
 }
 
@@ -98,8 +122,7 @@ pub async fn fetch_output_values(
         .map(|s| s.name.clone())
         .unwrap_or_else(|| format!("{name}-outputs"));
 
-    let secret_api: Api<k8s_openapi::api::core::v1::Secret> =
-        Api::namespaced(client.clone(), ns);
+    let secret_api: Api<k8s_openapi::api::core::v1::Secret> = Api::namespaced(client.clone(), ns);
     let secret = secret_api.get(&secret_name).await?;
 
     let mut values = std::collections::HashMap::new();
@@ -170,9 +193,10 @@ pub async fn fetch_plan(
     let mut plan_text = String::new();
     for cm in &cms {
         if let Some(data) = &cm.data
-            && let Some(chunk) = data.get("tfplan") {
-                plan_text.push_str(chunk);
-            }
+            && let Some(chunk) = data.get("tfplan")
+        {
+            plan_text.push_str(chunk);
+        }
     }
 
     if plan_text.is_empty() {
@@ -201,11 +225,7 @@ pub fn get_container_names(pod: &Pod) -> Vec<String> {
 
 // -- Kustomization actions --
 
-pub async fn reconcile_kustomization(
-    client: &kube::Client,
-    ns: &str,
-    name: &str,
-) -> Result<()> {
+pub async fn reconcile_kustomization(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
     let api: Api<Kustomization> = Api::namespaced(client.clone(), ns);
     let patch = json!({
         "metadata": {
@@ -214,32 +234,36 @@ pub async fn reconcile_kustomization(
             }
         }
     });
-    api.patch(name, &PatchParams::apply("terrarium"), &Patch::Merge(&patch))
-        .await?;
+    api.patch(
+        name,
+        &PatchParams::apply("terrarium"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
     Ok(())
 }
 
-pub async fn suspend_kustomization(
-    client: &kube::Client,
-    ns: &str,
-    name: &str,
-) -> Result<()> {
+pub async fn suspend_kustomization(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
     let api: Api<Kustomization> = Api::namespaced(client.clone(), ns);
     let patch = json!({ "spec": { "suspend": true } });
-    api.patch(name, &PatchParams::apply("terrarium"), &Patch::Merge(&patch))
-        .await?;
+    api.patch(
+        name,
+        &PatchParams::apply("terrarium"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
     Ok(())
 }
 
-pub async fn resume_kustomization(
-    client: &kube::Client,
-    ns: &str,
-    name: &str,
-) -> Result<()> {
+pub async fn resume_kustomization(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
     let api: Api<Kustomization> = Api::namespaced(client.clone(), ns);
     let patch = json!({ "spec": { "suspend": false } });
-    api.patch(name, &PatchParams::apply("terrarium"), &Patch::Merge(&patch))
-        .await?;
+    api.patch(
+        name,
+        &PatchParams::apply("terrarium"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
     Ok(())
 }
 
@@ -292,11 +316,7 @@ async fn fetch_resource_value(
 
 // -- Terraform outputs --
 
-pub async fn fetch_outputs(
-    client: &kube::Client,
-    ns: &str,
-    name: &str,
-) -> Result<String> {
+pub async fn fetch_outputs(client: &kube::Client, ns: &str, name: &str) -> Result<String> {
     // First get the Terraform resource to find the output secret name
     let tf_api: Api<Terraform> = Api::namespaced(client.clone(), ns);
     let tf = tf_api.get(name).await?;
@@ -320,14 +340,12 @@ pub async fn fetch_outputs(
     }
 
     // Fetch the secret
-    let secret_api: Api<k8s_openapi::api::core::v1::Secret> =
-        Api::namespaced(client.clone(), ns);
+    let secret_api: Api<k8s_openapi::api::core::v1::Secret> = Api::namespaced(client.clone(), ns);
 
-    let secret = secret_api.get(&secret_name).await.map_err(|e| {
-        anyhow!(
-            "Could not read output secret '{secret_name}' in {ns}: {e}"
-        )
-    })?;
+    let secret = secret_api
+        .get(&secret_name)
+        .await
+        .map_err(|e| anyhow!("Could not read output secret '{secret_name}' in {ns}: {e}"))?;
 
     let mut lines = Vec::new();
     lines.push(format!("Terraform Outputs for {ns}/{name}"));
@@ -382,9 +400,7 @@ pub async fn fetch_events(
     };
 
     let api: Api<Event> = Api::namespaced(client.clone(), ns);
-    let field_selector = format!(
-        "involvedObject.name={name},involvedObject.kind={api_kind}"
-    );
+    let field_selector = format!("involvedObject.name={name},involvedObject.kind={api_kind}");
     let lp = ListParams::default().fields(&field_selector);
     let events = api.list(&lp).await?;
 
@@ -411,9 +427,7 @@ pub async fn fetch_events(
         let message = event.message.as_deref().unwrap_or("");
         let count = event.count.unwrap_or(1);
 
-        lines.push(format!(
-            "{time} [{type_}] {reason} (x{count}) — {message}"
-        ));
+        lines.push(format!("{time} [{type_}] {reason} (x{count}) — {message}"));
     }
 
     Ok(lines.join("\n"))

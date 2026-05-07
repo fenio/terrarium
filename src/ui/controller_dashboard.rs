@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
-    Frame,
 };
 
 use crate::k8s::metrics::MetricsSnapshot;
@@ -116,7 +116,10 @@ fn render_controller_info(f: &mut Frame, area: Rect, state: &AppState) {
     } else {
         Line::from(vec![
             Span::styled("  Runners:     ", theme::LABEL),
-            Span::styled(format!("{running_runners}"), Style::default().fg(Color::Rgb(110, 115, 135))),
+            Span::styled(
+                format!("{running_runners}"),
+                Style::default().fg(Color::Rgb(110, 115, 135)),
+            ),
         ])
     };
 
@@ -127,7 +130,10 @@ fn render_controller_info(f: &mut Frame, area: Rect, state: &AppState) {
             Span::styled("  Status:      ", theme::LABEL),
             Span::styled(health_text, health_style),
             Span::styled(
-                format!("  ({}/{} replicas ready)", info.replicas_ready, info.replicas_desired),
+                format!(
+                    "  ({}/{} replicas ready)",
+                    info.replicas_ready, info.replicas_desired
+                ),
                 theme::LABEL,
             ),
         ]),
@@ -148,8 +154,10 @@ fn render_controller_info(f: &mut Frame, area: Rect, state: &AppState) {
                 Span::styled(format!("  {ready_icon} "), ready_style),
                 Span::raw(&pod.name),
                 Span::styled(
-                    format!("  {}  restarts:{}  age:{}",
-                        pod.phase, pod.restarts, pod.age),
+                    format!(
+                        "  {}  restarts:{}  age:{}",
+                        pod.phase, pod.restarts, pod.age
+                    ),
                     theme::LABEL,
                 ),
             ]));
@@ -181,12 +189,22 @@ fn render_tf_stats(f: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
-    let all_tfs: Vec<_> = state.tf_store.state().iter().map(|a| (**a).clone()).collect();
+    let all_tfs: Vec<_> = state
+        .tf_store
+        .state()
+        .iter()
+        .map(|a| (**a).clone())
+        .collect();
     let total = all_tfs.len();
 
     let ready_count = all_tfs
         .iter()
-        .filter(|tf| is_condition_true(tf.status.as_ref().and_then(|s| s.conditions.as_ref()), "Ready"))
+        .filter(|tf| {
+            is_condition_true(
+                tf.status.as_ref().and_then(|s| s.conditions.as_ref()),
+                "Ready",
+            )
+        })
         .count();
     let not_ready = total - ready_count;
     let suspended = all_tfs
@@ -229,18 +247,31 @@ fn render_tf_stats(f: &mut Frame, area: Rect, state: &AppState) {
     let lines = vec![
         Line::from(vec![
             Span::styled("  Total:        ", theme::LABEL),
-            Span::styled(format!("{total}"), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{total}"),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         stat_line("  Ready:        ", ready_count, theme::STATUS_READY),
         stat_line("  Not Ready:    ", not_ready, theme::STATUS_NOT_READY),
         stat_line("  Suspended:    ", suspended, theme::STATUS_PENDING),
         stat_line("  Pending Plans:", pending_plans, theme::STATUS_PENDING),
-        stat_line("  Drift Detect: ", drift_detected, Style::default().fg(Color::Rgb(200, 140, 255))),
+        stat_line(
+            "  Drift Detect: ",
+            drift_detected,
+            Style::default().fg(Color::Rgb(200, 140, 255)),
+        ),
         Line::from(vec![
             Span::styled("  Recon Fails:  ", theme::LABEL),
             Span::styled(
                 format!("{total_failures}"),
-                if total_failures > 0 { theme::STATUS_NOT_READY } else { theme::STATUS_READY },
+                if total_failures > 0 {
+                    theme::STATUS_NOT_READY
+                } else {
+                    theme::STATUS_READY
+                },
             ),
         ]),
         Line::from(vec![
@@ -274,12 +305,22 @@ fn render_ks_stats(f: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
-    let all_ks: Vec<_> = state.ks_store.state().iter().map(|a| (**a).clone()).collect();
+    let all_ks: Vec<_> = state
+        .ks_store
+        .state()
+        .iter()
+        .map(|a| (**a).clone())
+        .collect();
     let total = all_ks.len();
 
     let ready_count = all_ks
         .iter()
-        .filter(|ks| is_condition_true(ks.status.as_ref().and_then(|s| s.conditions.as_ref()), "Ready"))
+        .filter(|ks| {
+            is_condition_true(
+                ks.status.as_ref().and_then(|s| s.conditions.as_ref()),
+                "Ready",
+            )
+        })
         .count();
     let not_ready = total - ready_count;
     let suspended = all_ks
@@ -290,7 +331,12 @@ fn render_ks_stats(f: &mut Frame, area: Rect, state: &AppState) {
     let lines = vec![
         Line::from(vec![
             Span::styled("  Total:        ", theme::LABEL),
-            Span::styled(format!("{total}"), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{total}"),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         stat_line("  Ready:        ", ready_count, theme::STATUS_READY),
         stat_line("  Not Ready:    ", not_ready, theme::STATUS_NOT_READY),
@@ -312,7 +358,12 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
         .border_type(BorderType::Rounded)
         .border_style(theme::BORDER);
 
-    let all_tfs: Vec<_> = state.tf_store.state().iter().map(|a| (**a).clone()).collect();
+    let all_tfs: Vec<_> = state
+        .tf_store
+        .state()
+        .iter()
+        .map(|a| (**a).clone())
+        .collect();
 
     // For each TF, check if time since last Ready transition exceeds its spec.interval.
     // Classify stale TFs as "waiting" (Ready=True, just backlogged) or "failing" (Ready!=True).
@@ -324,7 +375,12 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
             continue;
         }
 
-        let ns = tf.metadata.namespace.as_deref().unwrap_or("default").to_string();
+        let ns = tf
+            .metadata
+            .namespace
+            .as_deref()
+            .unwrap_or("default")
+            .to_string();
         let entry = stale_by_ns.entry(ns).or_insert((0, 0, 0));
         entry.2 += 1;
 
@@ -343,9 +399,7 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
 
         if let Some(elapsed) = elapsed {
             if elapsed > interval_secs + 300 {
-                let is_ready = ready_condition
-                    .map(|c| c.status == "True")
-                    .unwrap_or(false);
+                let is_ready = ready_condition.map(|c| c.status == "True").unwrap_or(false);
                 if is_ready {
                     entry.0 += 1; // waiting — healthy but behind schedule
                 } else {
@@ -366,7 +420,10 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
 
     let total_waiting: usize = state.backlog_namespaces.iter().map(|(_, w, _, _)| *w).sum();
     let total_failing: usize = state.backlog_namespaces.iter().map(|(_, _, f, _)| *f).sum();
-    let total_tracked: usize = all_tfs.iter().filter(|tf| !tf.spec.suspend.unwrap_or(false)).count();
+    let total_tracked: usize = all_tfs
+        .iter()
+        .filter(|tf| !tf.spec.suspend.unwrap_or(false))
+        .count();
 
     let label = theme::LABEL;
     let selected = state.backlog_table_state.selected();
@@ -383,8 +440,12 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
     let w_t = format!("{total_tracked}").len().max(1);
 
     fn num_spans<'a>(
-        w: usize, f: usize, t: usize,
-        ww: usize, wf: usize, wt: usize,
+        w: usize,
+        f: usize,
+        t: usize,
+        ww: usize,
+        wf: usize,
+        wt: usize,
         label_style: Style,
     ) -> Vec<Span<'a>> {
         vec![
@@ -400,7 +461,15 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
 
     // Header: totals + legend
     let mut header_spans = vec![Span::styled("  ", label)];
-    header_spans.extend(num_spans(total_waiting, total_failing, total_tracked, w_w, w_f, w_t, label));
+    header_spans.extend(num_spans(
+        total_waiting,
+        total_failing,
+        total_tracked,
+        w_w,
+        w_f,
+        w_t,
+        label,
+    ));
     header_spans.push(Span::styled("  ", label));
     header_spans.push(Span::styled("waiting", theme::STATUS_PENDING));
     header_spans.push(Span::styled("/", label));
@@ -417,7 +486,9 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
             Style::default()
         };
         let ns_style = if is_selected {
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
@@ -432,16 +503,20 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
 }
 
 fn kv_line<'a>(key: &'a str, value: &'a str) -> Line<'a> {
-    Line::from(vec![
-        Span::styled(key, theme::LABEL),
-        Span::raw(value),
-    ])
+    Line::from(vec![Span::styled(key, theme::LABEL), Span::raw(value)])
 }
 
 fn stat_line(label: &str, count: usize, style: Style) -> Line<'_> {
     Line::from(vec![
         Span::styled(label, theme::LABEL),
-        Span::styled(format!("{count}"), if count > 0 { style } else { Style::default().fg(Color::Rgb(110, 115, 135)) }),
+        Span::styled(
+            format!("{count}"),
+            if count > 0 {
+                style
+            } else {
+                Style::default().fg(Color::Rgb(110, 115, 135))
+            },
+        ),
     ])
 }
 
@@ -509,7 +584,11 @@ fn render_metrics_body(f: &mut Frame, area: Rect, snap: &MetricsSnapshot) {
         .split(area);
 
     let left = vec![
-        kv_metric("Reconciles/min", fmt_rate(snap.reconcile_per_min), Color::White),
+        kv_metric(
+            "Reconciles/min",
+            fmt_rate(snap.reconcile_per_min),
+            Color::White,
+        ),
         kv_metric(
             "Errors/min",
             fmt_rate(snap.error_per_min),
