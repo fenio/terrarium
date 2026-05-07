@@ -169,19 +169,17 @@ fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>
                 Group(&[("Tab", "next tab")]),
             ])
         }
-        ViewState::List(TabKind::Terraform) => render_groups(&[
-            Group(&[("j/k", "nav"), ("Enter", "detail")]),
-            Group(&[("a", "approve"), ("r", "reconcile"), ("p", "plan")]),
-            Group(&[("y/Y", "json/yaml")]),
-        ]),
+        ViewState::List(TabKind::Terraform) | ViewState::List(TabKind::CustomTab(_)) => {
+            render_groups(&[
+                Group(&[("j/k", "nav"), ("Enter", "detail")]),
+                Group(&[("a", "approve"), ("r", "reconcile"), ("R", "replan")]),
+                Group(&[("s/u", "suspend/resume"), ("p", "plan"), ("F", "unlock")]),
+                Group(&[("d", "delete"), ("x", "btg")]),
+            ])
+        }
         ViewState::List(TabKind::Kustomizations) => render_groups(&[
             Group(&[("j/k", "nav"), ("Enter", "detail")]),
-            Group(&[("r", "reconcile")]),
-            Group(&[("y/Y", "json/yaml")]),
-        ]),
-        ViewState::List(TabKind::CustomTab(_)) => render_groups(&[
-            Group(&[("j/k", "nav"), ("Enter", "detail")]),
-            Group(&[("r", "reconcile")]),
+            Group(&[("r", "reconcile"), ("s/u", "suspend/resume")]),
         ]),
         ViewState::List(TabKind::Runners) => render_groups(&[
             Group(&[("j/k", "nav"), ("Enter", "logs")]),
@@ -236,14 +234,17 @@ fn build_meta_line(state: &AppState) -> Vec<Span<'static>> {
 
     // Inspect group — actions that open a viewer over the current resource.
     let inspect: Vec<(&'static str, &'static str)> = match state.current_view() {
-        ViewState::TerraformDetail { .. } => vec![
+        ViewState::List(TabKind::Terraform)
+        | ViewState::List(TabKind::CustomTab(_))
+        | ViewState::TerraformDetail { .. } => vec![
             ("y/Y", "json/yaml"),
             ("e", "events"),
             ("c", "conditions"),
             ("O", "outputs"),
             ("L", "runner logs"),
         ],
-        ViewState::KustomizationDetail { .. } => vec![
+        ViewState::List(TabKind::Kustomizations)
+        | ViewState::KustomizationDetail { .. } => vec![
             ("y/Y", "json/yaml"),
             ("e", "events"),
             ("c", "conditions"),
@@ -261,20 +262,24 @@ fn build_meta_line(state: &AppState) -> Vec<Span<'static>> {
         }
     }
 
-    // Filter / sort / namespace — only meaningful on list views.
+    // Filter / sort / namespace — list views.
     let mut meta: Vec<Span<'static>> = Vec::new();
-    if matches!(
+    let on_sortable_list = matches!(
         state.current_view(),
         ViewState::List(TabKind::Terraform)
             | ViewState::List(TabKind::Kustomizations)
             | ViewState::List(TabKind::CustomTab(_))
-    ) {
-        let arrow = if state.sort_descending { "▼" } else { "▲" };
-        let sort_text = format!("sort:{}{}", state.sort_column.label(), arrow);
+    );
+    let on_runners_list = matches!(state.current_view(), ViewState::List(TabKind::Runners));
+    if on_sortable_list || on_runners_list {
         meta.push(Span::styled(" n", k));
         meta.push(Span::styled(":ns ", t));
-        meta.push(Span::styled("o", k));
-        meta.push(Span::styled(format!(":{sort_text} "), t));
+        if on_sortable_list {
+            let arrow = if state.sort_descending { "▼" } else { "▲" };
+            let sort_text = format!("sort:{}{}", state.sort_column.label(), arrow);
+            meta.push(Span::styled("o", k));
+            meta.push(Span::styled(format!(":{sort_text} "), t));
+        }
         meta.push(Span::styled("/", k));
         meta.push(Span::styled(":search", t));
     }
