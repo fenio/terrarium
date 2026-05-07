@@ -88,7 +88,7 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     let table = Table::new(rows, widths)
         .header(header)
         .row_highlight_style(theme::SELECTED_ROW)
-;
+        .block(crate::ui::detail::block("Terraform"));
 
     f.render_stateful_widget(table, area, &mut state.tf_table_state);
 }

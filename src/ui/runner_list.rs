@@ -68,7 +68,7 @@ pub fn render_runner_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     let table = Table::new(rows, widths)
         .header(header)
         .row_highlight_style(theme::SELECTED_ROW)
-;
+        .block(crate::ui::detail::block("Runners"));
 
     f.render_stateful_widget(table, area, &mut state.runner_table_state);
 }

@@ -136,7 +136,9 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
     let ks_failures = state.stabilized_ks_failures(ks_failures_raw);
 
     let hdr_bg = Style::default().bg(theme::HEADER_BAR_BG);
-    let dim = Style::default().fg(Color::Rgb(60, 65, 80)).bg(theme::HEADER_BAR_BG);
+    // Same brightness as the bottom status bar text — discoverable
+    // at a glance instead of fading into the header background.
+    let dim = Style::default().fg(Color::Rgb(140, 145, 165)).bg(theme::HEADER_BAR_BG);
     let bright = Style::default().fg(Color::Rgb(200, 210, 230)).bg(theme::HEADER_BAR_BG);
     let fail_style = Style::default()
         .fg(Color::Rgb(240, 80, 80))

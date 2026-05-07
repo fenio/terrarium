@@ -62,7 +62,8 @@ pub fn render_custom_tab(f: &mut Frame, area: Rect, state: &mut AppState, tab_id
 
     let table = Table::new(rows, widths)
         .header(header)
-        .row_highlight_style(theme::SELECTED_ROW);
+        .row_highlight_style(theme::SELECTED_ROW)
+        .block(crate::ui::detail::block(&tab_config.name));
 
     f.render_stateful_widget(table, area, &mut state.custom_tab_states[tab_idx]);
 }

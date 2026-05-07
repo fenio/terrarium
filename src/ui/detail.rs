@@ -16,7 +16,7 @@ pub const SEP: &str = "  │  ";
 /// Build a panel block with the standard rounded border, bright accent,
 /// and a styled title. Used by every detail-view section so the chrome
 /// stays consistent across kinds.
-pub fn block(title: &'static str) -> Block<'static> {
+pub fn block(title: &str) -> Block<'static> {
     Block::default()
         .title(Span::styled(format!(" {title} "), theme::BLOCK_TITLE))
         .borders(Borders::ALL)
