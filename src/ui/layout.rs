@@ -559,6 +559,10 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
             let vp = ViewerParams { scroll: state.plan_scroll, hscroll: state.horizontal_scroll, wrap: state.viewer_wrap, search_query: &state.viewer_search_query };
             render_json_viewer(f, area, content, &vp);
         }
+        ViewState::ConditionsViewer { ref content } => {
+            let vp = ViewerParams { scroll: state.plan_scroll, hscroll: state.horizontal_scroll, wrap: state.viewer_wrap, search_query: &state.viewer_search_query };
+            render_viewer(f, area, content, &vp);
+        }
         ViewState::LogViewer { ref content, .. } => {
             let vp = ViewerParams { scroll: state.plan_scroll, hscroll: state.horizontal_scroll, wrap: state.viewer_wrap, search_query: &state.viewer_search_query };
             render_viewer(f, area, content, &vp);

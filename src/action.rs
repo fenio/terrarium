@@ -118,6 +118,9 @@ pub enum Action {
     EventsFetched(String),
     EventsFetchError(String),
 
+    // Conditions viewer (no fetch — sourced from in-memory store)
+    ViewConditions { kind: ResourceKind, namespace: String, name: String },
+
     // Save viewer content to file
     SaveViewerContent,
 

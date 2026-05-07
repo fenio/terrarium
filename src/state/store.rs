@@ -56,6 +56,7 @@ pub enum ViewState {
     JsonViewer { content: String },
     EventsViewer { content: String },
     OutputsViewer { content: String },
+    ConditionsViewer { content: String },
     LogViewer {
         namespace: String,
         pod_name: String,

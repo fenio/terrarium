@@ -27,6 +27,54 @@ pub fn secs_since(ts: jiff::Timestamp) -> i64 {
     now.since(ts).unwrap_or_default().get_seconds()
 }
 
+/// Format the conditions of a resource for the full-message viewer.
+/// Each condition is an icon + type + status header followed by its
+/// transition/generation metadata and the humanized message body.
+pub fn format_conditions_viewer(
+    kind: &str,
+    namespace: &str,
+    name: &str,
+    conditions: &[k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition],
+) -> String {
+    let mut out = format!("{kind}: {namespace}/{name}\n\n");
+    if conditions.is_empty() {
+        out.push_str("No conditions reported.\n");
+        return out;
+    }
+    for (i, c) in conditions.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let icon = match c.status.as_str() {
+            "True" => "✓",
+            "False" => "✗",
+            _ => "⋯",
+        };
+        let reason = if c.reason.is_empty() {
+            String::new()
+        } else {
+            format!("  ({})", c.reason)
+        };
+        out.push_str(&format!(
+            "{icon} {ty:<14} {status}{reason}\n",
+            ty = c.type_,
+            status = c.status,
+        ));
+        let transition = c.last_transition_time.0.to_string();
+        out.push_str(&format!("   transition: {transition}"));
+        if let Some(generation) = c.observed_generation {
+            out.push_str(&format!("   gen: {generation}"));
+        }
+        out.push('\n');
+        for line in humanize_condition_message(&c.message) {
+            out.push_str("   ");
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 /// Strip tf-controller's RPC framing and split a condition message into
 /// logical lines. tf-controller wraps every runner error in
 /// "error running <Phase>: rpc error: code = <Code> desc = exit status N\n\n"

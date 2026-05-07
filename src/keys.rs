@@ -67,7 +67,7 @@ pub fn handle_key(key: KeyEvent, view: &ViewState, input_mode: &InputMode) -> Ac
         }
         ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. }
         | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. }
-        | ViewState::LogViewer { .. } => {
+        | ViewState::ConditionsViewer { .. } | ViewState::LogViewer { .. } => {
             handle_viewer_key(key)
         }
     }
@@ -130,7 +130,8 @@ fn handle_detail_key(key: KeyEvent) -> Action {
         KeyCode::Char('a') | KeyCode::Char('r') | KeyCode::Char('R') | KeyCode::Char('s')
         | KeyCode::Char('u') | KeyCode::Char('p') | KeyCode::Char('F')
         | KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('e')
-        | KeyCode::Char('O') | KeyCode::Char('x') | KeyCode::Char('L') => Action::None,
+        | KeyCode::Char('c') | KeyCode::Char('O') | KeyCode::Char('x')
+        | KeyCode::Char('L') => Action::None,
         _ => Action::None,
     }
 }

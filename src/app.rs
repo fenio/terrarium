@@ -261,6 +261,11 @@ impl App {
             }),
             KeyCode::Char('e') => Some(Action::FetchEvents {
                 kind: ResourceKind::Terraform,
+                namespace: ns.clone(),
+                name: name.clone(),
+            }),
+            KeyCode::Char('c') => Some(Action::ViewConditions {
+                kind: ResourceKind::Terraform,
                 namespace: ns,
                 name,
             }),
@@ -331,6 +336,11 @@ impl App {
                 name: name.clone(),
             }),
             KeyCode::Char('e') => Some(Action::FetchEvents {
+                kind: ResourceKind::Kustomization,
+                namespace: ns.clone(),
+                name: name.clone(),
+            }),
+            KeyCode::Char('c') => Some(Action::ViewConditions {
                 kind: ResourceKind::Kustomization,
                 namespace: ns,
                 name,
@@ -491,6 +501,7 @@ impl App {
             | ViewState::JsonViewer { content }
             | ViewState::EventsViewer { content }
             | ViewState::OutputsViewer { content }
+            | ViewState::ConditionsViewer { content }
             | ViewState::LogViewer { content, .. } => content.lines().count(),
             _ => 0,
         }
@@ -513,6 +524,7 @@ impl App {
             ViewState::JsonViewer { content } => content.clone(),
             ViewState::EventsViewer { content } => content.clone(),
             ViewState::OutputsViewer { content } => content.clone(),
+            ViewState::ConditionsViewer { content } => content.clone(),
             ViewState::LogViewer { content, .. } => content.clone(),
             _ => return,
         };
@@ -722,7 +734,7 @@ impl App {
             }
             Action::PageDown => {
                 let half = self.half_page();
-                if matches!(self.state.current_view(), ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::LogViewer { .. }) {
+                if matches!(self.state.current_view(), ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::ConditionsViewer { .. } | ViewState::LogViewer { .. }) {
                     self.state.plan_scroll = self.state.plan_scroll.saturating_add(half);
                 } else {
                     let current = self.state.current_table_state().selected().unwrap_or(0);
@@ -736,7 +748,7 @@ impl App {
             }
             Action::PageUp => {
                 let half = self.half_page();
-                if matches!(self.state.current_view(), ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::LogViewer { .. }) {
+                if matches!(self.state.current_view(), ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::ConditionsViewer { .. } | ViewState::LogViewer { .. }) {
                     self.state.plan_scroll = self.state.plan_scroll.saturating_sub(half);
                     if matches!(self.state.current_view(), ViewState::LogViewer { .. }) {
                         self.state.log_auto_follow = false;
@@ -753,7 +765,7 @@ impl App {
                 }
             }
             Action::SelectNext => {
-                if matches!(self.state.current_view(), ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::LogViewer { .. }) {
+                if matches!(self.state.current_view(), ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::ConditionsViewer { .. } | ViewState::LogViewer { .. }) {
                     self.state.plan_scroll = self.state.plan_scroll.saturating_add(1);
                 } else {
                     let current = self.state.current_table_state().selected().unwrap_or(0);
@@ -766,7 +778,7 @@ impl App {
                 }
             }
             Action::SelectPrev => {
-                if matches!(self.state.current_view(), ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::LogViewer { .. }) {
+                if matches!(self.state.current_view(), ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::ConditionsViewer { .. } | ViewState::LogViewer { .. }) {
                     self.state.plan_scroll = self.state.plan_scroll.saturating_sub(1);
                     if matches!(self.state.current_view(), ViewState::LogViewer { .. }) {
                         self.state.log_auto_follow = false;
@@ -1290,6 +1302,67 @@ impl App {
                     Some((format!("Error: {e}"), Instant::now(), FlashKind::Error));
             }
 
+            // Conditions viewer (synchronous — built from in-memory store)
+            Action::ViewConditions {
+                kind,
+                namespace,
+                name,
+            } => {
+                let content = match kind {
+                    ResourceKind::Terraform => {
+                        self.state.tf_store.state().iter().find(|t| {
+                            t.metadata.namespace.as_deref() == Some(namespace.as_str())
+                                && t.metadata.name.as_deref() == Some(name.as_str())
+                        }).map(|tf| {
+                            let conds = tf
+                                .status
+                                .as_ref()
+                                .and_then(|s| s.conditions.as_ref())
+                                .map(|v| v.as_slice())
+                                .unwrap_or(&[]);
+                            crate::util::format_conditions_viewer(
+                                "Terraform",
+                                &namespace,
+                                &name,
+                                conds,
+                            )
+                        })
+                    }
+                    ResourceKind::Kustomization => {
+                        self.state.ks_store.state().iter().find(|k| {
+                            k.metadata.namespace.as_deref() == Some(namespace.as_str())
+                                && k.metadata.name.as_deref() == Some(name.as_str())
+                        }).map(|ks| {
+                            let conds = ks
+                                .status
+                                .as_ref()
+                                .and_then(|s| s.conditions.as_ref())
+                                .map(|v| v.as_slice())
+                                .unwrap_or(&[]);
+                            crate::util::format_conditions_viewer(
+                                "Kustomization",
+                                &namespace,
+                                &name,
+                                conds,
+                            )
+                        })
+                    }
+                    ResourceKind::Pod => None,
+                };
+                if let Some(content) = content {
+                    self.state.view_stack.push(ViewState::ConditionsViewer { content });
+                    self.state.plan_scroll = 0;
+                    self.state.horizontal_scroll = 0;
+                    self.state.viewer_wrap = false;
+                } else {
+                    self.state.flash_message = Some((
+                        format!("Resource {namespace}/{name} not found"),
+                        Instant::now(),
+                        FlashKind::Error,
+                    ));
+                }
+            }
+
             // Log streaming chunks
             Action::LogChunkReceived(chunk) => {
                 const MAX_LOG_BYTES: usize = 10 * 1024 * 1024; // 10 MB
@@ -1500,6 +1573,7 @@ impl App {
             ViewState::JsonViewer { content } => Some(("json", content.clone())),
             ViewState::EventsViewer { content } => Some(("events", content.clone())),
             ViewState::OutputsViewer { content } => Some(("outputs", content.clone())),
+            ViewState::ConditionsViewer { content } => Some(("conditions", content.clone())),
             ViewState::LogViewer { content, .. } => Some(("logs", content.clone())),
             _ => None,
         };

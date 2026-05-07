@@ -9,7 +9,7 @@ use ratatui::{
 use crate::state::store::{AppState, FlashKind, InputMode, TabKind, ViewState};
 
 fn is_viewer(view: &ViewState) -> bool {
-    matches!(view, ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::LogViewer { .. })
+    matches!(view, ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::ConditionsViewer { .. } | ViewState::LogViewer { .. })
 }
 use crate::ui::theme;
 
@@ -159,7 +159,7 @@ fn build_help_spans(state: &AppState) -> Vec<Span<'static>> {
             Span::styled("s", k), Span::styled(":suspend ", t),
             Span::styled("u", k), Span::styled(":resume", t),
         ],
-        ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } => {
+        ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::ConditionsViewer { .. } => {
             let wrap_label = if state.viewer_wrap { "nowrap" } else { "wrap" };
             vec![
                 Span::styled(" Esc", k), Span::styled(":back ", t),
