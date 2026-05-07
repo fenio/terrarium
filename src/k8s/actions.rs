@@ -50,18 +50,31 @@ pub async fn force_reconcile(client: &kube::Client, ns: &str, name: &str) -> Res
     Ok(())
 }
 
-pub async fn replan(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
-    // tofu-controller's replan trigger is `spec.approvePlan = "ReplanRequested"`
-    // (matches what `tfctl replan` does). The previous annotation-based attempt
-    // was silently ignored — tofu-controller doesn't read it.
-    let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
-    let patch = json!({ "spec": { "approvePlan": "ReplanRequested" } });
-    api.patch(
-        name,
-        &PatchParams::apply("terrarium"),
-        &Patch::Merge(&patch),
-    )
-    .await?;
+pub async fn replan(_client: &kube::Client, ns: &str, name: &str) -> Result<()> {
+    // Delegate to tfctl rather than reimplementing the K8s patch logic —
+    // both prior attempts (annotation, spec.approvePlan) failed to trigger
+    // a replan because the controller's actual mechanism is more involved
+    // (clearing pending plan, deleting plan ConfigMap, bumping revision).
+    // tfctl gets it right and is the supported tool, so just shell out
+    // (same pattern as Break-the-Glass; see exec_break_the_glass in
+    // app.rs). This call is non-interactive — no TUI suspend needed.
+    let output = tokio::process::Command::new("tfctl")
+        .args(["-n", ns, "replan", name])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to run tfctl: {e} — is tfctl installed?"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let combined = format!("{stderr}{stdout}").trim().to_string();
+        if combined.is_empty() {
+            return Err(anyhow::anyhow!(
+                "tfctl exited with code {}",
+                output.status.code().unwrap_or(-1)
+            ));
+        }
+        return Err(anyhow::anyhow!("tfctl: {combined}"));
+    }
     Ok(())
 }
 
