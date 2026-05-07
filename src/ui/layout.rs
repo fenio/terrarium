@@ -241,11 +241,12 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
     type NavItem = (usize, String, Option<usize>, Option<usize>, bool);
     let tf_count_opt = if state.tf_synced { Some(tf_count) } else { None };
     let ks_count_opt = if state.ks_synced { Some(ks_count) } else { None };
+    let runners_count_opt = if state.runners_synced { Some(runner_count) } else { None };
     let mut nav_items: Vec<NavItem> = vec![
         (1, "Controller".to_string(),      None,             None,              false),
         (2, "Terraform".to_string(),       tf_count_opt,     if tf_failures > 0 { Some(tf_failures) } else { None }, state.tf_crd_missing),
         (3, "Kustomizations".to_string(),  ks_count_opt,     if ks_failures > 0 { Some(ks_failures) } else { None }, state.ks_crd_missing),
-        (4, "Runners".to_string(),         Some(runner_count), None,            false),
+        (4, "Runners".to_string(),         runners_count_opt,  None,            false),
     ];
     for (i, ct) in state.config.custom_tabs.iter().enumerate() {
         let count = if state.tf_synced { Some(custom_tab::count_entries(&state.tf_store, ct)) } else { None };

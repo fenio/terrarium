@@ -1412,6 +1412,7 @@ impl App {
             // Runner pods update from poller
             Action::RunnerPodsUpdated(pods) => {
                 self.state.runner_pods = pods;
+                self.state.runners_synced = true;
                 self.state.last_data_update = Some(Instant::now());
             }
             Action::RunnerLogsUpdated(logs) => {
