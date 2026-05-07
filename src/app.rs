@@ -1229,7 +1229,7 @@ impl App {
             }
 
             // Non-destructive actions dispatch directly
-            Action::Reconcile { .. } | Action::Resume { .. } => {
+            Action::Reconcile { .. } | Action::Resume { .. } | Action::Replan { .. } => {
                 self.spawn_k8s_action(action);
             }
 
