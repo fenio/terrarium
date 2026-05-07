@@ -27,6 +27,38 @@ pub fn secs_since(ts: jiff::Timestamp) -> i64 {
     now.since(ts).unwrap_or_default().get_seconds()
 }
 
+/// Strip tf-controller's RPC framing and split a condition message into
+/// logical lines. tf-controller wraps every runner error in
+/// "error running <Phase>: rpc error: code = <Code> desc = exit status N\n\n"
+/// before the actual terraform output. The framing has no diagnostic value,
+/// so peel it off and split on real newlines so the renderer can display
+/// the structured terraform output instead of one wall of text.
+///
+/// Returns the original message split on '\n' if no framing matches.
+pub fn humanize_condition_message(msg: &str) -> Vec<String> {
+    strip_runner_rpc_framing(msg)
+        .split('\n')
+        .map(|l| l.trim_end().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+fn strip_runner_rpc_framing(msg: &str) -> &str {
+    if !msg.starts_with("error running ") {
+        return msg;
+    }
+    let Some(pos) = msg.find("exit status ") else {
+        return msg;
+    };
+    let mut cursor = pos + "exit status ".len();
+    let bytes = msg.as_bytes();
+    while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+        cursor += 1;
+    }
+    let rest = msg[cursor..].trim_start_matches(['\n', '\r', ' ']);
+    if rest.is_empty() { msg } else { rest }
+}
+
 /// Parse a Kubernetes/Go duration string (e.g. "1h", "30m", "10m0s", "1h30m") to seconds.
 pub fn parse_k8s_duration(s: &str) -> Option<i64> {
     let mut total: i64 = 0;
@@ -46,4 +78,39 @@ pub fn parse_k8s_duration(s: &str) -> Option<i64> {
         }
     }
     if total > 0 { Some(total) } else { None }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn humanize_strips_plan_rpc_framing() {
+        let raw = "error running Plan: rpc error: code = Internal desc = exit status 1\n\nError: Invalid value for variable\n\n  on variables.tf line 1:\n   1: foo\n";
+        let lines = humanize_condition_message(raw);
+        assert_eq!(lines[0], "Error: Invalid value for variable");
+        assert_eq!(lines[1], "  on variables.tf line 1:");
+        assert_eq!(lines[2], "   1: foo");
+    }
+
+    #[test]
+    fn humanize_strips_apply_rpc_framing() {
+        let raw = "error running Apply: rpc error: code = Internal desc = exit status 2\nError: boom";
+        let lines = humanize_condition_message(raw);
+        assert_eq!(lines, vec!["Error: boom"]);
+    }
+
+    #[test]
+    fn humanize_passes_through_unframed_messages() {
+        let raw = "GitRepository.source.toolkit.fluxcd.io \"foo\" not found";
+        let lines = humanize_condition_message(raw);
+        assert_eq!(lines, vec![raw]);
+    }
+
+    #[test]
+    fn humanize_falls_back_when_strip_yields_empty() {
+        let raw = "error running Plan: rpc error: code = Internal desc = exit status 1";
+        let lines = humanize_condition_message(raw);
+        assert_eq!(lines, vec![raw]);
+    }
 }

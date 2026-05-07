@@ -13,6 +13,7 @@ use crate::k8s::source::GitRepository;
 use crate::k8s::terraform::Terraform;
 use crate::ui::source_summary;
 use crate::ui::theme;
+use crate::util;
 
 const LABEL: Style = Style::new().fg(Color::Rgb(140, 145, 165));
 const SEP: &str = "  │  ";
@@ -348,29 +349,32 @@ fn render_conditions_compact(f: &mut Frame, area: Rect, tf: &Terraform) {
                 _ => ("⋯", theme::STATUS_UNKNOWN),
             };
 
-            if msg_width == 0 || c.message.len() <= msg_width {
-                lines.push(Line::from(vec![
-                    Span::styled(format!(" {icon} "), style),
-                    Span::styled(
-                        format!("{:<14}", c.type_),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(format!("{:<8}", c.status), style),
-                    Span::styled(&c.message, msg_style),
-                ]));
+            let humanized = util::humanize_condition_message(&c.message);
+            let logical_lines: Vec<&str> = if humanized.is_empty() {
+                vec![c.message.as_str()]
             } else {
-                // Split message into wrapped lines
-                let msg = &c.message;
+                humanized.iter().map(String::as_str).collect()
+            };
+
+            let mut first_chunk = true;
+            for logical in &logical_lines {
                 let mut pos = 0;
-                let mut first = true;
-                while pos < msg.len() {
-                    let mut end = (pos + msg_width).min(msg.len());
-                    // Ensure we don't split in the middle of a multi-byte UTF-8 character
-                    while end < msg.len() && !msg.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    let chunk = &msg[pos..end];
-                    if first {
+                let single_pass = msg_width == 0 || logical.len() <= msg_width;
+                loop {
+                    let chunk = if single_pass {
+                        let slice = &logical[pos..];
+                        pos = logical.len();
+                        slice
+                    } else {
+                        let mut end = (pos + msg_width).min(logical.len());
+                        while end < logical.len() && !logical.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        let slice = &logical[pos..end];
+                        pos = end;
+                        slice
+                    };
+                    if first_chunk {
                         lines.push(Line::from(vec![
                             Span::styled(format!(" {icon} "), style),
                             Span::styled(
@@ -378,16 +382,18 @@ fn render_conditions_compact(f: &mut Frame, area: Rect, tf: &Terraform) {
                                 Style::default().add_modifier(Modifier::BOLD),
                             ),
                             Span::styled(format!("{:<8}", c.status), style),
-                            Span::styled(chunk, msg_style),
+                            Span::styled(chunk.to_string(), msg_style),
                         ]));
-                        first = false;
+                        first_chunk = false;
                     } else {
                         lines.push(Line::from(vec![
                             Span::raw(" ".repeat(prefix_width)),
-                            Span::styled(chunk, msg_style),
+                            Span::styled(chunk.to_string(), msg_style),
                         ]));
                     }
-                    pos = end;
+                    if pos >= logical.len() {
+                        break;
+                    }
                 }
             }
         }

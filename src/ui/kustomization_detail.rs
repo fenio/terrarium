@@ -10,6 +10,7 @@ use crate::k8s::kustomization::Kustomization;
 use crate::k8s::source::GitRepository;
 use crate::ui::source_summary;
 use crate::ui::theme;
+use crate::util;
 
 pub fn render(
     f: &mut Frame,
@@ -148,26 +149,44 @@ fn render_status(f: &mut Frame, area: Rect, ks: &Kustomization) {
 fn render_conditions(f: &mut Frame, area: Rect, ks: &Kustomization) {
     let conditions = ks.status.as_ref().and_then(|s| s.conditions.as_ref());
 
+    // Prefix: " ✓ " (3) + type (15) + status (8) = 26 columns
+    let prefix_width: usize = 26;
     let lines: Vec<Line> = if let Some(conditions) = conditions {
-        conditions
-            .iter()
-            .map(|c| {
-                let (icon, style) = match c.status.as_str() {
-                    "True" => ("✓", theme::STATUS_READY),
-                    "False" => ("✗", theme::STATUS_NOT_READY),
-                    _ => ("⋯", theme::STATUS_UNKNOWN),
-                };
-                Line::from(vec![
-                    Span::styled(format!(" {icon} "), style),
-                    Span::styled(
-                        format!("{:<15}", c.type_),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(format!("{:<8}", c.status), style),
-                    Span::raw(&c.message),
-                ])
-            })
-            .collect()
+        let mut out: Vec<Line> = Vec::new();
+        for c in conditions {
+            let (icon, style) = match c.status.as_str() {
+                "True" => ("✓", theme::STATUS_READY),
+                "False" => ("✗", theme::STATUS_NOT_READY),
+                _ => ("⋯", theme::STATUS_UNKNOWN),
+            };
+            let humanized = util::humanize_condition_message(&c.message);
+            let logical_lines: Vec<&str> = if humanized.is_empty() {
+                vec![c.message.as_str()]
+            } else {
+                humanized.iter().map(String::as_str).collect()
+            };
+            let mut first = true;
+            for logical in logical_lines {
+                if first {
+                    out.push(Line::from(vec![
+                        Span::styled(format!(" {icon} "), style),
+                        Span::styled(
+                            format!("{:<15}", c.type_),
+                            Style::default().add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(format!("{:<8}", c.status), style),
+                        Span::raw(logical.to_string()),
+                    ]));
+                    first = false;
+                } else {
+                    out.push(Line::from(vec![
+                        Span::raw(" ".repeat(prefix_width)),
+                        Span::raw(logical.to_string()),
+                    ]));
+                }
+            }
+        }
+        out
     } else {
         vec![Line::from("  No conditions")]
     };
