@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::Rect,
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Paragraph},
@@ -7,68 +7,99 @@ use ratatui::{
 };
 
 use crate::state::store::{AppState, FlashKind, InputMode, TabKind, ViewState};
-
-fn is_viewer(view: &ViewState) -> bool {
-    matches!(view, ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::ConditionsViewer { .. } | ViewState::LogViewer { .. })
-}
 use crate::ui::theme;
 
+fn is_viewer(view: &ViewState) -> bool {
+    matches!(
+        view,
+        ViewState::PlanViewer { .. }
+            | ViewState::JsonViewer { .. }
+            | ViewState::EventsViewer { .. }
+            | ViewState::OutputsViewer { .. }
+            | ViewState::ConditionsViewer { .. }
+            | ViewState::LogViewer { .. }
+    )
+}
+
 pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
-    // Fill background
     let bg = Block::default().style(Style::default().bg(theme::STATUS_BAR_BG));
     f.render_widget(bg, area);
 
-    let spans = match &state.input_mode {
+    // Status bar is two rows. Single-line transient modes (Search, Confirm,
+    // flash) render on row 1 and leave row 2 blank.
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(area);
+
+    match &state.input_mode {
         InputMode::Search => {
-            vec![
+            let line = Line::from(vec![
                 Span::styled(" / ", theme::STATUS_BAR_KEY),
-                Span::styled(&state.search_query, Style::default().fg(Color::White).bg(theme::STATUS_BAR_BG)),
+                Span::styled(
+                    state.search_query.clone(),
+                    Style::default().fg(Color::White).bg(theme::STATUS_BAR_BG),
+                ),
                 Span::styled("_", Style::default().fg(Color::Rgb(140, 200, 255)).bg(theme::STATUS_BAR_BG)),
-            ]
+            ]);
+            f.render_widget(Paragraph::new(line), rows[0]);
         }
         InputMode::Confirm => {
             if let Some(dialog) = &state.pending_dialog {
-                vec![
+                let line = Line::from(vec![
                     Span::styled(
                         format!(" {} ", &dialog.message),
                         Style::default().fg(Color::Rgb(240, 200, 60)).bg(theme::STATUS_BAR_BG),
                     ),
                     Span::styled(" [y]es  [n]o ", theme::STATUS_BAR_KEY),
-                ]
-            } else {
-                vec![]
+                ]);
+                f.render_widget(Paragraph::new(line), rows[0]);
             }
         }
         InputMode::Help => {
-            vec![
+            let line = Line::from(vec![
                 Span::styled(" ? ", theme::STATUS_BAR_KEY),
                 Span::styled("or ", theme::STATUS_BAR_TEXT),
                 Span::styled("Esc", theme::STATUS_BAR_KEY),
                 Span::styled(" to close help", theme::STATUS_BAR_TEXT),
-            ]
+            ]);
+            f.render_widget(Paragraph::new(line), rows[0]);
         }
         InputMode::ViewerSearch => {
             let match_info = if state.viewer_search_matches.is_empty() {
-                if state.viewer_search_query.is_empty() { String::new() } else { " (no matches)".to_string() }
+                if state.viewer_search_query.is_empty() {
+                    String::new()
+                } else {
+                    " (no matches)".to_string()
+                }
             } else {
-                format!(" ({}/{})", state.viewer_search_index + 1, state.viewer_search_matches.len())
+                format!(
+                    " ({}/{})",
+                    state.viewer_search_index + 1,
+                    state.viewer_search_matches.len()
+                )
             };
-            vec![
+            let line = Line::from(vec![
                 Span::styled(" / ", theme::STATUS_BAR_KEY),
-                Span::styled(&state.viewer_search_query, Style::default().fg(Color::White).bg(theme::STATUS_BAR_BG)),
+                Span::styled(
+                    state.viewer_search_query.clone(),
+                    Style::default().fg(Color::White).bg(theme::STATUS_BAR_BG),
+                ),
                 Span::styled("_", Style::default().fg(Color::Rgb(140, 200, 255)).bg(theme::STATUS_BAR_BG)),
                 Span::styled(match_info, Style::default().fg(Color::Rgb(140, 145, 165)).bg(theme::STATUS_BAR_BG)),
-            ]
+            ]);
+            f.render_widget(Paragraph::new(line), rows[0]);
         }
         InputMode::NamespacePicker => {
-            vec![
+            let line = Line::from(vec![
                 Span::styled(" j/k", theme::STATUS_BAR_KEY),
                 Span::styled(":nav ", theme::STATUS_BAR_TEXT),
                 Span::styled("Enter", theme::STATUS_BAR_KEY),
                 Span::styled(":select ", theme::STATUS_BAR_TEXT),
                 Span::styled("Esc", theme::STATUS_BAR_KEY),
                 Span::styled(":cancel", theme::STATUS_BAR_TEXT),
-            ]
+            ]);
+            f.render_widget(Paragraph::new(line), rows[0]);
         }
         InputMode::Normal => {
             if let Some((msg, _, kind)) = &state.flash_message {
@@ -76,150 +107,242 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
                     FlashKind::Success => theme::FLASH_SUCCESS,
                     FlashKind::Error => theme::FLASH_ERROR,
                 };
-                vec![Span::styled(format!(" {msg} "), style.bg(theme::STATUS_BAR_BG))]
+                let line = Line::from(vec![Span::styled(
+                    format!(" {msg} "),
+                    style.bg(theme::STATUS_BAR_BG),
+                )]);
+                f.render_widget(Paragraph::new(line), rows[0]);
             } else {
-                build_help_spans(state)
+                let (top, bottom) = build_help_lines(state);
+                f.render_widget(Paragraph::new(Line::from(top)), rows[0]);
+                f.render_widget(Paragraph::new(Line::from(bottom)), rows[1]);
             }
         }
-    };
-
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    }
 }
 
-fn build_help_spans(state: &AppState) -> Vec<Span<'static>> {
+/// A logical group of keybinds. Rendered as `key:label key:label ...`
+/// separated from neighboring groups by a dim ` │ `.
+struct Group<'a>(&'a [(&'a str, &'a str)]);
+
+fn render_groups(groups: &[Group<'_>]) -> Vec<Span<'static>> {
     let k = theme::STATUS_BAR_KEY;
     let t = theme::STATUS_BAR_TEXT;
-    let arrow = if state.sort_descending { "▼" } else { "▲" };
-    let sort_label = format!("sort:{}{} ", state.sort_column.label(), arrow);
-    let mut spans = match state.current_view() {
-        ViewState::List(TabKind::Controller) => {
-            let metrics_label = if state.metrics_enabled { ":metrics off " } else { ":metrics " };
-            vec![
-                Span::styled(" j/k", k), Span::styled(":nav backlog ", t),
-                Span::styled("Enter", k), Span::styled(":filter ns ", t),
-                Span::styled("L", k), Span::styled(":controller logs ", t),
-                Span::styled("M", k), Span::styled(metrics_label, t),
-                Span::styled("Tab", k), Span::styled(":next tab ", t),
-            ]
+    let s = theme::STATUS_BAR_SEP;
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut first = true;
+    for group in groups {
+        if group.0.is_empty() {
+            continue;
         }
-        ViewState::List(TabKind::Terraform) => vec![
-            Span::styled(" j/k", k), Span::styled(":nav ", t),
-            Span::styled("Enter", k), Span::styled(":detail ", t),
-            Span::styled("a", k), Span::styled(":approve ", t),
-            Span::styled("r", k), Span::styled(":reconcile ", t),
-            Span::styled("p", k), Span::styled(":plan ", t),
-            Span::styled("y/Y", k), Span::styled(":json/yaml ", t),
-            Span::styled("n", k), Span::styled(":ns ", t),
-            Span::styled("o", k), Span::styled(":", t), Span::styled(sort_label, t),
-            Span::styled("/", k), Span::styled(":search", t),
-        ],
-        ViewState::List(TabKind::Kustomizations) => vec![
-            Span::styled(" j/k", k), Span::styled(":nav ", t),
-            Span::styled("Enter", k), Span::styled(":detail ", t),
-            Span::styled("r", k), Span::styled(":reconcile ", t),
-            Span::styled("y/Y", k), Span::styled(":json/yaml ", t),
-            Span::styled("n", k), Span::styled(":ns ", t),
-            Span::styled("o", k), Span::styled(":", t), Span::styled(sort_label, t),
-            Span::styled("/", k), Span::styled(":search", t),
-        ],
-        ViewState::List(TabKind::CustomTab(_)) => vec![
-            Span::styled(" j/k", k), Span::styled(":nav ", t),
-            Span::styled("Enter", k), Span::styled(":detail ", t),
-            Span::styled("r", k), Span::styled(":reconcile ", t),
-            Span::styled("n", k), Span::styled(":ns ", t),
-            Span::styled("/", k), Span::styled(":search", t),
-        ],
-        ViewState::List(TabKind::Runners) => vec![
-            Span::styled(" j/k", k), Span::styled(":nav ", t),
-            Span::styled("Enter", k), Span::styled(":logs ", t),
-            Span::styled("T", k), Span::styled(":terraform ", t),
-            Span::styled("e", k), Span::styled(":events ", t),
-            Span::styled("d", k), Span::styled(":kill ", t),
-            Span::styled("/", k), Span::styled(":search", t),
-        ],
+        if first {
+            spans.push(Span::styled(" ", t));
+            first = false;
+        } else {
+            spans.push(Span::styled(" │ ", s));
+        }
+        for (i, (key, label)) in group.0.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" ", t));
+            }
+            spans.push(Span::styled(key.to_string(), k));
+            spans.push(Span::styled(format!(":{label}"), t));
+        }
+    }
+    spans
+}
+
+/// Build the two-row status bar. Top row is the primary action shortcuts
+/// for the current view; bottom row is meta (sort/filter/help/configured
+/// shortcuts/mode indicators).
+fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>) {
+    let top = match state.current_view() {
+        ViewState::List(TabKind::Controller) => {
+            let metrics_label: &'static str = if state.metrics_enabled {
+                "metrics off"
+            } else {
+                "metrics"
+            };
+            render_groups(&[
+                Group(&[("j/k", "nav backlog"), ("Enter", "filter ns")]),
+                Group(&[("L", "controller logs"), ("M", metrics_label)]),
+                Group(&[("Tab", "next tab")]),
+            ])
+        }
+        ViewState::List(TabKind::Terraform) => render_groups(&[
+            Group(&[("j/k", "nav"), ("Enter", "detail")]),
+            Group(&[("a", "approve"), ("r", "reconcile"), ("p", "plan")]),
+            Group(&[("y/Y", "json/yaml")]),
+        ]),
+        ViewState::List(TabKind::Kustomizations) => render_groups(&[
+            Group(&[("j/k", "nav"), ("Enter", "detail")]),
+            Group(&[("r", "reconcile")]),
+            Group(&[("y/Y", "json/yaml")]),
+        ]),
+        ViewState::List(TabKind::CustomTab(_)) => render_groups(&[
+            Group(&[("j/k", "nav"), ("Enter", "detail")]),
+            Group(&[("r", "reconcile")]),
+        ]),
+        ViewState::List(TabKind::Runners) => render_groups(&[
+            Group(&[("j/k", "nav"), ("Enter", "logs")]),
+            Group(&[("T", "terraform"), ("e", "events")]),
+            Group(&[("d", "kill")]),
+        ]),
+        ViewState::TerraformDetail { .. } => render_groups(&[
+            Group(&[("Esc", "back")]),
+            Group(&[("r", "reconcile"), ("R", "replan"), ("s/u", "suspend/resume")]),
+            Group(&[("a", "approve"), ("p", "plan"), ("F", "unlock")]),
+            Group(&[("x", "btg"), ("d", "delete")]),
+        ]),
+        ViewState::KustomizationDetail { .. } => render_groups(&[
+            Group(&[("Esc", "back")]),
+            Group(&[("r", "reconcile"), ("s/u", "suspend/resume")]),
+        ]),
+        ViewState::PlanViewer { .. }
+        | ViewState::JsonViewer { .. }
+        | ViewState::EventsViewer { .. }
+        | ViewState::OutputsViewer { .. }
+        | ViewState::ConditionsViewer { .. } => {
+            let wrap_label: &'static str = if state.viewer_wrap { "nowrap" } else { "wrap" };
+            render_groups(&[
+                Group(&[("Esc", "back")]),
+                Group(&[("j/k", "scroll"), ("h/l", "hscroll"), ("g/G", "top/bottom")]),
+                Group(&[("/", "search"), ("n/N", "next/prev")]),
+                Group(&[("w", wrap_label), ("S", "save")]),
+            ])
+        }
+        ViewState::LogViewer { .. } => {
+            let wrap_label: &'static str = if state.viewer_wrap { "nowrap" } else { "wrap" };
+            render_groups(&[
+                Group(&[("Esc", "back")]),
+                Group(&[("j/k", "scroll"), ("G", "follow")]),
+                Group(&[("/", "search"), ("n/N", "next/prev")]),
+                Group(&[("w", wrap_label), ("S", "save"), ("Tab", "container")]),
+            ])
+        }
+    };
+
+    let bottom = build_meta_line(state);
+    (top, bottom)
+}
+
+/// Bottom row: inspect actions for detail views, and meta indicators
+/// (filter, sort, help, configured shortcuts, mode flags) everywhere.
+fn build_meta_line(state: &AppState) -> Vec<Span<'static>> {
+    let k = theme::STATUS_BAR_KEY;
+    let t = theme::STATUS_BAR_TEXT;
+    let s = theme::STATUS_BAR_SEP;
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    // Inspect group — actions that open a viewer over the current resource.
+    let inspect: Vec<(&'static str, &'static str)> = match state.current_view() {
         ViewState::TerraformDetail { .. } => vec![
-            Span::styled(" Esc", k), Span::styled(":back ", t),
-            Span::styled("a", k), Span::styled(":approve ", t),
-            Span::styled("r", k), Span::styled(":reconcile ", t),
-            Span::styled("p", k), Span::styled(":plan ", t),
-            Span::styled("O", k), Span::styled(":outputs ", t),
-            Span::styled("y/Y", k), Span::styled(":json/yaml ", t),
-            Span::styled("e", k), Span::styled(":events ", t),
-            Span::styled("L", k), Span::styled(":runner logs ", t),
-            Span::styled("x", k), Span::styled(":btg ", t),
-            Span::styled("s/u", k), Span::styled(":sus/res ", t),
-            Span::styled("R", k), Span::styled(":replan ", t),
-            Span::styled("d", k), Span::styled(":delete", t),
+            ("y/Y", "json/yaml"),
+            ("e", "events"),
+            ("c", "conditions"),
+            ("O", "outputs"),
+            ("L", "runner logs"),
         ],
         ViewState::KustomizationDetail { .. } => vec![
-            Span::styled(" Esc", k), Span::styled(":back ", t),
-            Span::styled("r", k), Span::styled(":reconcile ", t),
-            Span::styled("e", k), Span::styled(":events ", t),
-            Span::styled("y/Y", k), Span::styled(":json/yaml ", t),
-            Span::styled("s", k), Span::styled(":suspend ", t),
-            Span::styled("u", k), Span::styled(":resume", t),
+            ("y/Y", "json/yaml"),
+            ("e", "events"),
+            ("c", "conditions"),
         ],
-        ViewState::PlanViewer { .. } | ViewState::JsonViewer { .. } | ViewState::EventsViewer { .. } | ViewState::OutputsViewer { .. } | ViewState::ConditionsViewer { .. } => {
-            let wrap_label = if state.viewer_wrap { "nowrap" } else { "wrap" };
-            vec![
-                Span::styled(" Esc", k), Span::styled(":back ", t),
-                Span::styled("j/k", k), Span::styled(":scroll ", t),
-                Span::styled("h/l", k), Span::styled(":hscroll ", t),
-                Span::styled("/", k), Span::styled(":search ", t),
-                Span::styled("n/N", k), Span::styled(":next/prev ", t),
-                Span::styled("w", k), Span::styled(format!(":{wrap_label} "), t),
-                Span::styled("S", k), Span::styled(":save", t),
-            ]
-        },
-        ViewState::LogViewer { containers, .. } => {
-            let wrap_label = if state.viewer_wrap { "nowrap" } else { "wrap" };
-            let follow_indicator = if state.log_auto_follow { " [FOLLOW]" } else { "" };
-            let mut v = vec![
-                Span::styled(" Esc", k), Span::styled(":back ", t),
-                Span::styled("j/k", k), Span::styled(":scroll ", t),
-                Span::styled("G", k), Span::styled(":follow ", t),
-                Span::styled("/", k), Span::styled(":search ", t),
-                Span::styled("w", k), Span::styled(format!(":{wrap_label} "), t),
-                Span::styled("S", k), Span::styled(":save ", t),
-            ];
-            if containers.len() > 1 {
-                v.push(Span::styled("Tab", k));
-                v.push(Span::styled(":container ", t));
-            }
-            v.push(Span::styled(
-                follow_indicator,
-                Style::default().fg(Color::Rgb(80, 200, 120)).bg(theme::STATUS_BAR_BG),
-            ));
-            v
-        },
+        _ => Vec::new(),
     };
-    if !is_viewer(state.current_view()) {
-        spans.push(Span::styled(" ?", k));
-        spans.push(Span::styled(":help", t));
+    if !inspect.is_empty() {
+        spans.push(Span::styled(" ", t));
+        for (i, (key, label)) in inspect.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" ", t));
+            }
+            spans.push(Span::styled(*key, k));
+            spans.push(Span::styled(format!(":{label}"), t));
+        }
     }
-    // Show configured shortcuts for Terraform views
+
+    // Filter / sort / namespace — only meaningful on list views.
+    let mut meta: Vec<Span<'static>> = Vec::new();
+    if matches!(
+        state.current_view(),
+        ViewState::List(TabKind::Terraform)
+            | ViewState::List(TabKind::Kustomizations)
+            | ViewState::List(TabKind::CustomTab(_))
+    ) {
+        let arrow = if state.sort_descending { "▼" } else { "▲" };
+        let sort_text = format!("sort:{}{}", state.sort_column.label(), arrow);
+        meta.push(Span::styled(" n", k));
+        meta.push(Span::styled(":ns ", t));
+        meta.push(Span::styled("o", k));
+        meta.push(Span::styled(format!(":{sort_text} "), t));
+        meta.push(Span::styled("/", k));
+        meta.push(Span::styled(":search", t));
+    }
+    if !meta.is_empty() {
+        if !spans.is_empty() {
+            spans.push(Span::styled(" │ ", s));
+        } else {
+            spans.push(Span::styled(" ", t));
+        }
+        spans.extend(meta);
+    }
+
+    // Pause/resume filter when an active query exists.
+    if !state.search_query.is_empty() && !is_viewer(state.current_view()) {
+        let label = if state.search_suspended {
+            ":resume filter"
+        } else {
+            ":pause filter"
+        };
+        if spans.is_empty() {
+            spans.push(Span::styled(" ", t));
+        } else {
+            spans.push(Span::styled(" │ ", s));
+        }
+        spans.push(Span::styled("\\", k));
+        spans.push(Span::styled(label, t));
+    }
+
+    // Configured shortcuts (Terraform views only).
     let is_tf_view = matches!(
         state.current_view(),
         ViewState::List(TabKind::Terraform)
-        | ViewState::List(TabKind::CustomTab(_))
-        | ViewState::TerraformDetail { .. }
+            | ViewState::List(TabKind::CustomTab(_))
+            | ViewState::TerraformDetail { .. }
     );
-    if is_tf_view {
-        for shortcut in &state.config.shortcuts {
-            spans.push(Span::styled(format!(" {}", shortcut.key), k));
+    if is_tf_view && !state.config.shortcuts.is_empty() {
+        if spans.is_empty() {
+            spans.push(Span::styled(" ", t));
+        } else {
+            spans.push(Span::styled(" │ ", s));
+        }
+        for (i, shortcut) in state.config.shortcuts.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" ", t));
+            }
+            spans.push(Span::styled(shortcut.key.to_string(), k));
             spans.push(Span::styled(format!(":{}", shortcut.label), t));
         }
     }
-    if !state.search_query.is_empty() && !is_viewer(state.current_view()) {
-        let label = if state.search_suspended { ":resume filter" } else { ":pause filter" };
-        spans.push(Span::styled(" \\", k));
-        spans.push(Span::styled(label, t));
+
+    // Help is always available outside viewers.
+    if !is_viewer(state.current_view()) {
+        if spans.is_empty() {
+            spans.push(Span::styled(" ", t));
+        } else {
+            spans.push(Span::styled(" │ ", s));
+        }
+        spans.push(Span::styled("?", k));
+        spans.push(Span::styled(":help", t));
     }
+
+    // Mouse mode indicator.
     if state.mouse_enabled {
         spans.push(Span::styled(
-            " [MOUSE]",
+            "  [MOUSE]",
             Style::default().fg(Color::Rgb(80, 200, 120)).bg(theme::STATUS_BAR_BG),
         ));
     }
+
     spans
 }

@@ -80,3 +80,6 @@ pub const STATUS_BAR_KEY: Style = Style::new()
 pub const STATUS_BAR_TEXT: Style = Style::new()
     .fg(Color::Rgb(140, 145, 165))
     .bg(Color::Rgb(25, 25, 35));
+pub const STATUS_BAR_SEP: Style = Style::new()
+    .fg(Color::Rgb(60, 65, 80))
+    .bg(Color::Rgb(25, 25, 35));

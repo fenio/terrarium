@@ -21,7 +21,7 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
         .constraints([
             Constraint::Length(5), // Header (logo + nav + search/info)
             Constraint::Min(5),   // Body
-            Constraint::Length(1), // Status bar
+            Constraint::Length(2), // Status bar (two rows)
         ])
         .split(f.area());
 
