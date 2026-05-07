@@ -2395,21 +2395,18 @@ mod tests {
     fn secret_placeholder_substitutes_cached_value() {
         let cache = secret_cache(
             "ns1",
-            "base-vars",
-            &[("infra_argocd_url", "https://argo-coms-02")],
+            "app-vars",
+            &[("api_host", "https://api.example.com")],
         );
-        let out = resolve_secret_placeholders(
-            "{secret.base-vars.infra_argocd_url}/apps?search=600849",
-            "ns1",
-            &cache,
-        );
-        assert_eq!(out, "https://argo-coms-02/apps?search=600849");
+        let out =
+            resolve_secret_placeholders("{secret.app-vars.api_host}/apps?search=42", "ns1", &cache);
+        assert_eq!(out, "https://api.example.com/apps?search=42");
     }
 
     #[test]
     fn secret_placeholder_substitutes_empty_when_key_missing() {
-        let cache = secret_cache("ns1", "base-vars", &[("other", "x")]);
-        let out = resolve_secret_placeholders("{secret.base-vars.absent}/foo", "ns1", &cache);
+        let cache = secret_cache("ns1", "app-vars", &[("other", "x")]);
+        let out = resolve_secret_placeholders("{secret.app-vars.absent}/foo", "ns1", &cache);
         assert_eq!(out, "/foo");
     }
 
@@ -2417,31 +2414,31 @@ mod tests {
     fn first_uncached_secret_returns_missing_name() {
         let cache: HashMap<(String, String), HashMap<String, String>> = HashMap::new();
         assert_eq!(
-            first_uncached_secret("{secret.base-vars.k}", "ns1", &cache),
-            Some("base-vars".to_string())
+            first_uncached_secret("{secret.app-vars.k}", "ns1", &cache),
+            Some("app-vars".to_string())
         );
     }
 
     #[test]
     fn first_uncached_secret_skips_cached_entries() {
-        let cache = secret_cache("ns1", "base-vars", &[("k", "v")]);
-        // Only base-vars referenced and it's cached → None.
+        let cache = secret_cache("ns1", "app-vars", &[("k", "v")]);
+        // Only app-vars referenced and it's cached → None.
         assert_eq!(
-            first_uncached_secret("{secret.base-vars.k}", "ns1", &cache),
+            first_uncached_secret("{secret.app-vars.k}", "ns1", &cache),
             None
         );
         // Different secret name not cached → returns it.
         assert_eq!(
-            first_uncached_secret("{secret.base-vars.k}/{secret.other.x}", "ns1", &cache),
+            first_uncached_secret("{secret.app-vars.k}/{secret.other.x}", "ns1", &cache),
             Some("other".to_string())
         );
     }
 
     #[test]
     fn flat_key_substitutes_value() {
-        let out = outputs(&[("lke_id", "531022")]);
-        let result = resolve_output_placeholders("https://x/{output.lke_id}", &out);
-        assert_eq!(result, "https://x/531022");
+        let out = outputs(&[("cluster_id", "12345")]);
+        let result = resolve_output_placeholders("https://x/{output.cluster_id}", &out);
+        assert_eq!(result, "https://x/12345");
     }
 
     #[test]
@@ -2484,12 +2481,12 @@ mod tests {
 
     #[test]
     fn non_string_json_leaf_is_stringified() {
-        let out = outputs(&[("metadata", r#"{"clusterId":531022,"ready":true}"#)]);
+        let out = outputs(&[("metadata", r#"{"clusterId":12345,"ready":true}"#)]);
         let result = resolve_output_placeholders(
             "https://x/{output.metadata.clusterId}/{output.metadata.ready}",
             &out,
         );
-        assert_eq!(result, "https://x/531022/true");
+        assert_eq!(result, "https://x/12345/true");
     }
 
     #[test]
