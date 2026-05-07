@@ -51,14 +51,11 @@ pub async fn force_reconcile(client: &kube::Client, ns: &str, name: &str) -> Res
 }
 
 pub async fn replan(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
+    // tofu-controller's replan trigger is `spec.approvePlan = "ReplanRequested"`
+    // (matches what `tfctl replan` does). The previous annotation-based attempt
+    // was silently ignored — tofu-controller doesn't read it.
     let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
-    let patch = json!({
-        "metadata": {
-            "annotations": {
-                "replan.fluxcd.io/requestedAt": jiff::Timestamp::now().to_string()
-            }
-        }
-    });
+    let patch = json!({ "spec": { "approvePlan": "ReplanRequested" } });
     api.patch(
         name,
         &PatchParams::apply("terrarium"),
