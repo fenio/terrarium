@@ -142,10 +142,13 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
 /// separated from neighboring groups by a dim ` │ `.
 struct Group<'a>(&'a [(&'a str, &'a str)]);
 
-fn render_groups(groups: &[Group<'_>]) -> Vec<Span<'static>> {
+fn render_groups(groups: &[Group<'_>], disabled: &[&str]) -> Vec<Span<'static>> {
     let k = theme::STATUS_BAR_KEY;
     let t = theme::STATUS_BAR_TEXT;
     let s = theme::STATUS_BAR_SEP;
+    // Disabled keys (e.g. R/x when tfctl is missing) render in the same
+    // muted gray as the group separator so they read as inert.
+    let disabled_style = s;
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut first = true;
     for group in groups {
@@ -162,8 +165,11 @@ fn render_groups(groups: &[Group<'_>]) -> Vec<Span<'static>> {
             if i > 0 {
                 spans.push(Span::styled(" ", t));
             }
-            spans.push(Span::styled(key.to_string(), k));
-            spans.push(Span::styled(format!(":{label}"), t));
+            let is_disabled = disabled.contains(key);
+            let key_style = if is_disabled { disabled_style } else { k };
+            let label_style = if is_disabled { disabled_style } else { t };
+            spans.push(Span::styled(key.to_string(), key_style));
+            spans.push(Span::styled(format!(":{label}"), label_style));
         }
     }
     spans
@@ -173,6 +179,13 @@ fn render_groups(groups: &[Group<'_>]) -> Vec<Span<'static>> {
 /// for the current view; bottom row is meta (sort/filter/help/configured
 /// shortcuts/mode indicators).
 fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>) {
+    // R (replan) and x (btg) shell out to tfctl; render them disabled
+    // when tfctl isn't on PATH so the user sees they're inert.
+    let tfctl_disabled: &[&str] = if state.tfctl_available {
+        &[]
+    } else {
+        &["R", "x"]
+    };
     let top = match state.current_view() {
         ViewState::List(TabKind::Controller) => {
             let metrics_label: &'static str = if state.metrics_enabled {
@@ -180,64 +193,88 @@ fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>
             } else {
                 "metrics"
             };
-            render_groups(&[
-                Group(&[("j/k", "nav backlog"), ("Enter", "filter ns")]),
-                Group(&[("L", "controller logs"), ("M", metrics_label)]),
-                Group(&[("Tab", "next tab")]),
-            ])
+            render_groups(
+                &[
+                    Group(&[("j/k", "nav backlog"), ("Enter", "filter ns")]),
+                    Group(&[("L", "controller logs"), ("M", metrics_label)]),
+                    Group(&[("Tab", "next tab")]),
+                ],
+                &[],
+            )
         }
         ViewState::List(TabKind::Terraform) | ViewState::List(TabKind::CustomTab(_)) => {
-            render_groups(&[
-                Group(&[("j/k", "nav"), ("Enter", "detail")]),
-                Group(&[("a", "approve"), ("r", "reconcile"), ("R", "replan")]),
-                Group(&[("s/u", "suspend/resume"), ("p", "plan"), ("F", "unlock")]),
-                Group(&[("d", "delete"), ("x", "btg")]),
-            ])
+            render_groups(
+                &[
+                    Group(&[("j/k", "nav"), ("Enter", "detail")]),
+                    Group(&[("a", "approve"), ("r", "reconcile"), ("R", "replan")]),
+                    Group(&[("s/u", "suspend/resume"), ("p", "plan"), ("F", "unlock")]),
+                    Group(&[("d", "delete"), ("x", "btg")]),
+                ],
+                tfctl_disabled,
+            )
         }
-        ViewState::List(TabKind::Kustomizations) => render_groups(&[
-            Group(&[("j/k", "nav"), ("Enter", "detail")]),
-            Group(&[("r", "reconcile"), ("s/u", "suspend/resume")]),
-        ]),
-        ViewState::List(TabKind::Runners) => render_groups(&[
-            Group(&[("j/k", "nav"), ("Enter", "logs")]),
-            Group(&[("T", "terraform"), ("e", "events")]),
-            Group(&[("d", "kill")]),
-        ]),
-        ViewState::TerraformDetail { .. } => render_groups(&[
-            Group(&[("Esc", "back")]),
-            Group(&[
-                ("r", "reconcile"),
-                ("R", "replan"),
-                ("s/u", "suspend/resume"),
-            ]),
-            Group(&[("a", "approve"), ("p", "plan"), ("F", "unlock")]),
-            Group(&[("x", "btg"), ("d", "delete")]),
-        ]),
-        ViewState::KustomizationDetail { .. } => render_groups(&[
-            Group(&[("Esc", "back")]),
-            Group(&[("r", "reconcile"), ("s/u", "suspend/resume")]),
-        ]),
+        ViewState::List(TabKind::Kustomizations) => render_groups(
+            &[
+                Group(&[("j/k", "nav"), ("Enter", "detail")]),
+                Group(&[("r", "reconcile"), ("s/u", "suspend/resume")]),
+            ],
+            &[],
+        ),
+        ViewState::List(TabKind::Runners) => render_groups(
+            &[
+                Group(&[("j/k", "nav"), ("Enter", "logs")]),
+                Group(&[("T", "terraform"), ("e", "events")]),
+                Group(&[("d", "kill")]),
+            ],
+            &[],
+        ),
+        ViewState::TerraformDetail { .. } => render_groups(
+            &[
+                Group(&[("Esc", "back")]),
+                Group(&[
+                    ("r", "reconcile"),
+                    ("R", "replan"),
+                    ("s/u", "suspend/resume"),
+                ]),
+                Group(&[("a", "approve"), ("p", "plan"), ("F", "unlock")]),
+                Group(&[("x", "btg"), ("d", "delete")]),
+            ],
+            tfctl_disabled,
+        ),
+        ViewState::KustomizationDetail { .. } => render_groups(
+            &[
+                Group(&[("Esc", "back")]),
+                Group(&[("r", "reconcile"), ("s/u", "suspend/resume")]),
+            ],
+            &[],
+        ),
         ViewState::PlanViewer { .. }
         | ViewState::JsonViewer { .. }
         | ViewState::EventsViewer { .. }
         | ViewState::OutputsViewer { .. }
         | ViewState::ConditionsViewer { .. } => {
             let wrap_label: &'static str = if state.viewer_wrap { "nowrap" } else { "wrap" };
-            render_groups(&[
-                Group(&[("Esc", "back")]),
-                Group(&[("j/k", "scroll"), ("h/l", "hscroll"), ("g/G", "top/bottom")]),
-                Group(&[("/", "search"), ("n/N", "next/prev")]),
-                Group(&[("w", wrap_label), ("S", "save")]),
-            ])
+            render_groups(
+                &[
+                    Group(&[("Esc", "back")]),
+                    Group(&[("j/k", "scroll"), ("h/l", "hscroll"), ("g/G", "top/bottom")]),
+                    Group(&[("/", "search"), ("n/N", "next/prev")]),
+                    Group(&[("w", wrap_label), ("S", "save")]),
+                ],
+                &[],
+            )
         }
         ViewState::LogViewer { .. } => {
             let wrap_label: &'static str = if state.viewer_wrap { "nowrap" } else { "wrap" };
-            render_groups(&[
-                Group(&[("Esc", "back")]),
-                Group(&[("j/k", "scroll"), ("G", "follow")]),
-                Group(&[("/", "search"), ("n/N", "next/prev")]),
-                Group(&[("w", wrap_label), ("S", "save"), ("Tab", "container")]),
-            ])
+            render_groups(
+                &[
+                    Group(&[("Esc", "back")]),
+                    Group(&[("j/k", "scroll"), ("G", "follow")]),
+                    Group(&[("/", "search"), ("n/N", "next/prev")]),
+                    Group(&[("w", wrap_label), ("S", "save"), ("Tab", "container")]),
+                ],
+                &[],
+            )
         }
     };
 

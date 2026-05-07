@@ -233,7 +233,7 @@ impl App {
                 namespace: ns,
                 name,
             }),
-            KeyCode::Char('R') => Some(Action::Replan {
+            KeyCode::Char('R') if self.state.tfctl_available => Some(Action::Replan {
                 namespace: ns,
                 name,
             }),
@@ -293,7 +293,7 @@ impl App {
                 namespace: ns,
                 name,
             }),
-            KeyCode::Char('x') => Some(Action::ExecBreakTheGlass {
+            KeyCode::Char('x') if self.state.tfctl_available => Some(Action::ExecBreakTheGlass {
                 namespace: ns,
                 name,
             }),

@@ -40,7 +40,7 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
     }
 
     if state.input_mode == InputMode::Help {
-        help::render_help(f);
+        help::render_help(f, state);
     }
 
     if state.input_mode == InputMode::NamespacePicker {
