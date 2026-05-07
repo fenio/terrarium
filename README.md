@@ -11,9 +11,12 @@ A terminal dashboard for managing [tofu-controller](https://github.com/flux-iac/
 - **Real-time monitoring** of Terraform and Kustomization resources across all namespaces
 - **Controller health dashboard** with replica status, runner concurrency, and reconciliation backlog
 - **On-demand controller metrics panel** — port-forwards `/metrics` to show reconcile rate, errors, p50/p95/p99 latency, queue depth, and stuck workers
+- **Source health visibility** — `GitRepository` source state surfaced inline on TF and KS detail views (✓/✗, short revision, or "not found"/failure reason)
+- **Humanized condition errors** — strips tf-controller's RPC framing (`error running Plan: rpc error: code = …`) so terraform's own diagnostic reads cleanly
 - **Resource management** — approve plans, reconcile, replan, suspend/resume, force unlock, delete
-- **Live runner log streaming** with multi-container switching
-- **Content viewers** for plans, outputs, JSON resources, and events with search and line wrap
+- **Live runner log streaming** with multi-container switching, preserved across tab switches
+- **Per-tab state preservation** — detail views, viewers, and live log streams all survive jumping between tabs
+- **Content viewers** for plans, outputs, JSON resources, events, and full conditions with search and line wrap
 - **Filtering** — search, namespace picker, failures-only, waiting-only (stale resources)
 - **Sorting** by namespace, name, ready status, last applied, or age — with direction toggle
 - **Configurable custom tabs** — filter resources by annotation with custom columns
@@ -68,6 +71,9 @@ Press `?` at any time to see the full help overlay. Here's a summary:
 
 ### Tabs
 
+Tab navigation works from any view — list, detail, or content viewer — without
+having to back out first.
+
 | Key | Action |
 |-----|--------|
 | `1`-`9` | Jump to tab by number |
@@ -107,6 +113,7 @@ These work in both the Terraform list and detail views:
 | `O` | View outputs from the outputs secret |
 | `y` / `Y` | View the full resource as JSON / YAML |
 | `e` | View Kubernetes events |
+| `c` | View full conditions (scrollable, no panel-height clipping) |
 | `s` / `u` | Suspend / Resume |
 | `F` | Force unlock state (with confirmation) |
 | `x` | Break the glass — drop into `tfctl` shell |
@@ -120,6 +127,7 @@ These work in both the Terraform list and detail views:
 | `r` | Trigger reconciliation |
 | `y` / `Y` | View the full resource as JSON / YAML |
 | `e` | View Kubernetes events |
+| `c` | View full conditions (scrollable) |
 | `s` / `u` | Suspend / Resume |
 
 ### Runner Actions
@@ -131,7 +139,7 @@ These work in both the Terraform list and detail views:
 | `T` | Jump to the associated Terraform detail |
 | `d` | Kill the runner pod (with confirmation) |
 
-### Viewer (Plan / Logs / JSON / Events / Outputs)
+### Viewer (Plan / Logs / JSON / Events / Outputs / Conditions)
 
 | Key | Action |
 |-----|--------|
