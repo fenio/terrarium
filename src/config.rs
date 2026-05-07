@@ -52,9 +52,14 @@ pub struct Shortcut {
     /// level it activates the shortcut directly from the list/detail
     /// view; inside the popup it selects the matching entry.
     pub key: char,
-    /// Label shown in the popup and (for top-level entries) the status
-    /// bar's `S:shortcuts` summary.
+    /// Short label (one or two words) shown in the popup and (for
+    /// top-level entries) the status bar's `S:shortcuts` summary.
     pub label: String,
+    /// Optional human-friendly description shown next to the label in
+    /// the popup. Use this to disambiguate shortcuts with the same
+    /// label (e.g. "GitLab — Repository" vs "GitLab — GitOps view").
+    #[serde(default)]
+    pub description: Option<String>,
     /// URL template with {context}, {namespace}, {name}, {output.KEY}
     /// placeholders. Leaf shortcuts must have a url; submenu shortcuts
     /// (with `children`) leave it absent and drill into their children

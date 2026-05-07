@@ -240,10 +240,16 @@ dashboards, log viewers, secret managers, or cloud consoles.
 
 ```toml
 [[shortcuts]]
-key = "b"                    # single character, case-sensitive
-label = "Grafana"            # shown in the status bar
+key = "b"                              # single character, case-sensitive
+label = "Grafana"                      # short label shown in the popup
+description = "logs from Loki"         # optional; shown next to the label
 url = "https://grafana.example.com/explore?cluster={context}&namespace={namespace}&pod={name}-tf-runner"
 ```
+
+The `description` is optional but recommended when you have shortcuts with the
+same `label` (e.g. multiple GitLab links pointing to different parts of the
+repo). It's the main text shown in the popup so users can pick the right one
+without reading URLs.
 
 **Template variables:**
 
