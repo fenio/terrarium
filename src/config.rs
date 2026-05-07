@@ -15,7 +15,8 @@ pub struct Config {
     pub custom_tabs: Vec<CustomTab>,
 
     /// Custom keyboard shortcuts that open a URL in the browser.
-    /// Each shortcut binds a single key and defines a URL template.
+    /// Each shortcut binds a single key and defines a URL template,
+    /// or nests further shortcuts under it as a submenu.
     ///
     /// Available template variables:
     ///   {context}      - kubeconfig context name
@@ -24,11 +25,22 @@ pub struct Config {
     ///   {output.KEY}   - value from the Terraform outputs secret
     ///                    (nested JSON paths supported, e.g. {output.metadata.tenant})
     ///
-    /// Example:
+    /// Example (flat):
     ///   [[shortcuts]]
     ///   key = "b"
     ///   label = "Grafana"
     ///   url = "https://grafana.example.com/explore?cluster={context}&pod={name}"
+    ///
+    /// Example (submenu — opens the Shortcuts popup at this branch when
+    /// the parent's `key` is pressed; child entries are selected with
+    /// j/k+Enter or by their own `key`):
+    ///   [[shortcuts]]
+    ///   key = "g"
+    ///   label = "Grafana"
+    ///     [[shortcuts.children]]
+    ///     key = "o"
+    ///     label = "Cluster overview"
+    ///     url = "https://..."
     #[serde(default)]
     pub shortcuts: Vec<Shortcut>,
 }
@@ -36,12 +48,24 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Shortcut {
-    /// Single character key binding (e.g. "b", "B", "L")
+    /// Single character key binding (e.g. "b", "B", "L"). At the top
+    /// level it activates the shortcut directly from the list/detail
+    /// view; inside the popup it selects the matching entry.
     pub key: char,
-    /// Label shown in the status bar (e.g. "Grafana Logs")
+    /// Label shown in the popup and (for top-level entries) the status
+    /// bar's `S:shortcuts` summary.
     pub label: String,
-    /// URL template with {context}, {namespace}, {name}, {output.KEY} placeholders
-    pub url: String,
+    /// URL template with {context}, {namespace}, {name}, {output.KEY}
+    /// placeholders. Leaf shortcuts must have a url; submenu shortcuts
+    /// (with `children`) leave it absent and drill into their children
+    /// instead.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Nested submenu entries. When present, activating this shortcut
+    /// drills into a submenu in the Shortcuts popup. Each child can
+    /// itself have children for deeper menus.
+    #[serde(default)]
+    pub children: Vec<Shortcut>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
