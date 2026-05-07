@@ -251,6 +251,28 @@ same `label` (e.g. multiple GitLab links pointing to different parts of the
 repo). It's the main text shown in the popup so users can pick the right one
 without reading URLs.
 
+An optional `group = "..."` field organizes the popup into sections — useful
+when you have many shortcuts:
+
+```toml
+[[shortcuts]]
+key = "b"
+label = "Logs"
+group = "Observability"
+description = "logs in Grafana"
+url = "..."
+
+[[shortcuts]]
+key = "A"
+label = "Argo Infra"
+group = "ArgoCD"
+description = "apps search on this cluster's infra ArgoCD"
+url = "..."
+```
+
+Consecutive shortcuts sharing a group render under one section header in the
+popup. Shortcuts without a group render at the top in an unnamed first section.
+
 **Template variables:**
 
 | Variable | Description |

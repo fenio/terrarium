@@ -60,6 +60,12 @@ pub struct Shortcut {
     /// label (e.g. "GitLab — Repository" vs "GitLab — GitOps view").
     #[serde(default)]
     pub description: Option<String>,
+    /// Optional group label. Consecutive shortcuts sharing the same
+    /// group render under one section header in the popup, in the
+    /// order they appear in config.toml. Shortcuts without a group
+    /// render in an unnamed first section.
+    #[serde(default)]
+    pub group: Option<String>,
     /// URL template with {context}, {namespace}, {name}, {output.KEY}
     /// placeholders. Leaf shortcuts must have a url; submenu shortcuts
     /// (with `children`) leave it absent and drill into their children
