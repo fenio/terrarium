@@ -154,7 +154,10 @@ pub struct AppState {
     pub context_name: String,
 
     pub active_tab: TabKind,
-    pub view_stack: Vec<ViewState>,
+    /// Each tab keeps its own view stack, so jumping away to another tab
+    /// and coming back resumes wherever the user was — including any
+    /// open detail or viewer. Indexed by `TabKind::index(tab_count)`.
+    pub view_stacks: Vec<Vec<ViewState>>,
     pub namespace_filter: Option<String>,
     pub search_query: String,
     pub search_suspended: bool,
@@ -247,6 +250,13 @@ impl AppState {
         config: Config,
     ) -> Self {
         let custom_tab_count = config.custom_tabs.len();
+        let total_tabs = tab_count(&config);
+        let view_stacks: Vec<Vec<ViewState>> = (0..total_tabs)
+            .map(|i| {
+                let tab = tab_from_index(i, &config).unwrap_or(TabKind::Controller);
+                vec![ViewState::List(tab)]
+            })
+            .collect();
         Self {
             config,
             tf_store,
@@ -258,7 +268,7 @@ impl AppState {
             cached_outputs: None,
             context_name,
             active_tab: TabKind::Controller,
-            view_stack: vec![ViewState::List(TabKind::Controller)],
+            view_stacks,
             namespace_filter: None,
             search_query: String::new(),
             search_suspended: false,
@@ -316,8 +326,23 @@ impl AppState {
         }
     }
 
+    fn active_tab_idx(&self) -> usize {
+        let count = self.tab_count();
+        self.active_tab.index(count).min(count.saturating_sub(1))
+    }
+
+    pub fn current_view_stack(&self) -> &Vec<ViewState> {
+        let idx = self.active_tab_idx();
+        &self.view_stacks[idx]
+    }
+
+    pub fn current_view_stack_mut(&mut self) -> &mut Vec<ViewState> {
+        let idx = self.active_tab_idx();
+        &mut self.view_stacks[idx]
+    }
+
     pub fn current_view(&self) -> &ViewState {
-        self.view_stack
+        self.current_view_stack()
             .last()
             .unwrap_or(&ViewState::List(TabKind::Terraform))
     }
@@ -326,24 +351,30 @@ impl AppState {
         tab_count(&self.config)
     }
 
+    /// Find the (only) tab stack that has a LogViewer at its top, if any.
+    /// Used to route log chunks to a viewer that may not be on the active
+    /// tab when the user has jumped away.
+    pub fn log_viewer_mut(&mut self) -> Option<&mut ViewState> {
+        for stack in &mut self.view_stacks {
+            if matches!(stack.last(), Some(ViewState::LogViewer { .. })) {
+                return stack.last_mut();
+            }
+        }
+        None
+    }
+
     pub fn next_tab(&mut self) {
         let count = self.tab_count();
         let cur = self.active_tab.index(count);
         let next = (cur + 1) % count;
         if let Some(tab) = tab_from_index(next, &self.config) {
             self.active_tab = tab;
-            self.view_stack = vec![ViewState::List(self.active_tab.clone())];
-            self.reset_table_selection();
         }
     }
 
     pub fn go_to_tab(&mut self, idx: usize) {
         if let Some(tab) = tab_from_index(idx, &self.config) {
-            if tab != self.active_tab {
-                self.active_tab = tab;
-                self.view_stack = vec![ViewState::List(self.active_tab.clone())];
-                self.reset_table_selection();
-            }
+            self.active_tab = tab;
         }
     }
 
@@ -353,8 +384,6 @@ impl AppState {
         let prev = if cur == 0 { count - 1 } else { cur - 1 };
         if let Some(tab) = tab_from_index(prev, &self.config) {
             self.active_tab = tab;
-            self.view_stack = vec![ViewState::List(self.active_tab.clone())];
-            self.reset_table_selection();
         }
     }
 
@@ -366,10 +395,6 @@ impl AppState {
             TabKind::Runners => &mut self.runner_table_state,
             TabKind::CustomTab(i) => &mut self.custom_tab_states[*i],
         }
-    }
-
-    fn reset_table_selection(&mut self) {
-        self.current_table_state().select(None);
     }
 
     /// Returns a stabilized failure count. The displayed value only changes

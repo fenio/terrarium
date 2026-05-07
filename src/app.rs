@@ -635,19 +635,12 @@ impl App {
         match action {
             Action::Quit => self.should_quit = true,
 
-            // Navigation
-            Action::NextTab => {
-                self.cancel_log_stream();
-                self.state.next_tab();
-            }
-            Action::PrevTab => {
-                self.cancel_log_stream();
-                self.state.prev_tab();
-            }
-            Action::GoToTab(idx) => {
-                self.cancel_log_stream();
-                self.state.go_to_tab(idx);
-            }
+            // Navigation. Tab switches preserve each tab's view stack —
+            // including any open LogViewer with its live stream — so the
+            // user can glance away and return without losing context.
+            Action::NextTab => self.state.next_tab(),
+            Action::PrevTab => self.state.prev_tab(),
+            Action::GoToTab(idx) => self.state.go_to_tab(idx),
             Action::ToggleHelp => {
                 if self.state.input_mode == InputMode::Help {
                     self.state.input_mode = InputMode::Normal;
@@ -818,7 +811,11 @@ impl App {
                             self.state.namespace_filter = Some(ns.clone());
                             self.state.show_failures_only = true;
                             self.state.active_tab = TabKind::Terraform;
-                            self.state.view_stack = vec![ViewState::List(TabKind::Terraform)];
+                            // Reset the TF tab back to its list root so the user
+                            // sees the filtered Terraforms first, not whatever
+                            // they had open before.
+                            *self.state.current_view_stack_mut() =
+                                vec![ViewState::List(TabKind::Terraform)];
                             self.state.tf_table_state.select(None);
                         }
                     }
@@ -826,7 +823,7 @@ impl App {
                 TabKind::Terraform => {
                     if let Some((ns, name)) = self.get_selected_terraform() {
                         self.spawn_detail_outputs_fetch(&ns, &name);
-                        self.state.view_stack.push(ViewState::TerraformDetail {
+                        self.state.current_view_stack_mut().push(ViewState::TerraformDetail {
                             namespace: ns,
                             name,
                         });
@@ -835,7 +832,7 @@ impl App {
                 TabKind::Kustomizations => {
                     if let Some((ns, name)) = self.get_selected_kustomization() {
                         self.state
-                            .view_stack
+                            .current_view_stack_mut()
                             .push(ViewState::KustomizationDetail {
                                 namespace: ns,
                                 name,
@@ -850,7 +847,7 @@ impl App {
                 TabKind::CustomTab(i) => {
                     if let Some((ns, name)) = self.get_selected_custom_tab(i) {
                         self.spawn_detail_outputs_fetch(&ns, &name);
-                        self.state.view_stack.push(ViewState::TerraformDetail {
+                        self.state.current_view_stack_mut().push(ViewState::TerraformDetail {
                             namespace: ns,
                             name,
                         });
@@ -872,12 +869,12 @@ impl App {
                     }
                     // Reset table selection when filters change
                     self.state.current_table_state().select(None);
-                } else if self.state.view_stack.len() > 1 {
+                } else if self.state.current_view_stack().len() > 1 {
                     // Cancel log stream if leaving a LogViewer
                     if matches!(self.state.current_view(), ViewState::LogViewer { .. }) {
                         self.cancel_log_stream();
                     }
-                    self.state.view_stack.pop();
+                    self.state.current_view_stack_mut().pop();
                     self.state.viewer_wrap = false;
                     self.state.horizontal_scroll = 0;
                     self.state.viewer_search_query.clear();
@@ -1092,10 +1089,14 @@ impl App {
                 });
                 if exists {
                     self.spawn_detail_outputs_fetch(&namespace, &name);
-                    self.state.view_stack.push(ViewState::TerraformDetail {
-                        namespace,
-                        name,
-                    });
+                    // Switch to the TF tab and replace its stack with a fresh
+                    // detail view — the cross-tab jump is meant to land on
+                    // the TF resource, not on whatever was previously open.
+                    self.state.active_tab = TabKind::Terraform;
+                    *self.state.current_view_stack_mut() = vec![
+                        ViewState::List(TabKind::Terraform),
+                        ViewState::TerraformDetail { namespace, name },
+                    ];
                 } else {
                     self.state.flash_message = Some((
                         format!("Terraform resource {namespace}/{name} not found"),
@@ -1150,7 +1151,7 @@ impl App {
             Action::PlanFetched(plan_text) => {
                 self.state.flash_message = None;
                 self.state
-                    .view_stack
+                    .current_view_stack_mut()
                     .push(ViewState::PlanViewer { content: plan_text });
                 self.state.plan_scroll = 0;
                 self.state.viewer_wrap = false;
@@ -1220,7 +1221,7 @@ impl App {
             Action::JsonFetched(yaml) => {
                 self.state.flash_message = None;
                 self.state
-                    .view_stack
+                    .current_view_stack_mut()
                     .push(ViewState::JsonViewer { content: yaml });
                 self.state.plan_scroll = 0;
                 self.state.viewer_wrap = false;
@@ -1256,7 +1257,7 @@ impl App {
             Action::OutputsFetched(text) => {
                 self.state.flash_message = None;
                 self.state
-                    .view_stack
+                    .current_view_stack_mut()
                     .push(ViewState::OutputsViewer { content: text });
                 self.state.plan_scroll = 0;
                 self.state.horizontal_scroll = 0;
@@ -1297,7 +1298,7 @@ impl App {
             Action::EventsFetched(events) => {
                 self.state.flash_message = None;
                 self.state
-                    .view_stack
+                    .current_view_stack_mut()
                     .push(ViewState::EventsViewer { content: events });
                 self.state.plan_scroll = 0;
                 self.state.horizontal_scroll = 0;
@@ -1359,7 +1360,7 @@ impl App {
                     ResourceKind::Pod => None,
                 };
                 if let Some(content) = content {
-                    self.state.view_stack.push(ViewState::ConditionsViewer { content });
+                    self.state.current_view_stack_mut().push(ViewState::ConditionsViewer { content });
                     self.state.plan_scroll = 0;
                     self.state.horizontal_scroll = 0;
                     self.state.viewer_wrap = false;
@@ -1375,9 +1376,17 @@ impl App {
             // Log streaming chunks
             Action::LogChunkReceived(chunk) => {
                 const MAX_LOG_BYTES: usize = 10 * 1024 * 1024; // 10 MB
-                if let Some(ViewState::LogViewer { content, .. }) =
-                    self.state.view_stack.last_mut()
-                {
+                // The LogViewer might be on a tab the user has navigated
+                // away from — chunks still need to find it. Capture flags
+                // we'll need before taking a mutable borrow on the viewer.
+                let on_active_tab = matches!(
+                    self.state.current_view(),
+                    ViewState::LogViewer { .. }
+                );
+                let auto_follow = self.state.log_auto_follow;
+                let body_height = self.state.body_height as usize;
+                let mut new_scroll: Option<usize> = None;
+                if let Some(ViewState::LogViewer { content, .. }) = self.state.log_viewer_mut() {
                     if content.len() + chunk.len() > MAX_LOG_BYTES {
                         // Trim the front to stay under the cap
                         content.push_str(&chunk);
@@ -1390,11 +1399,13 @@ impl App {
                     } else {
                         content.push_str(&chunk);
                     }
-                    if self.state.log_auto_follow {
+                    if on_active_tab && auto_follow {
                         let line_count = content.lines().count();
-                        let visible = self.state.body_height as usize;
-                        self.state.plan_scroll = line_count.saturating_sub(visible);
+                        new_scroll = Some(line_count.saturating_sub(body_height));
                     }
+                }
+                if let Some(s) = new_scroll {
+                    self.state.plan_scroll = s;
                 }
             }
 
@@ -1793,7 +1804,7 @@ impl App {
         let first_container = containers.first().cloned();
 
         // Push the log viewer immediately with empty content
-        self.state.view_stack.push(ViewState::LogViewer {
+        self.state.current_view_stack_mut().push(ViewState::LogViewer {
             namespace: namespace.to_string(),
             pod_name: name.to_string(),
             containers: containers.clone(),
@@ -1861,10 +1872,10 @@ impl App {
 
         // Cancel existing stream and pop the current log viewer
         self.cancel_log_stream();
-        self.state.view_stack.pop();
+        self.state.current_view_stack_mut().pop();
 
         // Push new log viewer with empty content
-        self.state.view_stack.push(ViewState::LogViewer {
+        self.state.current_view_stack_mut().push(ViewState::LogViewer {
             namespace: namespace.clone(),
             pod_name: pod_name.clone(),
             containers: containers.clone(),
