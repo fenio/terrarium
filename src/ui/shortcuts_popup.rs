@@ -59,7 +59,11 @@ fn render_entries(f: &mut Frame, area: Rect, state: &AppState, shortcuts: &[Shor
     let desc_style = Style::default().fg(Color::Rgb(170, 175, 195));
     let dim_style = Style::default().fg(Color::Rgb(110, 115, 135));
     let dash_style = Style::default().fg(Color::Rgb(70, 80, 100));
-    let selected_style = Style::default().bg(Color::Rgb(40, 50, 70));
+    let selected_bg = Color::Rgb(60, 90, 140);
+    let selected_marker = Style::default()
+        .fg(Color::Rgb(140, 200, 255))
+        .bg(selected_bg)
+        .add_modifier(Modifier::BOLD);
 
     let label_width = shortcuts.iter().map(|s| s.label.len()).max().unwrap_or(0);
     let max_inner_width = area.width as usize;
@@ -74,19 +78,34 @@ fn render_entries(f: &mut Frame, area: Rect, state: &AppState, shortcuts: &[Shor
         if i > 0 {
             lines.push(Line::from(""));
         }
+        let is_sel = i == selected;
         let mut spans: Vec<Span> = Vec::new();
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(format!("[{}]", sc.key), key_style));
-        spans.push(Span::raw("  "));
+        // Left marker: a bright cyan ▎ block on the selected row, two
+        // spaces of padding otherwise. Reads as a clear "you are here".
+        if is_sel {
+            spans.push(Span::styled("▎ ", selected_marker));
+        } else {
+            spans.push(Span::raw("  "));
+        }
+        // Build the row's body with selected-background applied to each
+        // span so the highlight extends behind the styled text.
+        let entry_bg = if is_sel { Some(selected_bg) } else { None };
+        let with_bg = |s: Style| match entry_bg {
+            Some(bg) => s.bg(bg),
+            None => s,
+        };
+
+        spans.push(Span::styled(format!("[{}]", sc.key), with_bg(key_style)));
+        spans.push(Span::styled("  ", with_bg(Style::default())));
         spans.push(Span::styled(
             format!("{:<width$}", sc.label, width = label_width),
-            label_style,
+            with_bg(label_style),
         ));
 
         let detail_text = description_for(sc);
         if !detail_text.is_empty() {
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled("— ", dash_style));
+            spans.push(Span::styled("  ", with_bg(Style::default())));
+            spans.push(Span::styled("— ", with_bg(dash_style)));
             let trimmed = truncate_visual(&detail_text, desc_budget.saturating_sub(2));
             let style = if sc.url.is_none() && !sc.children.is_empty() {
                 Style::default()
@@ -97,14 +116,10 @@ fn render_entries(f: &mut Frame, area: Rect, state: &AppState, shortcuts: &[Shor
             } else {
                 dim_style
             };
-            spans.push(Span::styled(trimmed, style));
+            spans.push(Span::styled(trimmed, with_bg(style)));
         }
 
-        let mut line = Line::from(spans);
-        if i == selected {
-            line = line.style(selected_style);
-        }
-        lines.push(line);
+        lines.push(Line::from(spans));
     }
 
     f.render_widget(Paragraph::new(lines), area);
@@ -193,11 +208,11 @@ fn popup_rect(screen: Rect, shortcuts: &[Shortcut], title: &str) -> Rect {
     };
     // chrome: 2 top-pad + 1 separator + 1 footer + 1 bottom-pad + 2 borders = 7
     let chrome = 7;
-    let preferred_h = (screen.height as usize) * 50 / 100;
-    let min_required_h = entry_rows + chrome;
+    // Size to fit content. Cap at 80% screen so very long shortcut lists
+    // still leave the body visible, but no enforced minimum height —
+    // a 2-entry popup shouldn't fill half the screen with whitespace.
     let max_h = (screen.height as usize) * 80 / 100;
-    let height = preferred_h
-        .max(min_required_h)
+    let height = (entry_rows + chrome)
         .min(max_h)
         .min(screen.height.saturating_sub(2) as usize) as u16;
 
