@@ -6,7 +6,7 @@ use ratatui::widgets::TableState;
 use crate::action::Action;
 use crate::config::Config;
 use crate::k8s::metrics::{MetricsSnapshot, PrevCounters};
-use crate::k8s::watcher::{KsStore, TfStore};
+use crate::k8s::watcher::{GitRepoStore, KsStore, TfStore};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TabKind {
@@ -141,6 +141,7 @@ pub struct AppState {
 
     pub tf_store: TfStore,
     pub ks_store: KsStore,
+    pub gr_store: GitRepoStore,
     pub runner_pods: Vec<Pod>,
     /// Cached logs for active runners, keyed by (namespace, terraform-resource-name)
     pub runner_logs: HashMap<(String, String), String>,
@@ -185,8 +186,10 @@ pub struct AppState {
 
     pub tf_synced: bool,
     pub ks_synced: bool,
+    pub gr_synced: bool,
     pub tf_crd_missing: bool,
     pub ks_crd_missing: bool,
+    pub gr_crd_missing: bool,
 
     /// Persistent connection error (shown on dashboard until resolved)
     pub connection_error: Option<String>,
@@ -235,12 +238,19 @@ pub enum FlashKind {
 }
 
 impl AppState {
-    pub fn new(tf_store: TfStore, ks_store: KsStore, context_name: String, config: Config) -> Self {
+    pub fn new(
+        tf_store: TfStore,
+        ks_store: KsStore,
+        gr_store: GitRepoStore,
+        context_name: String,
+        config: Config,
+    ) -> Self {
         let custom_tab_count = config.custom_tabs.len();
         Self {
             config,
             tf_store,
             ks_store,
+            gr_store,
             runner_pods: Vec::new(),
             runner_logs: HashMap::new(),
             controller_info: ControllerInfo::default(),
@@ -271,8 +281,10 @@ impl AppState {
             bulk_selected: std::collections::HashSet::new(),
             tf_synced: false,
             ks_synced: false,
+            gr_synced: false,
             tf_crd_missing: false,
             ks_crd_missing: false,
+            gr_crd_missing: false,
             connection_error: None,
             ns_picker_items: Vec::new(),
             ns_picker_selected: 0,

@@ -11,16 +11,22 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::action::Action;
 use crate::k8s::kustomization::Kustomization;
+use crate::k8s::source::GitRepository;
 use crate::k8s::terraform::Terraform;
 
 pub type TfStore = reflector::Store<Terraform>;
 pub type KsStore = reflector::Store<Kustomization>;
+pub type GitRepoStore = reflector::Store<GitRepository>;
 
 pub fn create_tf_store() -> (TfStore, Writer<Terraform>) {
     reflector::store()
 }
 
 pub fn create_ks_store() -> (KsStore, Writer<Kustomization>) {
+    reflector::store()
+}
+
+pub fn create_gitrepo_store() -> (GitRepoStore, Writer<GitRepository>) {
     reflector::store()
 }
 
@@ -71,6 +77,33 @@ pub async fn run_ks_watcher(
         let msg = format!("{}", e);
         if msg.contains("404") || msg.contains("not found") || msg.contains("the server could not find the requested resource") {
             let _ = tx.send(Action::KustomizationCrdMissing);
+            return Ok(());
+        }
+    }
+    result?;
+    Ok(())
+}
+
+pub async fn run_gitrepo_watcher(
+    client: kube::Client,
+    writer: Writer<GitRepository>,
+    tx: UnboundedSender<Action>,
+) -> Result<()> {
+    let api: Api<GitRepository> = Api::all(client);
+    let result = watcher(api, watcher::Config::default())
+        .default_backoff()
+        .reflect(writer)
+        .applied_objects()
+        .try_for_each(|_obj| {
+            let _ = tx.send(Action::GitRepoStoreUpdated);
+            futures::future::ready(Ok(()))
+        })
+        .await;
+
+    if let Err(e) = &result {
+        let msg = format!("{}", e);
+        if msg.contains("404") || msg.contains("not found") || msg.contains("the server could not find the requested resource") {
+            let _ = tx.send(Action::GitRepoCrdMissing);
             return Ok(());
         }
     }

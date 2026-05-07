@@ -6,10 +6,13 @@ use ratatui::{
     Frame,
 };
 
+use crate::k8s::kustomization::KustomizationSourceRefKind;
+use crate::k8s::terraform::TerraformSourceRefKind;
 use crate::state::store::{AppState, InputMode, TabKind, ViewState};
 use crate::ui::{
     controller_dashboard, custom_tab, dialog, help, kustomization_detail, kustomization_list,
-    namespace_picker, resource_list, runner_list, status_bar, terraform_detail, theme,
+    namespace_picker, resource_list, runner_list, source_summary, status_bar, terraform_detail,
+    theme,
 };
 
 pub fn render(f: &mut Frame, state: &mut AppState) {
@@ -481,7 +484,29 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
                     .as_ref()
                     .filter(|((ns, n), _)| ns == namespace && n == name)
                     .map(|(_, v)| v);
-                terraform_detail::render(f, area, &tf, runner_logs, cached_outputs, &state.config.detail_fields);
+                let source_gr = if matches!(
+                    tf.spec.source_ref.kind,
+                    TerraformSourceRefKind::GitRepository
+                ) {
+                    source_summary::find_gitrepo(
+                        &state.gr_store,
+                        tf.spec.source_ref.namespace.as_deref(),
+                        namespace,
+                        &tf.spec.source_ref.name,
+                    )
+                } else {
+                    None
+                };
+                terraform_detail::render(
+                    f,
+                    area,
+                    &tf,
+                    runner_logs,
+                    cached_outputs,
+                    &state.config.detail_fields,
+                    source_gr.as_deref(),
+                    state.gr_synced,
+                );
             } else {
                 let para = Paragraph::new(format!("Resource {}/{} not found", namespace, name))
                     .style(Style::default().fg(Color::Red));
@@ -503,7 +528,20 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
                 .cloned();
 
             if let Some(ks) = ks {
-                kustomization_detail::render(f, area, &ks);
+                let source_gr = if matches!(
+                    ks.spec.source_ref.kind,
+                    KustomizationSourceRefKind::GitRepository
+                ) {
+                    source_summary::find_gitrepo(
+                        &state.gr_store,
+                        ks.spec.source_ref.namespace.as_deref(),
+                        namespace,
+                        &ks.spec.source_ref.name,
+                    )
+                } else {
+                    None
+                };
+                kustomization_detail::render(f, area, &ks, source_gr.as_deref(), state.gr_synced);
             } else {
                 let para = Paragraph::new(format!("Resource {}/{} not found", namespace, name))
                     .style(Style::default().fg(Color::Red));

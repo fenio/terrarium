@@ -7,6 +7,7 @@ pub mod layout;
 pub mod namespace_picker;
 pub mod resource_list;
 pub mod runner_list;
+pub mod source_summary;
 pub mod status_bar;
 pub mod terraform_detail;
 pub mod theme;

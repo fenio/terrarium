@@ -50,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
     // Set up reflectors (stores are immediately available, just empty)
     let (tf_store, tf_writer) = k8s::watcher::create_tf_store();
     let (ks_store, ks_writer) = k8s::watcher::create_ks_store();
+    let (gr_store, gr_writer) = k8s::watcher::create_gitrepo_store();
 
     // Build app state immediately with empty stores
     let context_label = cli
@@ -64,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = config::Config::load();
     let mut app_state =
-        state::store::AppState::new(tf_store, ks_store, context_label, config);
+        state::store::AppState::new(tf_store, ks_store, gr_store, context_label, config);
     if let Some(ns) = cli.namespace.clone() {
         app_state.namespace_filter = Some(ns);
     }
@@ -108,6 +109,18 @@ async fn main() -> anyhow::Result<()> {
                     if let Err(e) = k8s::watcher::run_ks_watcher(c, ks_writer, wtx.clone()).await {
                         let _ = wtx.send(action::Action::ConnectionError(
                             format!("Kustomization watcher failed: {}", e),
+                        ));
+                    }
+                });
+
+                let wtx = tx.clone();
+                let c = client.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        k8s::watcher::run_gitrepo_watcher(c, gr_writer, wtx.clone()).await
+                    {
+                        let _ = wtx.send(action::Action::ConnectionError(
+                            format!("GitRepository watcher failed: {}", e),
                         ));
                     }
                 });

@@ -124,6 +124,7 @@ pub enum Action {
     // K8s data events
     TerraformStoreUpdated,
     KustomizationStoreUpdated,
+    GitRepoStoreUpdated,
     RunnerPodsUpdated(Vec<Pod>),
     ControllerInfoUpdated(crate::state::store::ControllerInfo),
     RunnerLogsUpdated(std::collections::HashMap<(String, String), String>),
@@ -134,6 +135,7 @@ pub enum Action {
     // CRD availability
     TerraformCrdMissing,
     KustomizationCrdMissing,
+    GitRepoCrdMissing,
 
     // K8s client initialization
     K8sClientReady { client: K8sClient, context_name: String },

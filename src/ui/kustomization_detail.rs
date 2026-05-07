@@ -7,9 +7,17 @@ use ratatui::{
 };
 
 use crate::k8s::kustomization::Kustomization;
+use crate::k8s::source::GitRepository;
+use crate::ui::source_summary;
 use crate::ui::theme;
 
-pub fn render(f: &mut Frame, area: Rect, ks: &Kustomization) {
+pub fn render(
+    f: &mut Frame,
+    area: Rect,
+    ks: &Kustomization,
+    source_gr: Option<&GitRepository>,
+    gr_synced: bool,
+) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -36,16 +44,19 @@ pub fn render(f: &mut Frame, area: Rect, ks: &Kustomization) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[1]);
 
-    render_spec(f, body_chunks[0], ks);
+    render_spec(f, body_chunks[0], ks, source_gr, gr_synced);
     render_status(f, body_chunks[1], ks);
     render_conditions(f, chunks[2], ks);
 }
 
-fn render_spec(f: &mut Frame, area: Rect, ks: &Kustomization) {
-    let source = format!(
-        "{:?}/{}",
-        ks.spec.source_ref.kind, ks.spec.source_ref.name
-    );
+fn render_spec(
+    f: &mut Frame,
+    area: Rect,
+    ks: &Kustomization,
+    source_gr: Option<&GitRepository>,
+    gr_synced: bool,
+) {
+    let source_kind = format!("{:?}", ks.spec.source_ref.kind);
     let path = ks.spec.path.as_deref().unwrap_or(".");
     let interval = &ks.spec.interval;
     let suspended = ks.spec.suspend.unwrap_or(false);
@@ -70,8 +81,16 @@ fn render_spec(f: &mut Frame, area: Rect, ks: &Kustomization) {
 
     let suspended_text = format!("{}", suspended);
     let prune_text = format!("{}", prune);
+    let label_style = Style::default().fg(Color::DarkGray);
     let lines = vec![
-        kv_line("Source:       ", &source),
+        source_summary::source_line(
+            "Source:       ",
+            label_style,
+            &source_kind,
+            &ks.spec.source_ref.name,
+            source_gr,
+            gr_synced,
+        ),
         kv_line("Path:         ", path),
         kv_line("Interval:     ", interval),
         kv_line("Suspended:    ", &suspended_text),

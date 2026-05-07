@@ -9,7 +9,9 @@ use ratatui::{
 };
 
 use crate::config::DetailField;
+use crate::k8s::source::GitRepository;
 use crate::k8s::terraform::Terraform;
+use crate::ui::source_summary;
 use crate::ui::theme;
 
 const LABEL: Style = Style::new().fg(Color::Rgb(140, 145, 165));
@@ -22,6 +24,8 @@ pub fn render(
     runner_logs: Option<&str>,
     cached_outputs: Option<&HashMap<String, String>>,
     detail_fields: &[DetailField],
+    source_gr: Option<&GitRepository>,
+    gr_synced: bool,
 ) {
     let ns = tf.metadata.namespace.as_deref().unwrap_or("-");
     let name = tf.metadata.name.as_deref().unwrap_or("-");
@@ -42,7 +46,7 @@ pub fn render(
             .split(area);
 
         render_title(f, chunks[0], ns, name);
-        render_spec_status(f, chunks[1], tf, cached_outputs, detail_fields);
+        render_spec_status(f, chunks[1], tf, cached_outputs, detail_fields, source_gr, gr_synced);
         render_conditions_compact(f, chunks[2], tf);
         let runner_pod = format!("{}-tf-runner", name);
         render_runner_logs(f, chunks[3], runner_logs.unwrap(), &runner_pod);
@@ -58,7 +62,7 @@ pub fn render(
             .split(area);
 
         render_title(f, chunks[0], ns, name);
-        render_spec_status(f, chunks[1], tf, cached_outputs, detail_fields);
+        render_spec_status(f, chunks[1], tf, cached_outputs, detail_fields, source_gr, gr_synced);
         render_conditions_compact(f, chunks[2], tf);
     }
 }
@@ -87,13 +91,15 @@ fn render_spec_status(
     tf: &Terraform,
     cached_outputs: Option<&HashMap<String, String>>,
     detail_fields: &[DetailField],
+    source_gr: Option<&GitRepository>,
+    gr_synced: bool,
 ) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(area);
 
-    render_spec(f, cols[0], tf);
+    render_spec(f, cols[0], tf, source_gr, gr_synced);
     render_status(f, cols[1], tf, cached_outputs, detail_fields);
 }
 
@@ -133,11 +139,14 @@ fn render_runner_logs(f: &mut Frame, area: Rect, logs: &str, pod_name: &str) {
     f.render_widget(para, area);
 }
 
-fn render_spec(f: &mut Frame, area: Rect, tf: &Terraform) {
-    let source = format!(
-        "{:?}/{}",
-        tf.spec.source_ref.kind, tf.spec.source_ref.name
-    );
+fn render_spec(
+    f: &mut Frame,
+    area: Rect,
+    tf: &Terraform,
+    source_gr: Option<&GitRepository>,
+    gr_synced: bool,
+) {
+    let source_kind = format!("{:?}", tf.spec.source_ref.kind);
     let path = tf.spec.path.as_deref().unwrap_or(".");
     let interval = &tf.spec.interval;
     let suspended = tf.spec.suspend.unwrap_or(false);
@@ -149,7 +158,14 @@ fn render_spec(f: &mut Frame, area: Rect, tf: &Terraform) {
     let sep_style = Style::default().fg(Color::Rgb(50, 55, 70));
 
     let lines = vec![
-        kv("Source:    ", &source),
+        source_summary::source_line(
+            "Source:    ",
+            LABEL,
+            &source_kind,
+            &tf.spec.source_ref.name,
+            source_gr,
+            gr_synced,
+        ),
         kv("Path:      ", path),
         Line::from(vec![
             Span::styled("Interval: ", LABEL),

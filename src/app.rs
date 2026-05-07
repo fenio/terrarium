@@ -1349,6 +1349,9 @@ impl App {
             Action::KustomizationCrdMissing => {
                 self.state.ks_crd_missing = true;
             }
+            Action::GitRepoCrdMissing => {
+                self.state.gr_crd_missing = true;
+            }
 
             // Async K8s action results
             Action::K8sActionSuccess(msg) => {
@@ -1365,6 +1368,10 @@ impl App {
             }
             Action::KustomizationStoreUpdated => {
                 self.state.ks_synced = true;
+                self.state.last_data_update = Some(Instant::now());
+            }
+            Action::GitRepoStoreUpdated => {
+                self.state.gr_synced = true;
                 self.state.last_data_update = Some(Instant::now());
             }
             Action::Resize(_, _)
