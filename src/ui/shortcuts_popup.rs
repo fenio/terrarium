@@ -24,10 +24,10 @@ pub fn render(f: &mut Frame, state: &AppState) {
         return;
     }
 
-    let area = popup_rect(f.area(), shortcuts);
+    let title = format!(" Shortcuts — {ns}/{name} ");
+    let area = popup_rect(f.area(), shortcuts, &title);
     f.render_widget(Clear, area);
 
-    let title = format!(" Shortcuts — {ns}/{name} ");
     let block = detail::block(&title);
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -35,10 +35,11 @@ pub fn render(f: &mut Frame, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // top padding
-            Constraint::Min(1),    // entries
-            Constraint::Length(1), // separator/blank
+            Constraint::Length(2), // top padding
+            Constraint::Min(1),    // entries (with blank rows between)
+            Constraint::Length(1), // separator
             Constraint::Length(1), // footer hint
+            Constraint::Length(1), // bottom padding
         ])
         .split(inner);
 
@@ -66,43 +67,45 @@ fn render_entries(f: &mut Frame, area: Rect, state: &AppState, shortcuts: &[Shor
         KEY_BRACKETS_WIDTH + label_width + LABEL_DESC_GAP + 1, /* leading sp */
     );
 
-    let lines: Vec<Line> = shortcuts
-        .iter()
-        .enumerate()
-        .map(|(i, sc)| {
-            let mut spans: Vec<Span> = Vec::new();
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(format!("[{}]", sc.key), key_style));
+    // Render each entry with a blank row separating it from the next,
+    // so the list breathes a bit instead of feeling cramped.
+    let mut lines: Vec<Line> = Vec::with_capacity(shortcuts.len() * 2);
+    for (i, sc) in shortcuts.iter().enumerate() {
+        if i > 0 {
+            lines.push(Line::from(""));
+        }
+        let mut spans: Vec<Span> = Vec::new();
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(format!("[{}]", sc.key), key_style));
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!("{:<width$}", sc.label, width = label_width),
+            label_style,
+        ));
+
+        let detail_text = description_for(sc);
+        if !detail_text.is_empty() {
             spans.push(Span::raw("  "));
-            spans.push(Span::styled(
-                format!("{:<width$}", sc.label, width = label_width),
-                label_style,
-            ));
+            spans.push(Span::styled("— ", dash_style));
+            let trimmed = truncate_visual(&detail_text, desc_budget.saturating_sub(2));
+            let style = if sc.url.is_none() && !sc.children.is_empty() {
+                Style::default()
+                    .fg(Color::Rgb(240, 200, 60))
+                    .add_modifier(Modifier::ITALIC)
+            } else if sc.url.is_some() {
+                desc_style
+            } else {
+                dim_style
+            };
+            spans.push(Span::styled(trimmed, style));
+        }
 
-            let detail_text = description_for(sc);
-            if !detail_text.is_empty() {
-                spans.push(Span::raw("  "));
-                spans.push(Span::styled("— ", dash_style));
-                let trimmed = truncate_visual(&detail_text, desc_budget.saturating_sub(2));
-                let style = if sc.url.is_none() && !sc.children.is_empty() {
-                    Style::default()
-                        .fg(Color::Rgb(240, 200, 60))
-                        .add_modifier(Modifier::ITALIC)
-                } else if sc.url.is_some() {
-                    desc_style
-                } else {
-                    dim_style
-                };
-                spans.push(Span::styled(trimmed, style));
-            }
-
-            let mut line = Line::from(spans);
-            if i == selected {
-                line = line.style(selected_style);
-            }
-            line
-        })
-        .collect();
+        let mut line = Line::from(spans);
+        if i == selected {
+            line = line.style(selected_style);
+        }
+        lines.push(line);
+    }
 
     f.render_widget(Paragraph::new(lines), area);
 }
@@ -154,9 +157,10 @@ fn truncate_visual(s: &str, budget: usize) -> String {
     out
 }
 
-/// Center a popup whose width fits the longest entry (capped at 80%
-/// of the terminal) and whose height fits all entries plus chrome.
-fn popup_rect(screen: Rect, shortcuts: &[Shortcut]) -> Rect {
+/// Center a popup whose default size is generous (~60% screen width,
+/// ~50% height with breathing room) and which only grows beyond that
+/// to fit content the user actually wrote.
+fn popup_rect(screen: Rect, shortcuts: &[Shortcut], title: &str) -> Rect {
     let label_width = shortcuts.iter().map(|s| s.label.len()).max().unwrap_or(0);
     let desc_width = shortcuts
         .iter()
@@ -164,22 +168,38 @@ fn popup_rect(screen: Rect, shortcuts: &[Shortcut]) -> Rect {
         .max()
         .unwrap_or(0);
 
-    let footer_width = " j/k:nav  Enter:open  [key]:direct  Esc:close ".len();
-    // " [k]  label  — description  " plus side padding
+    // Hard minimums (in cells) so the chrome always fits even with very
+    // short labels and no descriptions.
+    let title_width = title.chars().count() + 4;
+    let footer_width = " j/k:nav  Enter:open  [key]:direct  Esc:close ".len() + 2;
     let entry_width = SIDE_PADDING
         + KEY_BRACKETS_WIDTH
         + label_width
         + LABEL_DESC_GAP
         + if desc_width > 0 { 2 + desc_width } else { 0 };
-    let title_width = 30; // leave room for "Shortcuts — ns/name"
 
-    let max = (screen.width as usize) * 80 / 100;
-    let min_w = footer_width.max(title_width);
-    let width = entry_width.max(min_w).min(max).max(min_w) as u16;
+    // Default to ~60% of the screen so a popup with two short entries
+    // still feels like a popup, not a tooltip. Cap at 90%.
+    let preferred = (screen.width as usize) * 60 / 100;
+    let max = (screen.width as usize) * 90 / 100;
+    let min_required = title_width.max(footer_width).max(entry_width);
+    let width = preferred.max(min_required).min(max) as u16;
 
-    // chrome: 1 top-pad + 1 separator + 1 footer + 2 borders = 5
-    let chrome = 5;
-    let height = (shortcuts.len() as u16 + chrome).min(screen.height.saturating_sub(2));
+    // 1 entry row + 1 blank between = 2 cells per entry beyond the first.
+    let entry_rows = if shortcuts.is_empty() {
+        0
+    } else {
+        shortcuts.len() * 2 - 1
+    };
+    // chrome: 2 top-pad + 1 separator + 1 footer + 1 bottom-pad + 2 borders = 7
+    let chrome = 7;
+    let preferred_h = (screen.height as usize) * 50 / 100;
+    let min_required_h = entry_rows + chrome;
+    let max_h = (screen.height as usize) * 80 / 100;
+    let height = preferred_h
+        .max(min_required_h)
+        .min(max_h)
+        .min(screen.height.saturating_sub(2) as usize) as u16;
 
     let x = screen.x + (screen.width.saturating_sub(width)) / 2;
     let y = screen.y + (screen.height.saturating_sub(height)) / 2;
