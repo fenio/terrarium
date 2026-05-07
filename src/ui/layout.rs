@@ -19,7 +19,7 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // Header: 3 logo/info + 2 tabs + 1 gap row
+            Constraint::Length(6), // Header: 3 logo/info + 3-row tab strip
             Constraint::Min(5),   // Body
             Constraint::Length(2), // Status bar (two rows)
         ])
@@ -255,6 +255,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
     let nav_pad = " ".repeat(logo_width as usize);
     let mut top_spans: Vec<Span> = vec![Span::styled(nav_pad.clone(), hdr_bg)];
     let mut body_spans: Vec<Span> = vec![Span::styled(nav_pad.clone(), hdr_bg)];
+    let mut bot_spans: Vec<Span> = vec![Span::styled(nav_pad.clone(), hdr_bg)];
     let total_tabs = state.tab_count();
     for (i, (num, label, count, failures, crd_missing)) in nav_items.iter().enumerate() {
         let is_active = state.active_tab.index(total_tabs) == *num - 1;
@@ -329,7 +330,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         // width chars, which matches every label/digit/glyph used here).
         let inner_width: usize = inner.iter().map(|s| s.content.chars().count()).sum();
 
-        // Row 3: ╭───╮  Row 4: │ inner │
+        // Row 3: ╭───╮  Row 4: │ inner │  Row 5: ╰───╯
         top_spans.push(Span::styled("╭", border_style));
         top_spans.push(Span::styled("─".repeat(inner_width), border_style));
         top_spans.push(Span::styled("╮", border_style));
@@ -338,10 +339,15 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         body_spans.extend(inner);
         body_spans.push(Span::styled("│", border_style));
 
+        bot_spans.push(Span::styled("╰", border_style));
+        bot_spans.push(Span::styled("─".repeat(inner_width), border_style));
+        bot_spans.push(Span::styled("╯", border_style));
+
         // Single-cell gap between tabs (skip after last).
         if i < nav_items.len() - 1 {
             top_spans.push(Span::styled(" ", hdr_bg));
             body_spans.push(Span::styled(" ", hdr_bg));
+            bot_spans.push(Span::styled(" ", hdr_bg));
         }
     }
 
@@ -349,6 +355,8 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
     f.render_widget(Paragraph::new(Line::from(top_spans)), r3_area);
     let r4_area = Rect { y: area.y + 4, height: 1, ..area };
     f.render_widget(Paragraph::new(Line::from(body_spans)), r4_area);
+    let r5_area = Rect { y: area.y + 5, height: 1, ..area };
+    f.render_widget(Paragraph::new(Line::from(bot_spans)), r5_area);
 
     // Right-side indicators on the tab body row: FAILURES ONLY /
     // WAITING ONLY pills (loud, so the user doesn't forget the filter
