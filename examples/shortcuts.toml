@@ -1,43 +1,94 @@
-# Example: Custom keyboard shortcuts that open URLs in the browser
+# Example: Custom keyboard shortcuts that open URLs in the browser.
 #
-# Each [[shortcuts]] entry binds a key to a URL template.
-# Press the key while a Terraform resource is selected (list or detail view).
+# Press a configured key directly while a Terraform resource is selected
+# (list or detail view), or press 'S' to open a popup listing every
+# shortcut with its description — navigate with j/k and Enter, or just
+# press the entry's own key.
 #
-# Template variables:
-#   {context}                - kubeconfig context name (e.g. "prod-us-east-1")
-#   {namespace}              - resource namespace (e.g. "flux-system")
-#   {name}                   - resource name (e.g. "my-database")
-#   {output.KEY}             - value from the Terraform outputs secret
-#   {output.KEY.sub.path}    - nested field if the output value is JSON
+# Each [[shortcuts]] entry has:
+#
+#   key         (required)  single character, case-sensitive ("b" ≠ "B")
+#   label       (required)  short name shown in the popup
+#   description (optional)  one-liner shown after the label; useful when
+#                           multiple shortcuts share a label
+#   group       (optional)  groups entries under a section header in the
+#                           popup, in config order
+#   url         (required for leaf entries) URL template, see below
+#   children    (optional)  nested submenu — accepted but the popup
+#                           doesn't drill into them yet (planned)
+#
+# URL template variables:
+#
+#   {context}                  kubeconfig context name (e.g. "prod-us-east-1")
+#   {namespace}                resource namespace (e.g. "flux-system")
+#   {name}                     resource name (e.g. "my-database")
+#   {output.KEY}               value from the Terraform outputs secret
+#   {output.KEY.sub.path}      nested field if the output value is JSON
+#   {secret.NAME.KEY}          value from any other Secret in the
+#                              resource's namespace (e.g. tofu-controller's
+#                              varsFrom Secret) — fetched lazily on first
+#                              use, then cached
 #
 # Notes:
-#   - Keys are single characters (case-sensitive: "b" and "B" are different)
-#   - Avoid keys already used by Terrarium (see ? help screen)
-#   - {output.…} placeholders lazily fetch the outputs secret on first use
-#   - Missing keys substitute as empty strings (no error)
-#   - URLs are opened with: open (macOS), xdg-open (Linux), start (Windows)
+#
+#   - Avoid keys already used by terrarium (press '?' for the help screen).
+#   - Missing keys substitute as empty strings (no error).
+#   - URLs are opened with: open (macOS), xdg-open (Linux), start (Windows).
+#   - The 'description' field exists since v0.1.0; older configs without
+#     it still work — the popup just shows the label alone.
 
-# Open Grafana dashboard filtered to the cluster and resource
+# ---------- Observability ----------
+
+# Open a Grafana dashboard filtered to the cluster and resource
 [[shortcuts]]
 key = "b"
 label = "Grafana"
+description = "dashboard for this resource"
+group = "Observability"
 url = "https://grafana.example.com/d/terraform?var-cluster={context}&var-resource={name}&var-namespace={namespace}"
 
-# Open Vault secrets for the namespace
+# ---------- Secrets / Vault ----------
+
 [[shortcuts]]
 key = "B"
 label = "Vault"
+description = "secrets for this namespace"
+group = "Secrets"
 url = "https://vault.example.com/ui/vault/secrets/{namespace}/show/{name}"
 
-# Open cloud provider console using an output value
+# ---------- Cloud console ----------
+
+# Open the cloud provider console using a flat output value.
+# {output.cluster_id} reads the 'cluster_id' key from the outputs secret.
 [[shortcuts]]
 key = "C"
-label = "Cloud Console"
+label = "Cluster"
+description = "cloud provider console"
+group = "Cloud"
 url = "https://console.cloud-provider.com/clusters/{output.cluster_id}"
 
-# Drill into a JSON-valued output (e.g. a "metadata" output that bundles
-# multiple fields as JSON). Dot-separated paths walk the JSON object.
+# Drill into a JSON-valued output. If the 'metadata' output is a JSON
+# object like {"region": "us-east-1", "tenant": "acme"}, dot-separated
+# paths walk the JSON.
 [[shortcuts]]
-key = "K"
-label = "Region Console"
+key = "R"
+label = "Region"
+description = "cloud provider region console"
+group = "Cloud"
 url = "https://console.cloud-provider.com/regions/{output.metadata.region}"
+
+# ---------- Per-cluster URLs from a varsFrom Secret ----------
+
+# Some setups store per-cluster URLs in an input Secret (referenced by
+# the Terraform CR's `varsFrom`) rather than in the outputs Secret.
+# {secret.NAME.KEY} reads any Secret in the resource's namespace.
+#
+# This example assumes a Secret named 'cluster-config' with a 'argocd_url'
+# data key holding the host (e.g. "argocd.example.com"). Adjust both the
+# Secret name and the key to match your platform.
+[[shortcuts]]
+key = "A"
+label = "ArgoCD"
+description = "apps search on this cluster's ArgoCD"
+group = "GitOps"
+url = "https://{secret.cluster-config.argocd_url}/applications?search={output.cluster_id}"
