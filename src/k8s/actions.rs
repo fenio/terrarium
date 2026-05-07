@@ -50,7 +50,12 @@ pub async fn force_reconcile(client: &kube::Client, ns: &str, name: &str) -> Res
     Ok(())
 }
 
-pub async fn replan(_client: &kube::Client, ns: &str, name: &str) -> Result<()> {
+pub async fn replan(
+    _client: &kube::Client,
+    ns: &str,
+    name: &str,
+    context: Option<&str>,
+) -> Result<()> {
     // Delegate to tfctl rather than reimplementing the K8s patch logic —
     // both prior attempts (annotation, spec.approvePlan) failed to trigger
     // a replan because the controller's actual mechanism is more involved
@@ -58,8 +63,16 @@ pub async fn replan(_client: &kube::Client, ns: &str, name: &str) -> Result<()> 
     // tfctl gets it right and is the supported tool, so just shell out
     // (same pattern as Break-the-Glass; see exec_break_the_glass in
     // app.rs). This call is non-interactive — no TUI suspend needed.
-    let output = tokio::process::Command::new("tfctl")
-        .args(["-n", ns, "replan", name])
+    //
+    // Forward terrarium's active kubeconfig context so the subprocess
+    // doesn't fall back to the kubeconfig's default current-context (a
+    // different cluster than what the TUI is showing).
+    let mut cmd = tokio::process::Command::new("tfctl");
+    if let Some(ctx) = context.filter(|c| !c.is_empty() && *c != "connecting...") {
+        cmd.args(["--context", ctx]);
+    }
+    cmd.args(["-n", ns, "replan", name]);
+    let output = cmd
         .output()
         .await
         .map_err(|e| anyhow::anyhow!("failed to run tfctl: {e} — is tfctl installed?"))?;

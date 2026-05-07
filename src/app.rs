@@ -1673,9 +1673,10 @@ impl App {
         };
         let tx = self.action_tx.clone();
         let success_msg = format_success_message(&action);
+        let context = self.state.context_name.clone();
 
         tokio::spawn(async move {
-            let result = execute_k8s_action(&client, &action).await;
+            let result = execute_k8s_action(&client, &action, Some(&context)).await;
             match result {
                 Ok(()) => {
                     let _ = tx.send(Action::K8sActionSuccess(success_msg));
@@ -2146,7 +2147,11 @@ impl App {
     }
 }
 
-async fn execute_k8s_action(client: &kube::Client, action: &Action) -> anyhow::Result<()> {
+async fn execute_k8s_action(
+    client: &kube::Client,
+    action: &Action,
+    context: Option<&str>,
+) -> anyhow::Result<()> {
     match action {
         Action::ApprovePlan { namespace, name } => {
             k8s_actions::approve_plan(client, namespace, name).await
@@ -2162,7 +2167,9 @@ async fn execute_k8s_action(client: &kube::Client, action: &Action) -> anyhow::R
             }
             ResourceKind::Pod => Ok(()),
         },
-        Action::Replan { namespace, name } => k8s_actions::replan(client, namespace, name).await,
+        Action::Replan { namespace, name } => {
+            k8s_actions::replan(client, namespace, name, context).await
+        }
         Action::Suspend {
             kind,
             namespace,
