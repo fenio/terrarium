@@ -79,8 +79,13 @@ async fn main() -> anyhow::Result<()> {
     // Probe $PATH for tfctl once at startup. Replan and Break-the-Glass
     // delegate to tfctl, so flag the absence early rather than silently
     // failing when the user presses 'R' or 'x'.
+    //
+    // `--help` is the most reliable success-exit probe across CLI styles:
+    // tfctl is cobra-based and uses `tfctl version` (no `--version`
+    // flag), so probing with a flag would falsely fail. `--help` always
+    // exits 0 when the binary exists, regardless of subcommand layout.
     app_state.tfctl_available = std::process::Command::new("tfctl")
-        .arg("--version")
+        .arg("--help")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
