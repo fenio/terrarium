@@ -71,10 +71,6 @@ fn build_lines(
     let desc_style = Style::default().fg(Color::Rgb(170, 175, 195));
     let dim_style = Style::default().fg(Color::Rgb(110, 115, 135));
     let dash_style = Style::default().fg(Color::Rgb(70, 80, 100));
-    let group_style = Style::default()
-        .fg(Color::Rgb(140, 200, 255))
-        .add_modifier(Modifier::BOLD);
-    let group_rule_style = Style::default().fg(Color::Rgb(70, 80, 100));
     let selected_bg = Color::Rgb(60, 90, 140);
     let selected_marker = Style::default()
         .fg(Color::Rgb(140, 200, 255))
@@ -97,17 +93,9 @@ fn build_lines(
                 lines.push(Line::from(""));
             }
             if let Some(g) = &sc.group {
-                lines.push(section_header(
-                    g,
-                    inner_width,
-                    group_style,
-                    group_rule_style,
-                ));
+                lines.push(section_header(g, inner_width));
             }
             current_group = sc.group.clone();
-        } else if !first {
-            // Blank row between consecutive entries in the same group.
-            lines.push(Line::from(""));
         }
         first = false;
 
@@ -182,22 +170,23 @@ fn entry_line(
     Line::from(spans)
 }
 
-/// Section header: ` Group ─────────────────`. The trailing rule fills
-/// the remaining inner width so the header reads as a separator, not a
-/// bare word floating in space.
-fn section_header(
-    name: &str,
-    inner_width: usize,
-    group_style: Style,
-    rule_style: Style,
-) -> Line<'static> {
-    let label = format!(" {name} ");
-    let label_cells = label.chars().count();
+/// Section header: a styled "pill" with the group name on a contrasting
+/// background, followed by a faint rule that fills the remaining inner
+/// width. Reads as a labeled separator rather than a bare word.
+fn section_header(name: &str, inner_width: usize) -> Line<'static> {
+    let pill_text = format!(" {name} ");
+    let pill_style = Style::default()
+        .fg(Color::Rgb(20, 25, 35))
+        .bg(Color::Rgb(140, 200, 255))
+        .add_modifier(Modifier::BOLD);
+    let rule_style = Style::default().fg(Color::Rgb(70, 80, 100));
+    let pill_cells = pill_text.chars().count();
     let rule_len =
-        inner_width.saturating_sub(label_cells + 2 /* leading space + trailing room */);
+        inner_width.saturating_sub(pill_cells + 3 /* leading space + " " gap + 1 */);
     Line::from(vec![
         Span::raw(" "),
-        Span::styled(label, group_style),
+        Span::styled(pill_text, pill_style),
+        Span::raw(" "),
         Span::styled("─".repeat(rule_len), rule_style),
     ])
 }
@@ -272,9 +261,8 @@ fn popup_rect(screen: Rect, shortcuts: &[Shortcut], title: &str, label_width: us
     let min_required = title_width.max(footer_width).max(entry_width);
     let width = preferred.max(min_required).min(max) as u16;
 
-    // Body height: entries + blanks-between + group-headers + group-blanks.
-    // 1 entry per shortcut, 1 blank between consecutive entries (in same
-    // group), 1 header + 1 blank for each group transition.
+    // Body height: entries + group headers + blanks between groups.
+    // Entries within the same group are flush (no blank rows between).
     let mut body_rows: usize = 0;
     let mut prev_group: Option<&str> = None;
     let mut first = true;
@@ -283,14 +271,12 @@ fn popup_rect(screen: Rect, shortcuts: &[Shortcut], title: &str, label_width: us
         let group_changed = g != prev_group;
         if group_changed {
             if !first {
-                body_rows += 1; // blank
+                body_rows += 1; // blank between groups
             }
             if g.is_some() {
                 body_rows += 1; // section header
             }
             prev_group = g;
-        } else if !first {
-            body_rows += 1; // blank between entries
         }
         first = false;
         body_rows += 1; // the entry itself
