@@ -287,8 +287,12 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
             bright
         };
 
-        // Build inner spans for the body row (between the side borders).
-        // Layout per tab: " <num> <label> [count] [fails!]"
+        // Build inner spans for the body row. Each slot has a fixed width
+        // so the tab's box doesn't change size when data loads in (which
+        // would otherwise reflow every tab to its right).
+        //   ` N ` (3) + `Label ` + count_slot (4) + failures_slot (4)
+        // Controller has no count/failures slots — its width is just digit
+        // + label.
         let mut inner: Vec<Span> = Vec::new();
         inner.push(Span::styled(format!(" {num} "), num_style));
         if *crd_missing {
@@ -299,19 +303,26 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
                     .fg(Color::Rgb(240, 200, 60))
                     .bg(theme::HEADER_BAR_BG),
             ));
+        } else if *num == 1 {
+            // Controller: no count or failures — keep its tab tight.
+            inner.push(Span::styled(format!("{label} "), label_style));
         } else {
             inner.push(Span::styled(format!("{label} "), label_style));
-            match count {
-                Some(c) => inner.push(Span::styled(format!("{c} "), dim)),
-                None if *num == 1 => {} // Controller has no count
+            // Count slot: 4 chars wide. " 356" / " ..." / "    "
+            let count_text = match count {
+                Some(c) => format!("{c:>3} "),
                 None => {
                     let dots = ".".repeat((state.tick_count % 3) + 1);
-                    inner.push(Span::styled(format!("{dots} "), dim));
+                    format!("{dots:>3} ")
                 }
-            }
-            if let Some(fails) = failures {
-                inner.push(Span::styled(format!("{fails}! "), fail_style));
-            }
+            };
+            inner.push(Span::styled(count_text, dim));
+            // Failures slot: 4 chars wide. " 33!" or "    "
+            let fail_text = match failures {
+                Some(f) => format!("{f:>3}!"),
+                None => "    ".to_string(),
+            };
+            inner.push(Span::styled(fail_text, fail_style));
         }
 
         // Total visible width of the inner content (assumes ASCII / single-
@@ -339,36 +350,64 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
     let r4_area = Rect { y: area.y + 4, height: 1, ..area };
     f.render_widget(Paragraph::new(Line::from(body_spans)), r4_area);
 
-    // FAILURES ONLY / WAITING ONLY pills retained from the old layout —
-    // visually loud so users can't forget the filter is on. Render them
-    // in the rightmost slot of the tab body row when active.
-    if state.show_failures_only || state.show_waiting_only {
-        let mut pill_spans: Vec<Span> = Vec::new();
-        if state.show_failures_only {
-            pill_spans.push(Span::styled(
-                " FAILURES ONLY ",
+    // Right-side indicators on the tab body row: FAILURES ONLY /
+    // WAITING ONLY pills (loud, so the user doesn't forget the filter
+    // is on) and the active search query (otherwise it's invisible
+    // once the search box closes).
+    let mut pill_spans: Vec<Span> = Vec::new();
+    if state.show_failures_only {
+        pill_spans.push(Span::styled(
+            " FAILURES ONLY ",
+            Style::default()
+                .fg(Color::Rgb(30, 30, 40))
+                .bg(Color::Rgb(240, 80, 80))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    if state.show_waiting_only {
+        if !pill_spans.is_empty() {
+            pill_spans.push(Span::styled(" ", hdr_bg));
+        }
+        pill_spans.push(Span::styled(
+            " WAITING ONLY ",
+            Style::default()
+                .fg(Color::Rgb(30, 30, 40))
+                .bg(Color::Rgb(240, 200, 60))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    if !state.search_query.is_empty() {
+        if !pill_spans.is_empty() {
+            pill_spans.push(Span::styled(" ", hdr_bg));
+        }
+        let (text, style) = if state.search_suspended {
+            (
+                format!(" filter: {} (paused) ", state.search_query),
+                Style::default()
+                    .fg(Color::Rgb(120, 120, 140))
+                    .bg(Color::Rgb(30, 40, 60)),
+            )
+        } else {
+            (
+                format!(" filter: {} ", state.search_query),
                 Style::default()
                     .fg(Color::Rgb(30, 30, 40))
-                    .bg(Color::Rgb(240, 80, 80))
+                    .bg(Color::Rgb(140, 200, 255))
                     .add_modifier(Modifier::BOLD),
-            ));
-        }
-        if state.show_waiting_only {
-            if !pill_spans.is_empty() {
-                pill_spans.push(Span::styled(" ", hdr_bg));
-            }
-            pill_spans.push(Span::styled(
-                " WAITING ONLY ",
-                Style::default()
-                    .fg(Color::Rgb(30, 30, 40))
-                    .bg(Color::Rgb(240, 200, 60))
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
+            )
+        };
+        pill_spans.push(Span::styled(text, style));
+    }
+    if !pill_spans.is_empty() {
         let pill_width: usize = pill_spans.iter().map(|s| s.content.chars().count()).sum();
         let pill_width = pill_width.min(area.width as usize);
         let pill_x = area.x + area.width.saturating_sub(pill_width as u16 + 1);
-        let pill_area = Rect { x: pill_x, y: area.y + 4, width: pill_width as u16, height: 1 };
+        let pill_area = Rect {
+            x: pill_x,
+            y: area.y + 4,
+            width: pill_width as u16,
+            height: 1,
+        };
         f.render_widget(Paragraph::new(Line::from(pill_spans)), pill_area);
     }
 }
