@@ -19,7 +19,7 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(5), // Header (logo + nav + search/info)
+            Constraint::Length(6), // Header: 3 logo/info + 2 tabs + 1 gap row
             Constraint::Min(5),   // Body
             Constraint::Length(2), // Status bar (two rows)
         ])
