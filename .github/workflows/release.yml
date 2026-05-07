@@ -134,6 +134,19 @@ jobs:
               bin.install "terrarium"
             end
 
+            def caveats
+              <<~EOS
+                Replan (R) and Break-the-Glass (x) shell out to tfctl. To use them,
+                install tfctl from the upstream tap:
+
+                  brew install flux-iac/tap/tfctl
+
+                Terrarium itself runs fine without tfctl — the rest of the TUI works,
+                only those two actions require it. A startup warning appears when
+                tfctl is not on PATH.
+              EOS
+            end
+
             test do
               assert_match "terrarium", shell_output("#{bin}/terrarium --help")
             end
