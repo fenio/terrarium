@@ -83,3 +83,13 @@ pub const STATUS_BAR_TEXT: Style = Style::new()
 pub const STATUS_BAR_SEP: Style = Style::new()
     .fg(Color::Rgb(60, 65, 80))
     .bg(Color::Rgb(25, 25, 35));
+
+// Panel chrome (borders, block titles). Borders are bright enough to
+// read on a dark terminal without competing with the content; titles
+// pop a step brighter so they read as headings. (LABEL is defined
+// above and reused for kv keys here too.)
+pub const BORDER: Style = Style::new().fg(Color::Rgb(90, 130, 190));
+pub const BLOCK_TITLE: Style = Style::new()
+    .fg(Color::Rgb(140, 200, 255))
+    .add_modifier(Modifier::BOLD);
+pub const INLINE_SEP: Style = Style::new().fg(Color::Rgb(70, 80, 100));

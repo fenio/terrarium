@@ -1,4 +1,5 @@
 pub mod controller_dashboard;
+pub mod detail;
 pub mod dialog;
 pub mod help;
 pub mod kustomization_detail;

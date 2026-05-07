@@ -1,16 +1,15 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
 use crate::k8s::kustomization::Kustomization;
 use crate::k8s::source::GitRepository;
+use crate::ui::detail::{self, SEP};
 use crate::ui::source_summary;
 use crate::ui::theme;
-use crate::util;
 
 pub fn render(
     f: &mut Frame,
@@ -19,35 +18,42 @@ pub fn render(
     source_gr: Option<&GitRepository>,
     gr_synced: bool,
 ) {
+    let ns = ks.metadata.namespace.as_deref().unwrap_or("-");
+    let name = ks.metadata.name.as_deref().unwrap_or("-");
+
+    let spec_status_height = 8_u16;
+    let conditions_height = 7_u16;
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Title
-            Constraint::Min(10),   // Body
-            Constraint::Length(6), // Conditions
+            Constraint::Length(1),                   // Title
+            Constraint::Length(spec_status_height),  // Spec + Status
+            Constraint::Length(conditions_height),   // Conditions
+            Constraint::Min(0),                     // Remaining
         ])
         .split(area);
 
-    let ns = ks.metadata.namespace.as_deref().unwrap_or("-");
-    let name = ks.metadata.name.as_deref().unwrap_or("-");
-    let title = Paragraph::new(Line::from(vec![
-        Span::styled(
-            "Kustomization: ",
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(format!("{ns}/{name}")),
-    ]))
-    .block(Block::default().borders(Borders::BOTTOM));
-    f.render_widget(title, chunks[0]);
+    detail::render_title(f, chunks[0], "Kustomization", ns, name);
+    render_spec_status(f, chunks[1], ks, source_gr, gr_synced);
+    let conditions = ks.status.as_ref().and_then(|s| s.conditions.as_ref());
+    detail::render_conditions(f, chunks[2], conditions);
+}
 
-    let body_chunks = Layout::default()
+fn render_spec_status(
+    f: &mut Frame,
+    area: Rect,
+    ks: &Kustomization,
+    source_gr: Option<&GitRepository>,
+    gr_synced: bool,
+) {
+    let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[1]);
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(area);
 
-    render_spec(f, body_chunks[0], ks, source_gr, gr_synced);
-    render_status(f, body_chunks[1], ks);
-    render_conditions(f, chunks[2], ks);
+    render_spec(f, cols[0], ks, source_gr, gr_synced);
+    render_status(f, cols[1], ks);
 }
 
 fn render_spec(
@@ -59,50 +65,52 @@ fn render_spec(
 ) {
     let source_kind = format!("{:?}", ks.spec.source_ref.kind);
     let path = ks.spec.path.as_deref().unwrap_or(".");
-    let interval = &ks.spec.interval;
+    let interval = ks.spec.interval.as_str();
     let suspended = ks.spec.suspend.unwrap_or(false);
     let prune = ks.spec.prune;
-    let target_ns = ks
-        .spec
-        .target_namespace
-        .as_deref()
-        .unwrap_or("-");
+    let target_ns = ks.spec.target_namespace.as_deref().unwrap_or("-");
     let timeout = ks.spec.timeout.as_deref().unwrap_or("-");
     let depends_on = ks
         .spec
         .depends_on
         .as_ref()
-        .map(|deps| {
-            deps.iter()
-                .map(|d| d.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
+        .map(|deps| deps.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(", "))
         .unwrap_or_else(|| "-".to_string());
 
-    let suspended_text = format!("{suspended}");
-    let prune_text = format!("{prune}");
-    let label_style = Style::default().fg(Color::DarkGray);
     let lines = vec![
         source_summary::source_line(
-            "Source:       ",
-            label_style,
+            "Source:    ",
+            theme::LABEL,
             &source_kind,
             &ks.spec.source_ref.name,
             source_gr,
             gr_synced,
         ),
-        kv_line("Path:         ", path),
-        kv_line("Interval:     ", interval),
-        kv_line("Suspended:    ", &suspended_text),
-        kv_line("Prune:        ", &prune_text),
-        kv_line("Target NS:    ", target_ns),
-        kv_line("Timeout:      ", timeout),
-        kv_line("Depends On:   ", &depends_on),
+        detail::kv("Path:      ", path),
+        Line::from(vec![
+            Span::styled("Interval:  ", theme::LABEL),
+            Span::raw(interval),
+            Span::styled(SEP, theme::INLINE_SEP),
+            Span::styled("Target NS: ", theme::LABEL),
+            Span::raw(target_ns),
+        ]),
+        Line::from(vec![
+            Span::styled("Suspended: ", theme::LABEL),
+            detail::styled_bool(suspended),
+            Span::styled(SEP, theme::INLINE_SEP),
+            Span::styled("Prune: ", theme::LABEL),
+            detail::styled_bool(prune),
+        ]),
+        Line::from(vec![
+            Span::styled("Timeout:   ", theme::LABEL),
+            Span::raw(timeout),
+            Span::styled(SEP, theme::INLINE_SEP),
+            Span::styled("Depends: ", theme::LABEL),
+            Span::raw(depends_on),
+        ]),
     ];
 
-    let block = Block::default().title(" Spec ").borders(Borders::ALL);
-    f.render_widget(Paragraph::new(lines).block(block), area);
+    f.render_widget(Paragraph::new(lines).block(detail::block("Spec")), area);
 }
 
 fn render_status(f: &mut Frame, area: Rect, ks: &Kustomization) {
@@ -130,76 +138,19 @@ fn render_status(f: &mut Frame, area: Rect, ks: &Kustomization) {
         .and_then(|s| s.inventory.as_ref())
         .map(|i| i.entries.len())
         .unwrap_or(0);
+    let inventory_text = format!("{inventory_count}");
 
-    let inventory_text = format!("{inventory_count} resources");
     let lines = vec![
         Line::from(vec![
-            Span::styled("Ready:         ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Ready:     ", theme::LABEL),
             Span::styled(&ready, ready_style),
+            Span::styled(SEP, theme::INLINE_SEP),
+            Span::styled("Inventory: ", theme::LABEL),
+            Span::raw(&inventory_text),
         ]),
-        kv_line("Last Applied:  ", last_applied),
-        kv_line("Last Attempted:", last_attempted),
-        kv_line("Inventory:     ", &inventory_text),
+        detail::kv("Applied:   ", last_applied),
+        detail::kv("Attempted: ", last_attempted),
     ];
 
-    let block = Block::default().title(" Status ").borders(Borders::ALL);
-    f.render_widget(Paragraph::new(lines).block(block), area);
-}
-
-fn render_conditions(f: &mut Frame, area: Rect, ks: &Kustomization) {
-    let conditions = ks.status.as_ref().and_then(|s| s.conditions.as_ref());
-
-    // Prefix: " ✓ " (3) + type (15) + status (8) = 26 columns
-    let prefix_width: usize = 26;
-    let lines: Vec<Line> = if let Some(conditions) = conditions {
-        let mut out: Vec<Line> = Vec::new();
-        for c in conditions {
-            let (icon, style) = match c.status.as_str() {
-                "True" => ("✓", theme::STATUS_READY),
-                "False" => ("✗", theme::STATUS_NOT_READY),
-                _ => ("⋯", theme::STATUS_UNKNOWN),
-            };
-            let humanized = util::humanize_condition_message(&c.message);
-            let logical_lines: Vec<&str> = if humanized.is_empty() {
-                vec![c.message.as_str()]
-            } else {
-                humanized.iter().map(String::as_str).collect()
-            };
-            let mut first = true;
-            for logical in logical_lines {
-                if first {
-                    out.push(Line::from(vec![
-                        Span::styled(format!(" {icon} "), style),
-                        Span::styled(
-                            format!("{:<15}", c.type_),
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(format!("{:<8}", c.status), style),
-                        Span::raw(logical.to_string()),
-                    ]));
-                    first = false;
-                } else {
-                    out.push(Line::from(vec![
-                        Span::raw(" ".repeat(prefix_width)),
-                        Span::raw(logical.to_string()),
-                    ]));
-                }
-            }
-        }
-        out
-    } else {
-        vec![Line::from("  No conditions")]
-    };
-
-    let block = Block::default()
-        .title(" Conditions ")
-        .borders(Borders::ALL);
-    f.render_widget(Paragraph::new(lines).block(block), area);
-}
-
-fn kv_line<'a>(key: &'a str, value: &'a str) -> Line<'a> {
-    Line::from(vec![
-        Span::styled(key, Style::default().fg(Color::DarkGray)),
-        Span::raw(value),
-    ])
+    f.render_widget(Paragraph::new(lines).block(detail::block("Status")), area);
 }

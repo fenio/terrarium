@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 
@@ -57,7 +57,8 @@ fn render_controller_info(f: &mut Frame, area: Rect, state: &AppState) {
                 .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(50, 55, 70)));
+        .border_type(BorderType::Rounded)
+        .border_style(theme::BORDER);
 
     if let Some(err) = &info.error {
         let lines = vec![
@@ -167,7 +168,8 @@ fn render_tf_stats(f: &mut Frame, area: Rect, state: &AppState) {
                 .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(50, 55, 70)));
+        .border_type(BorderType::Rounded)
+        .border_style(theme::BORDER);
 
     if !state.tf_synced {
         let dots = ".".repeat((state.tick_count % 3) + 1);
@@ -259,7 +261,8 @@ fn render_ks_stats(f: &mut Frame, area: Rect, state: &AppState) {
                 .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(50, 55, 70)));
+        .border_type(BorderType::Rounded)
+        .border_style(theme::BORDER);
 
     if !state.ks_synced {
         let dots = ".".repeat((state.tick_count % 3) + 1);
@@ -306,7 +309,8 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
                 .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(50, 55, 70)));
+        .border_type(BorderType::Rounded)
+        .border_style(theme::BORDER);
 
     let all_tfs: Vec<_> = state.tf_store.state().iter().map(|a| (**a).clone()).collect();
 
@@ -463,7 +467,8 @@ fn render_metrics_panel(f: &mut Frame, area: Rect, state: &AppState) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(50, 55, 70)));
+        .border_type(BorderType::Rounded)
+        .border_style(theme::BORDER);
     let inner = block.inner(area);
     f.render_widget(block, area);
 

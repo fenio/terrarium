@@ -4,19 +4,16 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 
 use crate::config::DetailField;
 use crate::k8s::source::GitRepository;
 use crate::k8s::terraform::Terraform;
+use crate::ui::detail::{self, SEP};
 use crate::ui::source_summary;
 use crate::ui::theme;
-use crate::util;
-
-const LABEL: Style = Style::new().fg(Color::Rgb(140, 145, 165));
-const SEP: &str = "  │  ";
 
 pub struct RenderCtx<'a> {
     pub runner_logs: Option<&'a str>,
@@ -45,9 +42,10 @@ pub fn render(f: &mut Frame, area: Rect, tf: &Terraform, ctx: &RenderCtx<'_>) {
             ])
             .split(area);
 
-        render_title(f, chunks[0], ns, name);
+        detail::render_title(f, chunks[0], "Terraform", ns, name);
         render_spec_status(f, chunks[1], tf, ctx);
-        render_conditions_compact(f, chunks[2], tf);
+        let conditions = tf.status.as_ref().and_then(|s| s.conditions.as_ref());
+        detail::render_conditions(f, chunks[2], conditions);
         let runner_pod = format!("{name}-tf-runner");
         render_runner_logs(f, chunks[3], ctx.runner_logs.unwrap(), &runner_pod);
     } else {
@@ -61,28 +59,11 @@ pub fn render(f: &mut Frame, area: Rect, tf: &Terraform, ctx: &RenderCtx<'_>) {
             ])
             .split(area);
 
-        render_title(f, chunks[0], ns, name);
+        detail::render_title(f, chunks[0], "Terraform", ns, name);
         render_spec_status(f, chunks[1], tf, ctx);
-        render_conditions_compact(f, chunks[2], tf);
+        let conditions = tf.status.as_ref().and_then(|s| s.conditions.as_ref());
+        detail::render_conditions(f, chunks[2], conditions);
     }
-}
-
-fn render_title(f: &mut Frame, area: Rect, ns: &str, name: &str) {
-    let title = Line::from(vec![
-        Span::styled(
-            " Terraform: ",
-            Style::default()
-                .fg(Color::Rgb(140, 145, 165))
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("{ns}/{name}"),
-            Style::default()
-                .fg(Color::Rgb(140, 200, 255))
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]);
-    f.render_widget(Paragraph::new(title), area);
 }
 
 fn render_spec_status(f: &mut Frame, area: Rect, tf: &Terraform, ctx: &RenderCtx<'_>) {
@@ -104,17 +85,12 @@ fn render_runner_logs(f: &mut Frame, area: Rect, logs: &str, pod_name: &str) {
                     .fg(Color::Rgb(100, 220, 140))
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                pod_name,
-                Style::default().fg(Color::Rgb(140, 200, 255)),
-            ),
-            Span::styled(
-                " (live) ",
-                Style::default().fg(Color::Rgb(80, 80, 100)),
-            ),
+            Span::styled(pod_name, Style::default().fg(Color::Rgb(140, 200, 255))),
+            Span::styled(" (live) ", Style::default().fg(Color::Rgb(80, 80, 100))),
         ]))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(50, 55, 70)));
+        .border_type(BorderType::Rounded)
+        .border_style(theme::BORDER);
 
     let inner_height = area.height.saturating_sub(2) as usize;
     let line_count = logs.lines().count();
@@ -147,48 +123,37 @@ fn render_spec(
     let destroy = tf.spec.destroy.unwrap_or(false);
     let approve_plan = tf.spec.approve_plan.as_deref().unwrap_or("-");
 
-    let sep_style = Style::default().fg(Color::Rgb(50, 55, 70));
-
     let lines = vec![
         source_summary::source_line(
             "Source:    ",
-            LABEL,
+            theme::LABEL,
             &source_kind,
             &tf.spec.source_ref.name,
             source_gr,
             gr_synced,
         ),
-        kv("Path:      ", path),
+        detail::kv("Path:      ", path),
         Line::from(vec![
-            Span::styled("Interval: ", LABEL),
+            Span::styled("Interval: ", theme::LABEL),
             Span::raw(interval),
-            Span::styled(SEP, sep_style),
-            Span::styled("Workspace: ", LABEL),
+            Span::styled(SEP, theme::INLINE_SEP),
+            Span::styled("Workspace: ", theme::LABEL),
             Span::raw(workspace),
         ]),
         Line::from(vec![
-            Span::styled("Suspended: ", LABEL),
-            styled_bool(suspended),
-            Span::styled(SEP, sep_style),
-            Span::styled("PlanOnly: ", LABEL),
-            styled_bool(plan_only),
-            Span::styled(SEP, sep_style),
-            Span::styled("Destroy: ", LABEL),
-            styled_bool(destroy),
+            Span::styled("Suspended: ", theme::LABEL),
+            detail::styled_bool(suspended),
+            Span::styled(SEP, theme::INLINE_SEP),
+            Span::styled("PlanOnly: ", theme::LABEL),
+            detail::styled_bool(plan_only),
+            Span::styled(SEP, theme::INLINE_SEP),
+            Span::styled("Destroy: ", theme::LABEL),
+            detail::styled_bool(destroy),
         ]),
-        kv("Approve:   ", approve_plan),
+        detail::kv("Approve:   ", approve_plan),
     ];
 
-    let block = Block::default()
-        .title(Span::styled(
-            " Spec ",
-            Style::default()
-                .fg(Color::Rgb(140, 200, 255))
-                .add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(50, 55, 70)));
-    f.render_widget(Paragraph::new(lines).block(block), area);
+    f.render_widget(Paragraph::new(lines).block(detail::block("Spec")), area);
 }
 
 fn render_status(
@@ -199,7 +164,6 @@ fn render_status(
     detail_fields: &[DetailField],
 ) {
     let status = tf.status.as_ref();
-    let sep_style = Style::default().fg(Color::Rgb(50, 55, 70));
 
     let ready = status
         .and_then(|s| s.conditions.as_ref())
@@ -232,9 +196,7 @@ fn render_status(
     let drift = status
         .and_then(|s| s.last_drift_detected_at.as_deref())
         .unwrap_or("-");
-    let failures = status
-        .and_then(|s| s.reconciliation_failures)
-        .unwrap_or(0);
+    let failures = status.and_then(|s| s.reconciliation_failures).unwrap_or(0);
     let inventory_count = status
         .and_then(|s| s.inventory.as_ref())
         .map(|i| i.entries.len())
@@ -245,23 +207,23 @@ fn render_status(
 
     let mut lines = vec![
         Line::from(vec![
-            Span::styled("Ready:     ", LABEL),
+            Span::styled("Ready:     ", theme::LABEL),
             Span::styled(&ready, ready_style),
-            Span::styled(SEP, sep_style),
-            Span::styled("Plan: ", LABEL),
+            Span::styled(SEP, theme::INLINE_SEP),
+            Span::styled("Plan: ", theme::LABEL),
             Span::raw(&plan_status),
         ]),
-        kv("Applied:   ", last_applied),
-        kv("Drift:     ", drift),
+        detail::kv("Applied:   ", last_applied),
+        detail::kv("Drift:     ", drift),
         Line::from(vec![
-            Span::styled("Failures:  ", LABEL),
+            Span::styled("Failures:  ", theme::LABEL),
             if failures > 0 {
                 Span::styled(&failures_text, theme::STATUS_NOT_READY)
             } else {
                 Span::raw(&failures_text)
             },
-            Span::styled(SEP, sep_style),
-            Span::styled("Inventory: ", LABEL),
+            Span::styled(SEP, theme::INLINE_SEP),
+            Span::styled("Inventory: ", theme::LABEL),
             Span::raw(&inventory_text),
         ]),
     ];
@@ -272,14 +234,14 @@ fn render_status(
             let mut spans = Vec::new();
             for (j, field) in pair.iter().enumerate() {
                 if j > 0 {
-                    spans.push(Span::styled(SEP, sep_style));
+                    spans.push(Span::styled(SEP, theme::INLINE_SEP));
                 }
                 let value = cached_outputs
                     .and_then(|o| o.get(&field.source))
                     .map(|s| s.as_str())
                     .unwrap_or("-");
                 let padded_label = format!("{}: ", field.label);
-                spans.push(Span::styled(padded_label, LABEL));
+                spans.push(Span::styled(padded_label, theme::LABEL));
                 let mut style = Style::default().fg(Color::Rgb(
                     field.color[0],
                     field.color[1],
@@ -298,124 +260,11 @@ fn render_status(
             keys.sort();
             let keys_text = keys.join(", ");
             lines.push(Line::from(vec![
-                Span::styled("Outputs:   ", LABEL),
-                Span::styled(
-                    keys_text,
-                    Style::default().fg(Color::Rgb(100, 105, 120)),
-                ),
+                Span::styled("Outputs:   ", theme::LABEL),
+                Span::styled(keys_text, Style::default().fg(Color::Rgb(100, 105, 120))),
             ]));
         }
     }
 
-    let block = Block::default()
-        .title(Span::styled(
-            " Status ",
-            Style::default()
-                .fg(Color::Rgb(140, 200, 255))
-                .add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(50, 55, 70)));
-    f.render_widget(Paragraph::new(lines).block(block), area);
-}
-
-fn render_conditions_compact(f: &mut Frame, area: Rect, tf: &Terraform) {
-    let conditions = tf.status.as_ref().and_then(|s| s.conditions.as_ref());
-
-    let block = Block::default()
-        .title(Span::styled(
-            " Conditions ",
-            Style::default()
-                .fg(Color::Rgb(140, 200, 255))
-                .add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(50, 55, 70)));
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    if let Some(conditions) = conditions {
-        let msg_style = Style::default().fg(Color::Rgb(140, 140, 160));
-        // Prefix: " ✓ " (3) + type (14) + status (8) = 25 columns
-        let prefix_width: usize = 25;
-        let msg_width = (inner.width as usize).saturating_sub(prefix_width);
-
-        let mut lines: Vec<Line> = Vec::new();
-        for c in conditions {
-            let (icon, style) = match c.status.as_str() {
-                "True" => ("✓", theme::STATUS_READY),
-                "False" => ("✗", theme::STATUS_NOT_READY),
-                _ => ("⋯", theme::STATUS_UNKNOWN),
-            };
-
-            let humanized = util::humanize_condition_message(&c.message);
-            let logical_lines: Vec<&str> = if humanized.is_empty() {
-                vec![c.message.as_str()]
-            } else {
-                humanized.iter().map(String::as_str).collect()
-            };
-
-            let mut first_chunk = true;
-            for logical in &logical_lines {
-                let mut pos = 0;
-                let single_pass = msg_width == 0 || logical.len() <= msg_width;
-                loop {
-                    let chunk = if single_pass {
-                        let slice = &logical[pos..];
-                        pos = logical.len();
-                        slice
-                    } else {
-                        let mut end = (pos + msg_width).min(logical.len());
-                        while end < logical.len() && !logical.is_char_boundary(end) {
-                            end -= 1;
-                        }
-                        let slice = &logical[pos..end];
-                        pos = end;
-                        slice
-                    };
-                    if first_chunk {
-                        lines.push(Line::from(vec![
-                            Span::styled(format!(" {icon} "), style),
-                            Span::styled(
-                                format!("{:<14}", c.type_),
-                                Style::default().add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled(format!("{:<8}", c.status), style),
-                            Span::styled(chunk.to_string(), msg_style),
-                        ]));
-                        first_chunk = false;
-                    } else {
-                        lines.push(Line::from(vec![
-                            Span::raw(" ".repeat(prefix_width)),
-                            Span::styled(chunk.to_string(), msg_style),
-                        ]));
-                    }
-                    if pos >= logical.len() {
-                        break;
-                    }
-                }
-            }
-        }
-        f.render_widget(Paragraph::new(lines), inner);
-    } else {
-        f.render_widget(Paragraph::new("  No conditions"), inner);
-    }
-}
-
-fn kv<'a>(key: &'a str, value: &'a str) -> Line<'a> {
-    Line::from(vec![Span::styled(key, LABEL), Span::raw(value)])
-}
-
-fn styled_bool(value: bool) -> Span<'static> {
-    if value {
-        Span::styled(
-            "true",
-            Style::default()
-                .fg(Color::Rgb(240, 200, 60))
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::styled("false", Style::default().fg(Color::Rgb(80, 85, 100)))
-    }
+    f.render_widget(Paragraph::new(lines).block(detail::block("Status")), area);
 }
