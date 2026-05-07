@@ -20,7 +20,7 @@ pub async fn approve_plan(client: &kube::Client, ns: &str, name: &str) -> Result
         .as_ref()
         .and_then(|s| s.plan.as_ref())
         .and_then(|p| p.pending.as_ref())
-        .ok_or_else(|| anyhow!("No pending plan for {}/{}", ns, name))?;
+        .ok_or_else(|| anyhow!("No pending plan for {ns}/{name}"))?;
 
     let patch = json!({ "spec": { "approvePlan": plan_name } });
     api.patch(name, &PatchParams::apply("terrarium"), &Patch::Merge(&patch))
@@ -96,7 +96,7 @@ pub async fn fetch_output_values(
         .write_outputs_to_secret
         .as_ref()
         .map(|s| s.name.clone())
-        .unwrap_or_else(|| format!("{}-outputs", name));
+        .unwrap_or_else(|| format!("{name}-outputs"));
 
     let secret_api: Api<k8s_openapi::api::core::v1::Secret> =
         Api::namespaced(client.clone(), ns);
@@ -145,8 +145,7 @@ pub async fn fetch_plan(
     let safe_ws = safe_label_value(workspace);
 
     let label_selector = format!(
-        "infra.contrib.fluxcd.io/plan-name={},infra.contrib.fluxcd.io/plan-workspace={}",
-        safe_name, safe_ws
+        "infra.contrib.fluxcd.io/plan-name={safe_name},infra.contrib.fluxcd.io/plan-workspace={safe_ws}"
     );
 
     let api: Api<ConfigMap> = Api::namespaced(client.clone(), ns);
@@ -155,11 +154,8 @@ pub async fn fetch_plan(
 
     if cms.items.is_empty() {
         return Err(anyhow!(
-            "No plan ConfigMap found for {}/{} (workspace: {}). \
-             Ensure spec.storeReadablePlan is set to \"human\".",
-            ns,
-            name,
-            workspace
+            "No plan ConfigMap found for {ns}/{name} (workspace: {workspace}). \
+             Ensure spec.storeReadablePlan is set to \"human\"."
         ));
     }
 
@@ -310,7 +306,7 @@ pub async fn fetch_outputs(
         .write_outputs_to_secret
         .as_ref()
         .map(|s| s.name.clone())
-        .unwrap_or_else(|| format!("{}-outputs", name));
+        .unwrap_or_else(|| format!("{name}-outputs"));
 
     let available = tf
         .status
@@ -320,7 +316,7 @@ pub async fn fetch_outputs(
         .unwrap_or_default();
 
     if available.is_empty() {
-        return Err(anyhow!("No outputs available for {}/{}", ns, name));
+        return Err(anyhow!("No outputs available for {ns}/{name}"));
     }
 
     // Fetch the secret
@@ -329,16 +325,13 @@ pub async fn fetch_outputs(
 
     let secret = secret_api.get(&secret_name).await.map_err(|e| {
         anyhow!(
-            "Could not read output secret '{}' in {}: {}",
-            secret_name,
-            ns,
-            e
+            "Could not read output secret '{secret_name}' in {ns}: {e}"
         )
     })?;
 
     let mut lines = Vec::new();
-    lines.push(format!("Terraform Outputs for {}/{}", ns, name));
-    lines.push(format!("Secret: {}/{}", ns, secret_name));
+    lines.push(format!("Terraform Outputs for {ns}/{name}"));
+    lines.push(format!("Secret: {ns}/{secret_name}"));
     lines.push(String::new());
 
     if let Some(data) = &secret.data {
@@ -354,15 +347,15 @@ pub async fn fetch_outputs(
                     if json_val.is_object() || json_val.is_array() {
                         let pretty = serde_json::to_string_pretty(&json_val)
                             .unwrap_or_else(|_| decoded.to_string());
-                        lines.push(format!("{}:", key));
+                        lines.push(format!("{key}:"));
                         for l in pretty.lines() {
-                            lines.push(format!("  {}", l));
+                            lines.push(format!("  {l}"));
                         }
                     } else {
-                        lines.push(format!("{}: {}", key, decoded));
+                        lines.push(format!("{key}: {decoded}"));
                     }
                 } else {
-                    lines.push(format!("{}: {}", key, decoded));
+                    lines.push(format!("{key}: {decoded}"));
                 }
                 lines.push(String::new());
             }
@@ -390,14 +383,13 @@ pub async fn fetch_events(
 
     let api: Api<Event> = Api::namespaced(client.clone(), ns);
     let field_selector = format!(
-        "involvedObject.name={},involvedObject.kind={}",
-        name, api_kind
+        "involvedObject.name={name},involvedObject.kind={api_kind}"
     );
     let lp = ListParams::default().fields(&field_selector);
     let events = api.list(&lp).await?;
 
     if events.items.is_empty() {
-        return Ok(format!("No events found for {} {}/{}", api_kind, ns, name));
+        return Ok(format!("No events found for {api_kind} {ns}/{name}"));
     }
 
     let mut lines = Vec::new();
@@ -420,8 +412,7 @@ pub async fn fetch_events(
         let count = event.count.unwrap_or(1);
 
         lines.push(format!(
-            "{} [{}] {} (x{}) — {}",
-            time, type_, reason, count, message
+            "{time} [{type_}] {reason} (x{count}) — {message}"
         ));
     }
 

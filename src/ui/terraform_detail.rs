@@ -17,16 +17,15 @@ use crate::ui::theme;
 const LABEL: Style = Style::new().fg(Color::Rgb(140, 145, 165));
 const SEP: &str = "  │  ";
 
-pub fn render(
-    f: &mut Frame,
-    area: Rect,
-    tf: &Terraform,
-    runner_logs: Option<&str>,
-    cached_outputs: Option<&HashMap<String, String>>,
-    detail_fields: &[DetailField],
-    source_gr: Option<&GitRepository>,
-    gr_synced: bool,
-) {
+pub struct RenderCtx<'a> {
+    pub runner_logs: Option<&'a str>,
+    pub cached_outputs: Option<&'a HashMap<String, String>>,
+    pub detail_fields: &'a [DetailField],
+    pub source_gr: Option<&'a GitRepository>,
+    pub gr_synced: bool,
+}
+
+pub fn render(f: &mut Frame, area: Rect, tf: &Terraform, ctx: &RenderCtx<'_>) {
     let ns = tf.metadata.namespace.as_deref().unwrap_or("-");
     let name = tf.metadata.name.as_deref().unwrap_or("-");
 
@@ -34,7 +33,7 @@ pub fn render(
     let spec_status_height = 8_u16;
     let conditions_height = 7_u16;
 
-    if runner_logs.is_some() {
+    if ctx.runner_logs.is_some() {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -46,10 +45,10 @@ pub fn render(
             .split(area);
 
         render_title(f, chunks[0], ns, name);
-        render_spec_status(f, chunks[1], tf, cached_outputs, detail_fields, source_gr, gr_synced);
+        render_spec_status(f, chunks[1], tf, ctx);
         render_conditions_compact(f, chunks[2], tf);
-        let runner_pod = format!("{}-tf-runner", name);
-        render_runner_logs(f, chunks[3], runner_logs.unwrap(), &runner_pod);
+        let runner_pod = format!("{name}-tf-runner");
+        render_runner_logs(f, chunks[3], ctx.runner_logs.unwrap(), &runner_pod);
     } else {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -62,7 +61,7 @@ pub fn render(
             .split(area);
 
         render_title(f, chunks[0], ns, name);
-        render_spec_status(f, chunks[1], tf, cached_outputs, detail_fields, source_gr, gr_synced);
+        render_spec_status(f, chunks[1], tf, ctx);
         render_conditions_compact(f, chunks[2], tf);
     }
 }
@@ -76,7 +75,7 @@ fn render_title(f: &mut Frame, area: Rect, ns: &str, name: &str) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!("{}/{}", ns, name),
+            format!("{ns}/{name}"),
             Style::default()
                 .fg(Color::Rgb(140, 200, 255))
                 .add_modifier(Modifier::BOLD),
@@ -85,22 +84,14 @@ fn render_title(f: &mut Frame, area: Rect, ns: &str, name: &str) {
     f.render_widget(Paragraph::new(title), area);
 }
 
-fn render_spec_status(
-    f: &mut Frame,
-    area: Rect,
-    tf: &Terraform,
-    cached_outputs: Option<&HashMap<String, String>>,
-    detail_fields: &[DetailField],
-    source_gr: Option<&GitRepository>,
-    gr_synced: bool,
-) {
+fn render_spec_status(f: &mut Frame, area: Rect, tf: &Terraform, ctx: &RenderCtx<'_>) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(area);
 
-    render_spec(f, cols[0], tf, source_gr, gr_synced);
-    render_status(f, cols[1], tf, cached_outputs, detail_fields);
+    render_spec(f, cols[0], tf, ctx.source_gr, ctx.gr_synced);
+    render_status(f, cols[1], tf, ctx.cached_outputs, ctx.detail_fields);
 }
 
 fn render_runner_logs(f: &mut Frame, area: Rect, logs: &str, pod_name: &str) {
@@ -225,9 +216,9 @@ fn render_status(
         .and_then(|s| s.plan.as_ref())
         .map(|p| {
             if let Some(pending) = &p.pending {
-                format!("Pending: {}", pending)
+                format!("Pending: {pending}")
             } else if let Some(applied) = &p.last_applied {
-                format!("Applied: {}", applied)
+                format!("Applied: {applied}")
             } else {
                 "-".to_string()
             }
@@ -248,8 +239,8 @@ fn render_status(
         .map(|i| i.entries.len())
         .unwrap_or(0);
 
-    let failures_text = format!("{}", failures);
-    let inventory_text = format!("{}", inventory_count);
+    let failures_text = format!("{failures}");
+    let inventory_text = format!("{inventory_count}");
 
     let mut lines = vec![
         Line::from(vec![
@@ -360,7 +351,7 @@ fn render_conditions_compact(f: &mut Frame, area: Rect, tf: &Terraform) {
 
             if msg_width == 0 || c.message.len() <= msg_width {
                 lines.push(Line::from(vec![
-                    Span::styled(format!(" {} ", icon), style),
+                    Span::styled(format!(" {icon} "), style),
                     Span::styled(
                         format!("{:<14}", c.type_),
                         Style::default().add_modifier(Modifier::BOLD),
@@ -382,7 +373,7 @@ fn render_conditions_compact(f: &mut Frame, area: Rect, tf: &Terraform) {
                     let chunk = &msg[pos..end];
                     if first {
                         lines.push(Line::from(vec![
-                            Span::styled(format!(" {} ", icon), style),
+                            Span::styled(format!(" {icon} "), style),
                             Span::styled(
                                 format!("{:<14}", c.type_),
                                 Style::default().add_modifier(Modifier::BOLD),

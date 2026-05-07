@@ -40,7 +40,7 @@ pub fn render(f: &mut Frame, state: &AppState) {
             };
             let marker = if is_current { " * " } else { "   " };
             ListItem::new(Span::styled(
-                format!("{}{}", marker, ns),
+                format!("{marker}{ns}"),
                 style,
             ))
         })

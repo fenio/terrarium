@@ -195,7 +195,7 @@ pub fn get_filtered_entries(
             entries.sort_by(|a, b| {
                 let va = entry_value(a, &col.source);
                 let vb = entry_value(b, &col.source);
-                va.cmp(&vb).then(a.name.cmp(&b.name))
+                va.cmp(vb).then(a.name.cmp(&b.name))
             });
         }
     }

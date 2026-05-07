@@ -62,8 +62,7 @@ async fn fetch_controller_info(client: &kube::Client, ns: &str) -> ControllerInf
 
     if !found_deploy {
         info.error = Some(format!(
-            "Controller deployment not found in namespace '{}'",
-            ns
+            "Controller deployment not found in namespace '{ns}'"
         ));
         return info;
     }

@@ -63,7 +63,7 @@ fn render_controller_info(f: &mut Frame, area: Rect, state: &AppState) {
         let lines = vec![
             Line::from(""),
             Line::from(Span::styled(
-                format!("  {}", err),
+                format!("  {err}"),
                 Style::default().fg(Color::Rgb(240, 200, 60)),
             )),
         ];
@@ -110,12 +110,12 @@ fn render_controller_info(f: &mut Frame, area: Rect, state: &AppState) {
         };
         Line::from(vec![
             Span::styled("  Runners:     ", theme::LABEL),
-            Span::styled(format!("{}/{}", running_runners, max), runner_style),
+            Span::styled(format!("{running_runners}/{max}"), runner_style),
         ])
     } else {
         Line::from(vec![
             Span::styled("  Runners:     ", theme::LABEL),
-            Span::styled(format!("{}", running_runners), Style::default().fg(Color::Rgb(110, 115, 135))),
+            Span::styled(format!("{running_runners}"), Style::default().fg(Color::Rgb(110, 115, 135))),
         ])
     };
 
@@ -144,7 +144,7 @@ fn render_controller_info(f: &mut Frame, area: Rect, state: &AppState) {
                 theme::STATUS_NOT_READY
             };
             lines.push(Line::from(vec![
-                Span::styled(format!("  {} ", ready_icon), ready_style),
+                Span::styled(format!("  {ready_icon} "), ready_style),
                 Span::raw(&pod.name),
                 Span::styled(
                     format!("  {}  restarts:{}  age:{}",
@@ -227,7 +227,7 @@ fn render_tf_stats(f: &mut Frame, area: Rect, state: &AppState) {
     let lines = vec![
         Line::from(vec![
             Span::styled("  Total:        ", theme::LABEL),
-            Span::styled(format!("{}", total), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{total}"), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         ]),
         stat_line("  Ready:        ", ready_count, theme::STATUS_READY),
         stat_line("  Not Ready:    ", not_ready, theme::STATUS_NOT_READY),
@@ -237,13 +237,13 @@ fn render_tf_stats(f: &mut Frame, area: Rect, state: &AppState) {
         Line::from(vec![
             Span::styled("  Recon Fails:  ", theme::LABEL),
             Span::styled(
-                format!("{}", total_failures),
+                format!("{total_failures}"),
                 if total_failures > 0 { theme::STATUS_NOT_READY } else { theme::STATUS_READY },
             ),
         ]),
         Line::from(vec![
             Span::styled("  Managed Res:  ", theme::LABEL),
-            Span::raw(format!("{}", inventory_total)),
+            Span::raw(format!("{inventory_total}")),
         ]),
     ];
 
@@ -287,7 +287,7 @@ fn render_ks_stats(f: &mut Frame, area: Rect, state: &AppState) {
     let lines = vec![
         Line::from(vec![
             Span::styled("  Total:        ", theme::LABEL),
-            Span::styled(format!("{}", total), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{total}"), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         ]),
         stat_line("  Ready:        ", ready_count, theme::STATUS_READY),
         stat_line("  Not Ready:    ", not_ready, theme::STATUS_NOT_READY),
@@ -374,9 +374,9 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
     f.render_widget(block, area);
 
     // Numbers left, namespace right. Legend above as header.
-    let w_w = format!("{}", total_waiting).len().max(1);
-    let w_f = format!("{}", total_failing).len().max(1);
-    let w_t = format!("{}", total_tracked).len().max(1);
+    let w_w = format!("{total_waiting}").len().max(1);
+    let w_f = format!("{total_failing}").len().max(1);
+    let w_t = format!("{total_tracked}").len().max(1);
 
     fn num_spans<'a>(
         w: usize, f: usize, t: usize,
@@ -384,11 +384,11 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
         label_style: Style,
     ) -> Vec<Span<'a>> {
         vec![
-            Span::styled(format!("{:>w$}", w, w = ww), theme::STATUS_PENDING),
+            Span::styled(format!("{w:>ww$}"), theme::STATUS_PENDING),
             Span::styled("/", label_style),
-            Span::styled(format!("{:>w$}", f, w = wf), theme::STATUS_NOT_READY),
+            Span::styled(format!("{f:>wf$}"), theme::STATUS_NOT_READY),
             Span::styled("/", label_style),
-            Span::styled(format!("{:>w$}", t, w = wt), Style::default().fg(Color::White)),
+            Span::styled(format!("{t:>wt$}"), Style::default().fg(Color::White)),
         ]
     }
 
@@ -437,7 +437,7 @@ fn kv_line<'a>(key: &'a str, value: &'a str) -> Line<'a> {
 fn stat_line(label: &str, count: usize, style: Style) -> Line<'_> {
     Line::from(vec![
         Span::styled(label, theme::LABEL),
-        Span::styled(format!("{}", count), if count > 0 { style } else { Style::default().fg(Color::Rgb(110, 115, 135)) }),
+        Span::styled(format!("{count}"), if count > 0 { style } else { Style::default().fg(Color::Rgb(110, 115, 135)) }),
     ])
 }
 
@@ -568,7 +568,7 @@ fn render_metrics_footer(f: &mut Frame, area: Rect, state: &AppState) {
     let mut spans: Vec<Span<'static>> = Vec::new();
     if let Some(err) = &state.metrics_last_error {
         spans.push(Span::styled(
-            format!("  err: {}", err),
+            format!("  err: {err}"),
             Style::default().fg(Color::Rgb(220, 90, 90)),
         ));
     } else if let Some(snap) = &state.metrics_snapshot {
@@ -585,7 +585,7 @@ fn render_metrics_footer(f: &mut Frame, area: Rect, state: &AppState) {
 
 fn kv_metric(label: &str, value: String, value_color: Color) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("  {:21}", label), theme::LABEL),
+        Span::styled(format!("  {label:21}"), theme::LABEL),
         Span::styled(
             value,
             Style::default()
@@ -614,28 +614,28 @@ fn fmt_rate(v: Option<f64>) -> String {
     match v {
         None => "-".into(),
         Some(n) if n.abs() < 0.05 => "0".into(),
-        Some(n) => format!("{:.1}", n),
+        Some(n) => format!("{n:.1}"),
     }
 }
 
 fn fmt_secs(v: Option<f64>) -> String {
     match v {
         None => "-".into(),
-        Some(s) if s < 60.0 => format!("{:.2}s", s),
+        Some(s) if s < 60.0 => format!("{s:.2}s"),
         Some(s) if s < 3600.0 => {
             let m = (s / 60.0) as i64;
             let r = (s - (m as f64) * 60.0) as i64;
-            format!("{}m {}s", m, r)
+            format!("{m}m {r}s")
         }
         Some(s) if s < 86400.0 => {
             let h = (s / 3600.0) as i64;
             let m = ((s - (h as f64) * 3600.0) / 60.0) as i64;
-            format!("{}h {}m", h, m)
+            format!("{h}h {m}m")
         }
         Some(s) => {
             let d = (s / 86400.0) as i64;
             let h = ((s - (d as f64) * 86400.0) / 3600.0) as i64;
-            format!("{}d {}h", d, h)
+            format!("{d}d {h}h")
         }
     }
 }
@@ -649,7 +649,7 @@ fn fmt_p99(value: Option<f64>, off_scale_above: Option<f64>) -> String {
 
 fn fmt_secs_short(s: f64) -> String {
     if s < 60.0 {
-        format!("{:.0}s", s)
+        format!("{s:.0}s")
     } else if s < 3600.0 {
         format!("{:.0}m", (s / 60.0).round())
     } else {

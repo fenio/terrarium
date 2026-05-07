@@ -43,7 +43,7 @@ pub fn source_line<'a>(
     gr: Option<&GitRepository>,
     gr_synced: bool,
 ) -> Line<'a> {
-    let id = format!("{}/{}", source_kind, source_name);
+    let id = format!("{source_kind}/{source_name}");
 
     if source_kind != "GitRepository" {
         return Line::from(vec![Span::styled(label, label_style), Span::raw(id)]);
@@ -80,14 +80,14 @@ pub fn source_line<'a>(
             Line::from(vec![
                 Span::styled(label, label_style),
                 Span::styled(icon, icon_style),
-                Span::raw(format!("{}  ", id)),
+                Span::raw(format!("{id}  ")),
                 Span::styled(suffix, suffix_style),
             ])
         }
         None if gr_synced => Line::from(vec![
             Span::styled(label, label_style),
             Span::styled("✗ ", theme::STATUS_NOT_READY),
-            Span::raw(format!("{}  ", id)),
+            Span::raw(format!("{id}  ")),
             Span::styled("not found".to_string(), theme::STATUS_NOT_READY),
         ]),
         None => Line::from(vec![Span::styled(label, label_style), Span::raw(id)]),

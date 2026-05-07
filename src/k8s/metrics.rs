@@ -435,7 +435,7 @@ fn histogram_quantile_aggregated(
         .iter()
         .filter(|(le, _)| le.is_finite())
         .map(|(le, _)| *le)
-        .last()
+        .next_back()
         .unwrap_or(0.0);
     for (le, count) in &buckets {
         if *count >= target {
@@ -457,7 +457,7 @@ fn histogram_quantile_aggregated(
     QuantileResult::None
 }
 
-#[derive(Copy, Clone, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, PartialEq)]
 struct OrderedFloat(f64);
 impl Eq for OrderedFloat {}
 impl Ord for OrderedFloat {
@@ -465,6 +465,11 @@ impl Ord for OrderedFloat {
         self.0
             .partial_cmp(&other.0)
             .unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+impl PartialOrd for OrderedFloat {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 

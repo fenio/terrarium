@@ -98,7 +98,7 @@ async fn main() -> anyhow::Result<()> {
                 tokio::spawn(async move {
                     if let Err(e) = k8s::watcher::run_tf_watcher(c, tf_writer, wtx.clone()).await {
                         let _ = wtx.send(action::Action::ConnectionError(
-                            format!("Terraform watcher failed: {}", e),
+                            format!("Terraform watcher failed: {e}"),
                         ));
                     }
                 });
@@ -108,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
                 tokio::spawn(async move {
                     if let Err(e) = k8s::watcher::run_ks_watcher(c, ks_writer, wtx.clone()).await {
                         let _ = wtx.send(action::Action::ConnectionError(
-                            format!("Kustomization watcher failed: {}", e),
+                            format!("Kustomization watcher failed: {e}"),
                         ));
                     }
                 });
@@ -120,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
                         k8s::watcher::run_gitrepo_watcher(c, gr_writer, wtx.clone()).await
                     {
                         let _ = wtx.send(action::Action::ConnectionError(
-                            format!("GitRepository watcher failed: {}", e),
+                            format!("GitRepository watcher failed: {e}"),
                         ));
                     }
                 });
@@ -131,7 +131,7 @@ async fn main() -> anyhow::Result<()> {
                 tokio::spawn(async move {
                     if let Err(e) = k8s::runners::poll_runner_pods(c, wtx.clone(), ns_clone).await {
                         let _ = wtx.send(action::Action::ConnectionError(
-                            format!("Runner poller failed: {}", e),
+                            format!("Runner poller failed: {e}"),
                         ));
                     }
                 });
@@ -143,15 +143,14 @@ async fn main() -> anyhow::Result<()> {
                         k8s::controller::poll_controller_info(c, wtx.clone(), controller_ns).await
                     {
                         let _ = wtx.send(action::Action::ConnectionError(
-                            format!("Controller poller failed: {}", e),
+                            format!("Controller poller failed: {e}"),
                         ));
                     }
                 });
             }
             Err(e) => {
                 let _ = tx.send(action::Action::ConnectionError(format!(
-                    "Failed to connect to cluster: {}",
-                    e
+                    "Failed to connect to cluster: {e}"
                 )));
             }
         }

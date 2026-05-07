@@ -206,7 +206,7 @@ impl App {
                     namespace: ns.clone(),
                     name: name.clone(),
                 }),
-                format!("Approve plan for {}/{}?", ns, name),
+                format!("Approve plan for {ns}/{name}?"),
             )),
             KeyCode::Char('r') => Some(Action::Reconcile {
                 kind: ResourceKind::Terraform,
@@ -223,7 +223,7 @@ impl App {
                     namespace: ns.clone(),
                     name: name.clone(),
                 }),
-                format!("Suspend {}/{}?", ns, name),
+                format!("Suspend {ns}/{name}?"),
             )),
             KeyCode::Char('u') => Some(Action::Resume {
                 kind: ResourceKind::Terraform,
@@ -240,14 +240,14 @@ impl App {
                     namespace: ns.clone(),
                     name: name.clone(),
                 }),
-                format!("Force unlock state for {}/{}?", ns, name),
+                format!("Force unlock state for {ns}/{name}?"),
             )),
             KeyCode::Char('d') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::DeleteResource {
                     namespace: ns.clone(),
                     name: name.clone(),
                 }),
-                format!("DELETE {}/{}? This cannot be undone!", ns, name),
+                format!("DELETE {ns}/{name}? This cannot be undone!"),
             )),
             KeyCode::Char('y') => Some(Action::FetchJson {
                 kind: ResourceKind::Terraform,
@@ -313,7 +313,7 @@ impl App {
                     namespace: ns.clone(),
                     name: name.clone(),
                 }),
-                format!("Suspend {}/{}?", ns, name),
+                format!("Suspend {ns}/{name}?"),
             )),
             KeyCode::Char('u') => Some(Action::Resume {
                 kind: ResourceKind::Kustomization,
@@ -359,7 +359,7 @@ impl App {
                     namespace: ns.clone(),
                     name: name.clone(),
                 }),
-                format!("Kill runner pod {}/{}?", ns, name),
+                format!("Kill runner pod {ns}/{name}?"),
             )),
             KeyCode::Char('e') => Some(Action::FetchEvents {
                 kind: ResourceKind::Pod,
@@ -607,7 +607,7 @@ impl App {
                     }
                     Err(e) => {
                         if tx
-                            .send(Action::MetricsFetchError(format!("{:#}", e)))
+                            .send(Action::MetricsFetchError(format!("{e:#}")))
                             .is_err()
                         {
                             break;
@@ -1047,7 +1047,7 @@ impl App {
             Action::ExecBreakTheGlass { .. } => {}
 
             Action::StreamRunnerLogs { namespace, name } => {
-                let runner_pod = format!("{}-tf-runner", name);
+                let runner_pod = format!("{name}-tf-runner");
                 // Check if the runner pod exists
                 if self.state.runner_pods.iter().any(|p| {
                     p.metadata.namespace.as_deref() == Some(&namespace)
@@ -1056,7 +1056,7 @@ impl App {
                     self.start_log_stream(&namespace, &runner_pod).await;
                 } else {
                     self.state.flash_message = Some((
-                        format!("Runner pod {} not found", runner_pod),
+                        format!("Runner pod {runner_pod} not found"),
                         Instant::now(),
                         FlashKind::Error,
                     ));
@@ -1077,7 +1077,7 @@ impl App {
                     });
                 } else {
                     self.state.flash_message = Some((
-                        format!("Terraform resource {}/{} not found", namespace, name),
+                        format!("Terraform resource {namespace}/{name} not found"),
                         Instant::now(),
                         FlashKind::Error,
                     ));
@@ -1104,7 +1104,7 @@ impl App {
                 workspace,
             } => {
                 self.state.flash_message = Some((
-                    format!("Fetching plan for {}/{}...", namespace, name),
+                    format!("Fetching plan for {namespace}/{name}..."),
                     Instant::now(),
                     FlashKind::Success,
                 ));
@@ -1121,7 +1121,7 @@ impl App {
                             let _ = tx.send(Action::PlanFetched(plan_text));
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::PlanFetchError(format!("{}", e)));
+                            let _ = tx.send(Action::PlanFetchError(format!("{e}")));
                         }
                     }
                 });
@@ -1136,7 +1136,7 @@ impl App {
             }
             Action::PlanFetchError(e) => {
                 self.state.flash_message =
-                    Some((format!("Error: {}", e), Instant::now(), FlashKind::Error));
+                    Some((format!("Error: {e}"), Instant::now(), FlashKind::Error));
             }
 
             // JSON view (async)
@@ -1146,7 +1146,7 @@ impl App {
                 name,
             } => {
                 self.state.flash_message = Some((
-                    format!("Fetching JSON for {}/{}...", namespace, name),
+                    format!("Fetching JSON for {namespace}/{name}..."),
                     Instant::now(),
                     FlashKind::Success,
                 ));
@@ -1162,7 +1162,7 @@ impl App {
                             let _ = tx.send(Action::JsonFetched(json));
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::JsonFetchError(format!("{}", e)));
+                            let _ = tx.send(Action::JsonFetchError(format!("{e}")));
                         }
                     }
                 });
@@ -1175,7 +1175,7 @@ impl App {
                 name,
             } => {
                 self.state.flash_message = Some((
-                    format!("Fetching YAML for {}/{}...", namespace, name),
+                    format!("Fetching YAML for {namespace}/{name}..."),
                     Instant::now(),
                     FlashKind::Success,
                 ));
@@ -1191,7 +1191,7 @@ impl App {
                             let _ = tx.send(Action::JsonFetched(yaml));
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::JsonFetchError(format!("{}", e)));
+                            let _ = tx.send(Action::JsonFetchError(format!("{e}")));
                         }
                     }
                 });
@@ -1206,13 +1206,13 @@ impl App {
             }
             Action::JsonFetchError(e) => {
                 self.state.flash_message =
-                    Some((format!("Error: {}", e), Instant::now(), FlashKind::Error));
+                    Some((format!("Error: {e}"), Instant::now(), FlashKind::Error));
             }
 
             // Outputs view (async, Terraform only)
             Action::FetchOutputs { namespace, name } => {
                 self.state.flash_message = Some((
-                    format!("Fetching outputs for {}/{}...", namespace, name),
+                    format!("Fetching outputs for {namespace}/{name}..."),
                     Instant::now(),
                     FlashKind::Success,
                 ));
@@ -1227,7 +1227,7 @@ impl App {
                             let _ = tx.send(Action::OutputsFetched(text));
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::OutputsFetchError(format!("{}", e)));
+                            let _ = tx.send(Action::OutputsFetchError(format!("{e}")));
                         }
                     }
                 });
@@ -1243,7 +1243,7 @@ impl App {
             }
             Action::OutputsFetchError(e) => {
                 self.state.flash_message =
-                    Some((format!("Error: {}", e), Instant::now(), FlashKind::Error));
+                    Some((format!("Error: {e}"), Instant::now(), FlashKind::Error));
             }
 
             // Events view (async)
@@ -1253,7 +1253,7 @@ impl App {
                 name,
             } => {
                 self.state.flash_message = Some((
-                    format!("Fetching events for {}/{}...", namespace, name),
+                    format!("Fetching events for {namespace}/{name}..."),
                     Instant::now(),
                     FlashKind::Success,
                 ));
@@ -1268,7 +1268,7 @@ impl App {
                             let _ = tx.send(Action::EventsFetched(events));
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::EventsFetchError(format!("{}", e)));
+                            let _ = tx.send(Action::EventsFetchError(format!("{e}")));
                         }
                     }
                 });
@@ -1287,7 +1287,7 @@ impl App {
             }
             Action::EventsFetchError(e) => {
                 self.state.flash_message =
-                    Some((format!("Error: {}", e), Instant::now(), FlashKind::Error));
+                    Some((format!("Error: {e}"), Instant::now(), FlashKind::Error));
             }
 
             // Log streaming chunks
@@ -1359,7 +1359,7 @@ impl App {
             }
             Action::K8sActionError(msg) => {
                 self.state.flash_message =
-                    Some((format!("Error: {}", msg), Instant::now(), FlashKind::Error));
+                    Some((format!("Error: {msg}"), Instant::now(), FlashKind::Error));
             }
 
             Action::TerraformStoreUpdated => {
@@ -1419,7 +1419,7 @@ impl App {
                     let _ = tx.send(Action::K8sActionSuccess(success_msg));
                 }
                 Err(e) => {
-                    let _ = tx.send(Action::K8sActionError(format!("{}", e)));
+                    let _ = tx.send(Action::K8sActionError(format!("{e}")));
                 }
             }
         });
@@ -1505,18 +1505,18 @@ impl App {
         };
         if let Some((prefix, text)) = content {
             let timestamp = jiff::Timestamp::now().strftime("%Y%m%d_%H%M%S");
-            let filename = format!("terrarium_{}_{}.txt", prefix, timestamp);
+            let filename = format!("terrarium_{prefix}_{timestamp}.txt");
             match create_private_file(&filename) {
                 Ok(mut f) => {
                     if let Err(e) = f.write_all(text.as_bytes()) {
                         self.state.flash_message = Some((
-                            format!("Write error: {}", e),
+                            format!("Write error: {e}"),
                             Instant::now(),
                             FlashKind::Error,
                         ));
                     } else {
                         self.state.flash_message = Some((
-                            format!("Saved to {}", filename),
+                            format!("Saved to {filename}"),
                             Instant::now(),
                             FlashKind::Success,
                         ));
@@ -1524,7 +1524,7 @@ impl App {
                 }
                 Err(e) => {
                     self.state.flash_message = Some((
-                        format!("Save error: {}", e),
+                        format!("Save error: {e}"),
                         Instant::now(),
                         FlashKind::Error,
                     ));
@@ -1557,7 +1557,7 @@ impl App {
                     return;
                 };
                 self.state.flash_message = Some((
-                    format!("Loading outputs for {}/{}...", namespace, name),
+                    format!("Loading outputs for {namespace}/{name}..."),
                     Instant::now(),
                     FlashKind::Success,
                 ));
@@ -1579,7 +1579,7 @@ impl App {
                             });
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::OutputsFetchError(format!("{}", e)));
+                            let _ = tx.send(Action::OutputsFetchError(format!("{e}")));
                         }
                     }
                 });
@@ -1617,7 +1617,7 @@ impl App {
             }
             Err(e) => {
                 self.state.flash_message = Some((
-                    format!("Failed to open browser: {}", e),
+                    format!("Failed to open browser: {e}"),
                     Instant::now(),
                     FlashKind::Error,
                 ));
@@ -1634,7 +1634,7 @@ impl App {
         // Just delegate to tfctl — it handles the entire BTG lifecycle correctly.
         // Trying to reimplement its K8s patch logic has proven unreliable.
         self.state.flash_message = Some((
-            format!("Launching tfctl break-glass {} -n {}...", name, namespace),
+            format!("Launching tfctl break-glass {name} -n {namespace}..."),
             Instant::now(),
             FlashKind::Success,
         ));
@@ -1643,7 +1643,7 @@ impl App {
         // Suspend TUI
         if let Err(e) = crate::tui::restore() {
             self.state.flash_message = Some((
-                format!("Failed to suspend TUI: {}", e),
+                format!("Failed to suspend TUI: {e}"),
                 Instant::now(),
                 FlashKind::Error,
             ));
@@ -1660,7 +1660,7 @@ impl App {
 
         // Restore TUI
         if let Err(e) = crate::tui::init_raw(self.state.mouse_enabled) {
-            eprintln!("Failed to restore TUI: {}", e);
+            eprintln!("Failed to restore TUI: {e}");
             self.should_quit = true;
             return;
         }
@@ -1669,7 +1669,7 @@ impl App {
         match status {
             Ok(s) if s.success() => {
                 self.state.flash_message = Some((
-                    format!("BTG session ended for {}/{}", namespace, name),
+                    format!("BTG session ended for {namespace}/{name}"),
                     Instant::now(),
                     FlashKind::Success,
                 ));
@@ -1683,7 +1683,7 @@ impl App {
             }
             Err(e) => {
                 self.state.flash_message = Some((
-                    format!("Failed to run tfctl: {} — is tfctl installed?", e),
+                    format!("Failed to run tfctl: {e} — is tfctl installed?"),
                     Instant::now(),
                     FlashKind::Error,
                 ));
@@ -1882,24 +1882,24 @@ async fn execute_k8s_action(client: &kube::Client, action: &Action) -> anyhow::R
 fn format_success_message(action: &Action) -> String {
     match action {
         Action::ApprovePlan { namespace, name } => {
-            format!("Approved plan for {}/{}", namespace, name)
+            format!("Approved plan for {namespace}/{name}")
         }
         Action::Reconcile { namespace, name, .. } => {
-            format!("Triggered reconciliation for {}/{}", namespace, name)
+            format!("Triggered reconciliation for {namespace}/{name}")
         }
         Action::Replan { namespace, name } => {
-            format!("Triggered replan for {}/{}", namespace, name)
+            format!("Triggered replan for {namespace}/{name}")
         }
-        Action::Suspend { namespace, name, .. } => format!("Suspended {}/{}", namespace, name),
-        Action::Resume { namespace, name, .. } => format!("Resumed {}/{}", namespace, name),
+        Action::Suspend { namespace, name, .. } => format!("Suspended {namespace}/{name}"),
+        Action::Resume { namespace, name, .. } => format!("Resumed {namespace}/{name}"),
         Action::ForceUnlock { namespace, name } => {
-            format!("Force unlocked {}/{}", namespace, name)
+            format!("Force unlocked {namespace}/{name}")
         }
         Action::DeleteResource { namespace, name } => {
-            format!("Deleted {}/{}", namespace, name)
+            format!("Deleted {namespace}/{name}")
         }
         Action::KillRunner { namespace, name } => {
-            format!("Killed runner {}/{}", namespace, name)
+            format!("Killed runner {namespace}/{name}")
         }
         _ => "Action completed".to_string(),
     }

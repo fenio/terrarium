@@ -39,97 +39,79 @@ pub fn render_help(f: &mut Frame) {
 }
 
 fn build_left_column() -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-
-    // Navigation
-    lines.push(section_header("Navigation"));
-    lines.push(help_line("j/k ↑/↓", "Move selection"));
-    lines.push(help_line("Ctrl-d / PgDn", "Half page down"));
-    lines.push(help_line("Ctrl-u / PgUp", "Half page up"));
-    lines.push(help_line("Enter / l", "Open detail / logs"));
-    lines.push(help_line("Esc", "Back / clear filter"));
-    lines.push(help_line("q", "Quit"));
-    lines.push(Line::from(""));
-
-    // Tabs
-    lines.push(section_header("Tabs"));
-    lines.push(help_line("1-5", "Jump to tab"));
-    lines.push(help_line("Tab", "Next tab"));
-    lines.push(help_line("Shift+Tab", "Previous tab"));
-    lines.push(Line::from(""));
-
-    // Filtering & Search
-    lines.push(section_header("Filtering"));
-    lines.push(help_line("/", "Search / filter list"));
-    lines.push(help_line("\\", "Pause / resume filter"));
-    lines.push(help_line("f", "Toggle failures only"));
-    lines.push(help_line("w", "Toggle waiting only"));
-    lines.push(help_line("n", "Namespace picker"));
-    lines.push(help_line("o", "Cycle sort column"));
-    lines.push(help_line("i", "Invert sort direction"));
-    lines.push(help_line("!", "Jump to first failure"));
-    lines.push(Line::from(""));
-
-    // General
-    lines.push(section_header("General"));
-    lines.push(help_line("m", "Toggle mouse support"));
-    lines.push(help_line("?", "Toggle this help"));
-    lines.push(help_line("Ctrl+C", "Quit immediately"));
-
-    lines
+    vec![
+        section_header("Navigation"),
+        help_line("j/k ↑/↓", "Move selection"),
+        help_line("Ctrl-d / PgDn", "Half page down"),
+        help_line("Ctrl-u / PgUp", "Half page up"),
+        help_line("Enter / l", "Open detail / logs"),
+        help_line("Esc", "Back / clear filter"),
+        help_line("q", "Quit"),
+        Line::from(""),
+        section_header("Tabs"),
+        help_line("1-5", "Jump to tab"),
+        help_line("Tab", "Next tab"),
+        help_line("Shift+Tab", "Previous tab"),
+        Line::from(""),
+        section_header("Filtering"),
+        help_line("/", "Search / filter list"),
+        help_line("\\", "Pause / resume filter"),
+        help_line("f", "Toggle failures only"),
+        help_line("w", "Toggle waiting only"),
+        help_line("n", "Namespace picker"),
+        help_line("o", "Cycle sort column"),
+        help_line("i", "Invert sort direction"),
+        help_line("!", "Jump to first failure"),
+        Line::from(""),
+        section_header("General"),
+        help_line("m", "Toggle mouse support"),
+        help_line("?", "Toggle this help"),
+        help_line("Ctrl+C", "Quit immediately"),
+    ]
 }
 
 fn build_right_column() -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-
-    // Terraform Actions
-    lines.push(section_header("Terraform Actions"));
-    lines.push(help_line("a", "Approve pending plan"));
-    lines.push(help_line("r", "Reconcile"));
-    lines.push(help_line("R", "Replan"));
-    lines.push(help_line("p", "View plan"));
-    lines.push(help_line("O", "View outputs"));
-    lines.push(help_line("y / Y", "View JSON / YAML"));
-    lines.push(help_line("e", "View events"));
-    lines.push(help_line("s / u", "Suspend / Resume"));
-    lines.push(help_line("F", "Force unlock state"));
-    lines.push(help_line("L", "Stream runner logs"));
-    lines.push(help_line("x", "Break the glass (tfctl)"));
-    lines.push(help_line("d", "Delete resource"));
-    lines.push(Line::from(""));
-
-    // Kustomization Actions
-    lines.push(section_header("Kustomization Actions"));
-    lines.push(help_line("r", "Reconcile"));
-    lines.push(help_line("y / Y", "View JSON / YAML"));
-    lines.push(help_line("e", "View events"));
-    lines.push(help_line("s / u", "Suspend / Resume"));
-    lines.push(Line::from(""));
-
-    // Runner Actions
-    lines.push(section_header("Runner Actions"));
-    lines.push(help_line("e", "View events"));
-    lines.push(help_line("T", "Jump to Terraform detail"));
-    lines.push(help_line("d", "Kill runner pod"));
-    lines.push(Line::from(""));
-
-    // Viewer
-    lines.push(section_header("Plan / Log / JSON Viewer"));
-    lines.push(help_line("g / G", "Top / bottom (G=follow)"));
-    lines.push(help_line("h / l", "Scroll left / right"));
-    lines.push(help_line("/", "Search in content"));
-    lines.push(help_line("n / N", "Next / prev match"));
-    lines.push(help_line("w", "Toggle line wrap"));
-    lines.push(help_line("S", "Save to file"));
-    lines.push(help_line("Tab", "Switch container (logs)"));
-
-    lines
+    vec![
+        section_header("Terraform Actions"),
+        help_line("a", "Approve pending plan"),
+        help_line("r", "Reconcile"),
+        help_line("R", "Replan"),
+        help_line("p", "View plan"),
+        help_line("O", "View outputs"),
+        help_line("y / Y", "View JSON / YAML"),
+        help_line("e", "View events"),
+        help_line("s / u", "Suspend / Resume"),
+        help_line("F", "Force unlock state"),
+        help_line("L", "Stream runner logs"),
+        help_line("x", "Break the glass (tfctl)"),
+        help_line("d", "Delete resource"),
+        Line::from(""),
+        section_header("Kustomization Actions"),
+        help_line("r", "Reconcile"),
+        help_line("y / Y", "View JSON / YAML"),
+        help_line("e", "View events"),
+        help_line("s / u", "Suspend / Resume"),
+        Line::from(""),
+        section_header("Runner Actions"),
+        help_line("e", "View events"),
+        help_line("T", "Jump to Terraform detail"),
+        help_line("d", "Kill runner pod"),
+        Line::from(""),
+        section_header("Plan / Log / JSON Viewer"),
+        help_line("g / G", "Top / bottom (G=follow)"),
+        help_line("h / l", "Scroll left / right"),
+        help_line("/", "Search in content"),
+        help_line("n / N", "Next / prev match"),
+        help_line("w", "Toggle line wrap"),
+        help_line("S", "Save to file"),
+        help_line("Tab", "Switch container (logs)"),
+    ]
 }
 
 fn section_header(title: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(
-            format!(" {} ", title),
+            format!(" {title} "),
             Style::default()
                 .fg(Color::Rgb(140, 200, 255))
                 .add_modifier(Modifier::BOLD),

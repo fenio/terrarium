@@ -34,7 +34,7 @@ pub fn render(
             "Kustomization: ",
             Style::default().add_modifier(Modifier::BOLD),
         ),
-        Span::raw(format!("{}/{}", ns, name)),
+        Span::raw(format!("{ns}/{name}")),
     ]))
     .block(Block::default().borders(Borders::BOTTOM));
     f.render_widget(title, chunks[0]);
@@ -79,8 +79,8 @@ fn render_spec(
         })
         .unwrap_or_else(|| "-".to_string());
 
-    let suspended_text = format!("{}", suspended);
-    let prune_text = format!("{}", prune);
+    let suspended_text = format!("{suspended}");
+    let prune_text = format!("{prune}");
     let label_style = Style::default().fg(Color::DarkGray);
     let lines = vec![
         source_summary::source_line(
@@ -130,7 +130,7 @@ fn render_status(f: &mut Frame, area: Rect, ks: &Kustomization) {
         .map(|i| i.entries.len())
         .unwrap_or(0);
 
-    let inventory_text = format!("{} resources", inventory_count);
+    let inventory_text = format!("{inventory_count} resources");
     let lines = vec![
         Line::from(vec![
             Span::styled("Ready:         ", Style::default().fg(Color::DarkGray)),
@@ -159,7 +159,7 @@ fn render_conditions(f: &mut Frame, area: Rect, ks: &Kustomization) {
                     theme::STATUS_NOT_READY
                 };
                 Line::from(vec![
-                    Span::styled(format!(" {} ", icon), style),
+                    Span::styled(format!(" {icon} "), style),
                     Span::styled(
                         format!("{:<15}", c.type_),
                         Style::default().add_modifier(Modifier::BOLD),

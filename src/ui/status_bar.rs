@@ -76,7 +76,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
                     FlashKind::Success => theme::FLASH_SUCCESS,
                     FlashKind::Error => theme::FLASH_ERROR,
                 };
-                vec![Span::styled(format!(" {} ", msg), style.bg(theme::STATUS_BAR_BG))]
+                vec![Span::styled(format!(" {msg} "), style.bg(theme::STATUS_BAR_BG))]
             } else {
                 build_help_spans(state)
             }
@@ -167,7 +167,7 @@ fn build_help_spans(state: &AppState) -> Vec<Span<'static>> {
                 Span::styled("h/l", k), Span::styled(":hscroll ", t),
                 Span::styled("/", k), Span::styled(":search ", t),
                 Span::styled("n/N", k), Span::styled(":next/prev ", t),
-                Span::styled("w", k), Span::styled(format!(":{} ", wrap_label), t),
+                Span::styled("w", k), Span::styled(format!(":{wrap_label} "), t),
                 Span::styled("S", k), Span::styled(":save", t),
             ]
         },
@@ -179,7 +179,7 @@ fn build_help_spans(state: &AppState) -> Vec<Span<'static>> {
                 Span::styled("j/k", k), Span::styled(":scroll ", t),
                 Span::styled("G", k), Span::styled(":follow ", t),
                 Span::styled("/", k), Span::styled(":search ", t),
-                Span::styled("w", k), Span::styled(format!(":{} ", wrap_label), t),
+                Span::styled("w", k), Span::styled(format!(":{wrap_label} "), t),
                 Span::styled("S", k), Span::styled(":save ", t),
             ];
             if containers.len() > 1 {

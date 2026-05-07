@@ -47,7 +47,7 @@ pub async fn run_tf_watcher(
         .await;
 
     if let Err(e) = &result {
-        let msg = format!("{}", e);
+        let msg = format!("{e}");
         if msg.contains("404") || msg.contains("not found") || msg.contains("the server could not find the requested resource") {
             let _ = tx.send(Action::TerraformCrdMissing);
             return Ok(());
@@ -74,7 +74,7 @@ pub async fn run_ks_watcher(
         .await;
 
     if let Err(e) = &result {
-        let msg = format!("{}", e);
+        let msg = format!("{e}");
         if msg.contains("404") || msg.contains("not found") || msg.contains("the server could not find the requested resource") {
             let _ = tx.send(Action::KustomizationCrdMissing);
             return Ok(());
@@ -101,7 +101,7 @@ pub async fn run_gitrepo_watcher(
         .await;
 
     if let Err(e) = &result {
-        let msg = format!("{}", e);
+        let msg = format!("{e}");
         if msg.contains("404") || msg.contains("not found") || msg.contains("the server could not find the requested resource") {
             let _ = tx.send(Action::GitRepoCrdMissing);
             return Ok(());

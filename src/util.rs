@@ -6,13 +6,13 @@ pub fn format_duration(total_secs: i64) -> String {
     let minutes = total_secs / 60;
 
     if days > 0 {
-        format!("{}d", days)
+        format!("{days}d")
     } else if hours > 0 {
-        format!("{}h", hours)
+        format!("{hours}h")
     } else if minutes > 0 {
-        format!("{}m", minutes)
+        format!("{minutes}m")
     } else {
-        format!("{}s", total_secs)
+        format!("{total_secs}s")
     }
 }
 

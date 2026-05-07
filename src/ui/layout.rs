@@ -165,7 +165,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         // Render logo on the left
         let logo_area = Rect { width: logo_width.min(area.width), ..row_area };
         f.render_widget(
-            Paragraph::new(Span::styled(format!(" {}", logo_line), logo_style)),
+            Paragraph::new(Span::styled(format!(" {logo_line}"), logo_style)),
             logo_area,
         );
 
@@ -178,7 +178,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
                 let ver_area = Rect { x: ver_x, width: ver_width, ..row_area };
                 f.render_widget(
                     Paragraph::new(Span::styled(
-                        format!(" v{}", version),
+                        format!(" v{version}"),
                         Style::default().fg(Color::Rgb(80, 90, 120)).bg(theme::HEADER_BAR_BG),
                     )),
                     ver_area,
@@ -201,14 +201,14 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
                 if secs < 5 {
                     ("live".to_string(), Color::Rgb(80, 220, 100))
                 } else if secs < 30 {
-                    (format!("{}s ago", secs), Color::Rgb(240, 200, 60))
+                    (format!("{secs}s ago"), Color::Rgb(240, 200, 60))
                 } else {
-                    (format!("{}s ago", secs), Color::Rgb(240, 80, 80))
+                    (format!("{secs}s ago"), Color::Rgb(240, 80, 80))
                 }
             }
             None => {
                 let dots = ".".repeat((state.tick_count % 3) + 1);
-                (format!("connecting{}", dots), Color::Rgb(140, 145, 165))
+                (format!("connecting{dots}"), Color::Rgb(140, 145, 165))
             }
         };
 
@@ -223,7 +223,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         let ns_area = Rect { x: info_x, y: area.y + 1, width: info_width, height: 1 };
         f.render_widget(Paragraph::new(Line::from(vec![
             Span::styled(" ns: ", theme::HEADER_NS_LABEL),
-            Span::styled(format!(" {} ", ns_text), theme::HEADER_NS),
+            Span::styled(format!(" {ns_text} "), theme::HEADER_NS),
         ])), ns_area);
 
         // Info row 2: freshness
@@ -236,9 +236,10 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
 
     // -- Row 3: Navigation tabs --
     // (number, label, count_or_none, failures, crd_missing)
+    type NavItem = (usize, String, Option<usize>, Option<usize>, bool);
     let tf_count_opt = if state.tf_synced { Some(tf_count) } else { None };
     let ks_count_opt = if state.ks_synced { Some(ks_count) } else { None };
-    let mut nav_items: Vec<(usize, String, Option<usize>, Option<usize>, bool)> = vec![
+    let mut nav_items: Vec<NavItem> = vec![
         (1, "Controller".to_string(),      None,             None,              false),
         (2, "Terraform".to_string(),       tf_count_opt,     if tf_failures > 0 { Some(tf_failures) } else { None }, state.tf_crd_missing),
         (3, "Kustomizations".to_string(),  ks_count_opt,     if ks_failures > 0 { Some(ks_failures) } else { None }, state.ks_crd_missing),
@@ -266,7 +267,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
                 .fg(Color::Rgb(80, 80, 100))
                 .bg(theme::HEADER_BAR_BG)
         };
-        nav_spans.push(Span::styled(format!(" {} ", num), num_style));
+        nav_spans.push(Span::styled(format!(" {num} "), num_style));
 
         let label_style = if is_active {
             Style::default()
@@ -279,23 +280,23 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
 
         if *crd_missing {
             nav_spans.push(Span::styled(
-                format!("{:<15}", label),
+                format!("{label:<15}"),
                 Style::default().fg(Color::Rgb(180, 150, 50)).bg(theme::HEADER_BAR_BG),
             ));
             nav_spans.push(Span::styled("no CRD  ", Style::default().fg(Color::Rgb(240, 200, 60)).bg(theme::HEADER_BAR_BG)));
         } else if *num == 1 {
-            nav_spans.push(Span::styled(format!("{:<15}        ", label), label_style));
+            nav_spans.push(Span::styled(format!("{label:<15}        "), label_style));
         } else {
-            nav_spans.push(Span::styled(format!("{:<15}", label), label_style));
+            nav_spans.push(Span::styled(format!("{label:<15}"), label_style));
             match count {
-                Some(c) => nav_spans.push(Span::styled(format!("{:>3} ", c), dim)),
+                Some(c) => nav_spans.push(Span::styled(format!("{c:>3} "), dim)),
                 None => {
                     let dots = ".".repeat((state.tick_count % 3) + 1);
-                    nav_spans.push(Span::styled(format!("{:>4}", dots), dim));
+                    nav_spans.push(Span::styled(format!("{dots:>4}"), dim));
                 }
             }
             if let Some(fails) = failures {
-                nav_spans.push(Span::styled(format!("{:>3}!", fails), fail_style));
+                nav_spans.push(Span::styled(format!("{fails:>3}!"), fail_style));
             } else {
                 nav_spans.push(Span::styled("    ", hdr_bg));
             }
@@ -317,7 +318,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         } => {
             let mut spans: Vec<Span> = vec![
                 Span::styled(
-                    format!(" {}/{} ", namespace, pod_name),
+                    format!(" {namespace}/{pod_name} "),
                     Style::default()
                         .fg(Color::Rgb(140, 200, 255))
                         .bg(theme::HEADER_BAR_BG)
@@ -336,7 +337,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
                 }
                 if i == *active_container {
                     spans.push(Span::styled(
-                        format!(" {} ", name),
+                        format!(" {name} "),
                         Style::default()
                             .fg(Color::Rgb(30, 30, 40))
                             .bg(Color::Rgb(100, 220, 140))
@@ -344,7 +345,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
                     ));
                 } else {
                     spans.push(Span::styled(
-                        format!(" {} ", name),
+                        format!(" {name} "),
                         Style::default()
                             .fg(Color::Rgb(140, 140, 160))
                             .bg(Color::Rgb(40, 42, 54)),
@@ -395,7 +396,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
             }
             let sort_label = state.sort_column.label();
             info_spans.push(Span::styled(
-                format!("sort:{}", sort_label),
+                format!("sort:{sort_label}"),
                 dim,
             ));
             f.render_widget(Paragraph::new(Line::from(info_spans)), r4_area);
@@ -497,18 +498,16 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
                 } else {
                     None
                 };
-                terraform_detail::render(
-                    f,
-                    area,
-                    &tf,
+                let ctx = terraform_detail::RenderCtx {
                     runner_logs,
                     cached_outputs,
-                    &state.config.detail_fields,
-                    source_gr.as_deref(),
-                    state.gr_synced,
-                );
+                    detail_fields: &state.config.detail_fields,
+                    source_gr: source_gr.as_deref(),
+                    gr_synced: state.gr_synced,
+                };
+                terraform_detail::render(f, area, &tf, &ctx);
             } else {
-                let para = Paragraph::new(format!("Resource {}/{} not found", namespace, name))
+                let para = Paragraph::new(format!("Resource {namespace}/{name} not found"))
                     .style(Style::default().fg(Color::Red));
                 f.render_widget(para, area);
             }
@@ -543,7 +542,7 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
                 };
                 kustomization_detail::render(f, area, &ks, source_gr.as_deref(), state.gr_synced);
             } else {
-                let para = Paragraph::new(format!("Resource {}/{} not found", namespace, name))
+                let para = Paragraph::new(format!("Resource {namespace}/{name} not found"))
                     .style(Style::default().fg(Color::Red));
                 f.render_widget(para, area);
             }
