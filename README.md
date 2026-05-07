@@ -114,6 +114,7 @@ These work in both the Terraform list and detail views:
 | `y` / `Y` | View the full resource as JSON / YAML |
 | `e` | View Kubernetes events |
 | `c` | View full conditions (scrollable, no panel-height clipping) |
+| `S` | Open the configured-shortcuts popup (see [Custom Shortcuts](#custom-shortcuts)) |
 | `s` / `u` | Suspend / Resume |
 | `F` | Force unlock state (with confirmation) |
 | `x` | Break the glass — drop into `tfctl` shell |
@@ -263,8 +264,19 @@ substitute as empty strings.
 Shortcuts that use `{output.…}` lazily fetch the outputs secret when first
 pressed, so they work from the list view without opening the detail view first.
 
-Shortcuts appear in the status bar when viewing Terraform resources. Multiple
-shortcuts can be defined with different keys.
+**Activating a shortcut:**
+
+- Press the configured `key` directly to open the URL — the keybind from
+  `key = "b"` opens that shortcut from any TF list, custom tab, or TF detail
+  view.
+- Or press `S` to open a popup listing every configured shortcut with the
+  resolved URL alongside it. Navigate with `j/k`, press `Enter` to open the
+  highlighted entry, or press the entry's own key for direct activation.
+  `Esc` closes the popup.
+
+Submenu shortcuts (nesting one shortcut under another via a `children` array
+of further `[[shortcuts]]`) are accepted by the config parser but the popup
+doesn't drill into them yet — that's planned for a later release.
 
 See [examples/shortcuts.toml](examples/shortcuts.toml) for examples including
 Grafana, Vault, and cloud console links.

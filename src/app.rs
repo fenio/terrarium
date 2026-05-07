@@ -124,6 +124,23 @@ impl App {
 
                 let action = handle_key(key, self.state.current_view(), &self.state.input_mode);
 
+                // While the Shortcuts popup is open, route any unhandled
+                // character key (handle_key already absorbs j/k/Enter/Esc)
+                // through the configured shortcut table for direct
+                // activation: pressing 'b' in the popup opens Grafana.
+                if matches!(action, Action::None)
+                    && self.state.input_mode == InputMode::ShortcutsPopup
+                    && let KeyCode::Char(c) = key.code
+                    && let Some((ns, nm)) = self.state.shortcuts_popup_resource.clone()
+                    && let Some(idx) = self.state.config.shortcuts.iter().position(|s| s.key == c)
+                {
+                    return Some(Action::OpenShortcut {
+                        namespace: ns,
+                        name: nm,
+                        shortcut_idx: idx,
+                    });
+                }
+
                 // Resolve context-dependent actions
                 match (&action, self.state.current_view()) {
                     (Action::None, ViewState::List(TabKind::Terraform))
@@ -284,6 +301,16 @@ impl App {
                 namespace: ns,
                 name,
             }),
+            KeyCode::Char('S') => {
+                if self.state.config.shortcuts.is_empty() {
+                    None
+                } else {
+                    Some(Action::OpenShortcutsPopup {
+                        namespace: ns,
+                        name,
+                    })
+                }
+            }
             KeyCode::Char(c) => self
                 .state
                 .config
@@ -1006,6 +1033,39 @@ impl App {
                 self.state.input_mode = InputMode::Normal;
             }
 
+            // Shortcuts popup
+            Action::OpenShortcutsPopup { namespace, name } => {
+                self.state.input_mode = InputMode::ShortcutsPopup;
+                self.state.shortcuts_popup_resource = Some((namespace, name));
+                self.state.shortcuts_popup_selected = 0;
+            }
+            Action::ShortcutsPopupNext => {
+                let max = self.state.config.shortcuts.len().saturating_sub(1);
+                if self.state.shortcuts_popup_selected < max {
+                    self.state.shortcuts_popup_selected += 1;
+                }
+            }
+            Action::ShortcutsPopupPrev => {
+                self.state.shortcuts_popup_selected =
+                    self.state.shortcuts_popup_selected.saturating_sub(1);
+            }
+            Action::ShortcutsPopupSelect => {
+                if let Some((ns, nm)) = self.state.shortcuts_popup_resource.clone() {
+                    let idx = self.state.shortcuts_popup_selected;
+                    if idx < self.state.config.shortcuts.len() {
+                        self.state.input_mode = InputMode::Normal;
+                        self.state.shortcuts_popup_resource = None;
+                        // Reuse the existing helper so output-template
+                        // fetching stays consistent with direct activation.
+                        self.open_shortcut(&ns, &nm, idx);
+                    }
+                }
+            }
+            Action::ShortcutsPopupCancel => {
+                self.state.input_mode = InputMode::Normal;
+                self.state.shortcuts_popup_resource = None;
+            }
+
             // Viewer search
             Action::ViewerSearchStart => {
                 self.state.input_mode = InputMode::ViewerSearch;
@@ -1723,7 +1783,21 @@ impl App {
             None => return,
         };
 
-        let needs_outputs = shortcut.url.contains("{output.");
+        // Submenu branches are config-allowed but the popup doesn't drill
+        // into them yet — flash and bail rather than panic.
+        let Some(url_template) = shortcut.url.clone() else {
+            self.state.flash_message = Some((
+                format!(
+                    "'{}' is a submenu (drill-in not yet supported)",
+                    shortcut.label
+                ),
+                Instant::now(),
+                FlashKind::Error,
+            ));
+            return;
+        };
+
+        let needs_outputs = url_template.contains("{output.");
         if needs_outputs {
             let cached_match = self
                 .state
@@ -1772,7 +1846,7 @@ impl App {
         }
 
         // Resolve template variables
-        let mut url = shortcut.url.clone();
+        let mut url = url_template.clone();
         url = url.replace("{context}", &self.state.context_name);
         url = url.replace("{namespace}", namespace);
         url = url.replace("{name}", name);

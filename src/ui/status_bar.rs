@@ -107,7 +107,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
             ]);
             f.render_widget(Paragraph::new(line), rows[0]);
         }
-        InputMode::NamespacePicker => {
+        InputMode::NamespacePicker | InputMode::ShortcutsPopup => {
             let line = Line::from(vec![
                 Span::styled(" j/k", theme::STATUS_BAR_KEY),
                 Span::styled(":nav ", theme::STATUS_BAR_TEXT),
@@ -326,7 +326,8 @@ fn build_meta_line(state: &AppState) -> Vec<Span<'static>> {
         spans.push(Span::styled(label, t));
     }
 
-    // Configured shortcuts (Terraform views only).
+    // Configured shortcuts roll up under one S:shortcuts hint — the
+    // popup (opened with S) shows the full list with resolved URLs.
     let is_tf_view = matches!(
         state.current_view(),
         ViewState::List(TabKind::Terraform)
@@ -339,13 +340,8 @@ fn build_meta_line(state: &AppState) -> Vec<Span<'static>> {
         } else {
             spans.push(Span::styled(" │ ", s));
         }
-        for (i, shortcut) in state.config.shortcuts.iter().enumerate() {
-            if i > 0 {
-                spans.push(Span::styled(" ", t));
-            }
-            spans.push(Span::styled(shortcut.key.to_string(), k));
-            spans.push(Span::styled(format!(":{}", shortcut.label), t));
-        }
+        spans.push(Span::styled("S", k));
+        spans.push(Span::styled(":shortcuts", t));
     }
 
     // Help is always available outside viewers.

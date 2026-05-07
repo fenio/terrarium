@@ -59,6 +59,21 @@ pub fn handle_key(key: KeyEvent, view: &ViewState, input_mode: &InputMode) -> Ac
         };
     }
 
+    // Shortcuts popup. Esc/q closes; j/k+Enter selects the highlighted
+    // entry. Any character key is forwarded as a `Char` so app.rs can
+    // match it against the configured per-shortcut keys for direct
+    // activation (press 'b' to open Grafana, etc.).
+    if matches!(input_mode, InputMode::ShortcutsPopup) {
+        return match key.code {
+            KeyCode::Char('j') | KeyCode::Down => Action::ShortcutsPopupNext,
+            KeyCode::Char('k') | KeyCode::Up => Action::ShortcutsPopupPrev,
+            KeyCode::Enter => Action::ShortcutsPopupSelect,
+            KeyCode::Char('q') | KeyCode::Esc => Action::ShortcutsPopupCancel,
+            // Other chars resolved to direct shortcut activation in app.rs.
+            _ => Action::None,
+        };
+    }
+
     // Normal mode
     match view {
         ViewState::List(_) => handle_list_key(key),
@@ -112,6 +127,9 @@ fn handle_list_key(key: KeyEvent) -> Action {
         KeyCode::Char(' ') => Action::ToggleSelect,
         KeyCode::Char('m') => Action::ToggleMouse,
         KeyCode::Char('M') => Action::ToggleMetrics,
+        // 'S' opens the Shortcuts popup; resolved against the selected
+        // resource in app.rs (so it's a no-op when nothing is selected).
+        KeyCode::Char('S') => Action::None,
         // Context-dependent actions resolved in app.rs
         KeyCode::Char('a')
         | KeyCode::Char('r')
@@ -145,7 +163,8 @@ fn handle_detail_key(key: KeyEvent) -> Action {
         KeyCode::Char('3') => Action::GoToTab(2),
         KeyCode::Char('4') => Action::GoToTab(3),
         KeyCode::Char('5') => Action::GoToTab(4),
-        // Context-dependent actions resolved in app.rs
+        // Context-dependent actions resolved in app.rs (incl. 'S' for
+        // the Shortcuts popup, which needs the active resource).
         KeyCode::Char('a')
         | KeyCode::Char('r')
         | KeyCode::Char('R')
@@ -158,6 +177,7 @@ fn handle_detail_key(key: KeyEvent) -> Action {
         | KeyCode::Char('e')
         | KeyCode::Char('c')
         | KeyCode::Char('O')
+        | KeyCode::Char('S')
         | KeyCode::Char('x')
         | KeyCode::Char('L') => Action::None,
         _ => Action::None,

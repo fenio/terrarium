@@ -90,6 +90,7 @@ pub enum InputMode {
     Confirm,
     Help,
     NamespacePicker,
+    ShortcutsPopup,
 }
 
 pub struct DialogState {
@@ -219,6 +220,12 @@ pub struct AppState {
     pub ns_picker_items: Vec<String>,
     pub ns_picker_selected: usize,
 
+    // Shortcuts popup (S key)
+    /// (namespace, name) of the resource the popup was opened against.
+    /// All shortcut URLs render with this resource's placeholders resolved.
+    pub shortcuts_popup_resource: Option<(String, String)>,
+    pub shortcuts_popup_selected: usize,
+
     // Log streaming
     pub log_stream_handle: Option<tokio::task::JoinHandle<()>>,
     /// When true, log viewer auto-scrolls to bottom on new chunks.
@@ -319,6 +326,8 @@ impl AppState {
             connection_error: None,
             ns_picker_items: Vec::new(),
             ns_picker_selected: 0,
+            shortcuts_popup_resource: None,
+            shortcuts_popup_selected: 0,
             log_stream_handle: None,
             log_auto_follow: true,
             pending_dialog: None,

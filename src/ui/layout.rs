@@ -11,8 +11,8 @@ use crate::k8s::terraform::TerraformSourceRefKind;
 use crate::state::store::{AppState, InputMode, TabKind, ViewState};
 use crate::ui::{
     controller_dashboard, custom_tab, dialog, help, kustomization_detail, kustomization_list,
-    namespace_picker, resource_list, runner_list, source_summary, status_bar, terraform_detail,
-    theme,
+    namespace_picker, resource_list, runner_list, shortcuts_popup, source_summary, status_bar,
+    terraform_detail, theme,
 };
 
 pub fn render(f: &mut Frame, state: &mut AppState) {
@@ -45,6 +45,10 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
 
     if state.input_mode == InputMode::NamespacePicker {
         namespace_picker::render(f, state);
+    }
+
+    if state.input_mode == InputMode::ShortcutsPopup {
+        shortcuts_popup::render(f, state);
     }
 
     // Connection / CRD error overlay

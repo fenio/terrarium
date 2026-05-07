@@ -68,6 +68,16 @@ pub enum Action {
     NamespacePickerSelect,
     NamespacePickerCancel,
 
+    // Shortcuts popup (overlays current view, scoped to a resource)
+    OpenShortcutsPopup {
+        namespace: String,
+        name: String,
+    },
+    ShortcutsPopupNext,
+    ShortcutsPopupPrev,
+    ShortcutsPopupSelect,
+    ShortcutsPopupCancel,
+
     // Bulk selection
     ToggleSelect,
     #[allow(dead_code)]
