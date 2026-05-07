@@ -15,10 +15,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --check
 
       - name: Build
         run: cargo build --verbose
