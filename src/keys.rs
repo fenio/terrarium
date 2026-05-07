@@ -180,3 +180,75 @@ fn handle_viewer_key(key: KeyEvent) -> Action {
         _ => Action::None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyEventKind, KeyEventState};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    #[test]
+    fn detail_key_maps_digits_to_go_to_tab() {
+        for (ch, expect) in [('1', 0_usize), ('2', 1), ('3', 2), ('4', 3), ('5', 4)] {
+            match handle_detail_key(key(KeyCode::Char(ch))) {
+                Action::GoToTab(idx) => assert_eq!(idx, expect, "digit {ch}"),
+                other => panic!("expected GoToTab({expect}) for '{ch}', got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn detail_key_maps_tab_keys_to_tab_nav() {
+        assert!(matches!(handle_detail_key(key(KeyCode::Tab)), Action::NextTab));
+        assert!(matches!(
+            handle_detail_key(key(KeyCode::BackTab)),
+            Action::PrevTab
+        ));
+    }
+
+    #[test]
+    fn detail_key_returns_none_for_context_resolved_chars() {
+        // These are routed to TF/KS resolvers in app.rs — handle_detail_key
+        // must NOT swallow them, so they fall through to context resolution.
+        for ch in [
+            'a', 'r', 'R', 's', 'u', 'p', 'F', 'y', 'Y', 'e', 'c', 'O', 'x', 'L',
+        ] {
+            assert!(
+                matches!(handle_detail_key(key(KeyCode::Char(ch))), Action::None),
+                "context-resolved key '{ch}' should return None"
+            );
+        }
+    }
+
+    #[test]
+    fn viewer_key_maps_digits_to_tab_jumps() {
+        for (ch, expect) in [('1', 0_usize), ('2', 1), ('3', 2), ('4', 3), ('5', 4)] {
+            match handle_viewer_key(key(KeyCode::Char(ch))) {
+                Action::GoToTab(idx) => assert_eq!(idx, expect, "digit {ch}"),
+                other => panic!("expected GoToTab({expect}) for '{ch}', got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn viewer_key_keeps_tab_keys_for_log_container_cycling() {
+        // Tab/BackTab are taken in viewers — we explicitly didn't rebind
+        // them to tab nav because LogViewer needs them for container cycle.
+        assert!(matches!(
+            handle_viewer_key(key(KeyCode::Tab)),
+            Action::NextContainer
+        ));
+        assert!(matches!(
+            handle_viewer_key(key(KeyCode::BackTab)),
+            Action::PrevContainer
+        ));
+    }
+}

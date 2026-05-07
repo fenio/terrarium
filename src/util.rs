@@ -131,6 +131,45 @@ pub fn parse_k8s_duration(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
+
+    fn make_condition(type_: &str, status: &str, reason: &str, message: &str) -> Condition {
+        Condition {
+            last_transition_time: Time(jiff::Timestamp::UNIX_EPOCH),
+            message: message.into(),
+            observed_generation: None,
+            reason: reason.into(),
+            status: status.into(),
+            type_: type_.into(),
+        }
+    }
+
+    #[test]
+    fn format_conditions_viewer_picks_icons_per_status() {
+        let conds = vec![
+            make_condition("Ready", "True", "OK", "ok"),
+            make_condition("Apply", "False", "Failed", "boom"),
+            make_condition("Plan", "Unknown", "InProgress", "planning"),
+        ];
+        let out = format_conditions_viewer("Terraform", "ns", "name", &conds);
+        assert!(out.starts_with("Terraform: ns/name\n\n"));
+        assert!(out.contains("✓ Ready"), "True should use ✓: {out}");
+        assert!(out.contains("✗ Apply"), "False should use ✗: {out}");
+        assert!(out.contains("⋯ Plan"), "Unknown should use ⋯: {out}");
+    }
+
+    #[test]
+    fn format_conditions_viewer_strips_rpc_framing_in_message_body() {
+        let conds = vec![make_condition(
+            "Ready",
+            "False",
+            "TFExecPlanFailed",
+            "error running Plan: rpc error: code = Internal desc = exit status 1\n\nError: boom",
+        )];
+        let out = format_conditions_viewer("Terraform", "ns", "name", &conds);
+        assert!(!out.contains("rpc error"), "framing should be stripped: {out}");
+        assert!(out.contains("Error: boom"), "humanized body should appear: {out}");
+    }
 
     #[test]
     fn humanize_strips_plan_rpc_framing() {

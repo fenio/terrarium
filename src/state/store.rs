@@ -465,3 +465,96 @@ impl AppState {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::k8s::watcher::{create_gitrepo_store, create_ks_store, create_tf_store};
+
+    fn make_state() -> AppState {
+        let (tf, _) = create_tf_store();
+        let (ks, _) = create_ks_store();
+        let (gr, _) = create_gitrepo_store();
+        AppState::new(tf, ks, gr, "test-ctx".to_string(), Config::default())
+    }
+
+    #[test]
+    fn new_creates_one_view_stack_per_tab_each_rooted_in_list() {
+        let state = make_state();
+        assert_eq!(state.view_stacks.len(), state.tab_count());
+        for (i, stack) in state.view_stacks.iter().enumerate() {
+            assert_eq!(stack.len(), 1, "tab {i} stack should have only its root");
+            let expected = tab_from_index(i, &state.config).unwrap();
+            match &stack[0] {
+                ViewState::List(t) => assert_eq!(*t, expected, "tab {i} root mismatch"),
+                other => panic!("tab {i} root should be List, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn next_and_prev_tab_change_active_without_touching_stacks() {
+        let mut state = make_state();
+        state
+            .current_view_stack_mut()
+            .push(ViewState::JsonViewer { content: "x".into() });
+        let depths_before: Vec<usize> = state.view_stacks.iter().map(Vec::len).collect();
+        let active_before = state.active_tab.clone();
+
+        state.next_tab();
+        assert_ne!(state.active_tab, active_before, "next_tab must change active");
+        let depths_after: Vec<usize> = state.view_stacks.iter().map(Vec::len).collect();
+        assert_eq!(depths_before, depths_after, "tab nav must not mutate stacks");
+
+        state.prev_tab();
+        assert_eq!(state.active_tab, active_before, "prev_tab should land back");
+    }
+
+    #[test]
+    fn pushed_view_survives_round_trip_across_tabs() {
+        let mut state = make_state();
+        state
+            .current_view_stack_mut()
+            .push(ViewState::JsonViewer { content: "preserved".into() });
+        match state.current_view() {
+            ViewState::JsonViewer { content } => assert_eq!(content, "preserved"),
+            other => panic!("expected JsonViewer at start, got {other:?}"),
+        }
+
+        // Hop to another tab and back.
+        state.go_to_tab(1);
+        assert!(matches!(
+            state.current_view(),
+            ViewState::List(TabKind::Terraform)
+        ));
+        state.go_to_tab(0);
+        match state.current_view() {
+            ViewState::JsonViewer { content } => assert_eq!(content, "preserved"),
+            other => panic!("view should be restored, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log_viewer_mut_finds_log_viewer_on_inactive_tab() {
+        let mut state = make_state();
+        let runners_idx = TabKind::Runners.index(state.tab_count());
+        state.view_stacks[runners_idx].push(ViewState::LogViewer {
+            namespace: "ns".into(),
+            pod_name: "pod".into(),
+            containers: vec!["c".into()],
+            active_container: 0,
+            content: String::new(),
+        });
+        // Active tab is still Controller (unchanged).
+        assert_eq!(state.active_tab, TabKind::Controller);
+        assert!(matches!(
+            state.current_view(),
+            ViewState::List(TabKind::Controller)
+        ));
+        // …but the streamed-into LogViewer is still findable for chunk routing.
+        assert!(matches!(
+            state.log_viewer_mut(),
+            Some(ViewState::LogViewer { .. })
+        ));
+    }
+}

@@ -97,7 +97,7 @@ pub fn source_line<'a>(
 /// Shorten a Flux artifact revision like `8.22.0@sha1:50e15fa09734...`
 /// to `8.22.0@50e15fa`. Passes through values that don't match the
 /// `<tag>@<algo>:<hash>` shape.
-fn short_revision(full: &str) -> String {
+pub(crate) fn short_revision(full: &str) -> String {
     if let Some((tag, rest)) = full.split_once('@') {
         let hash = rest.split(':').next_back().unwrap_or(rest);
         let short_len = hash.len().min(7);
@@ -108,5 +108,41 @@ fn short_revision(full: &str) -> String {
         format!("{}@{}", tag, &hash[..end])
     } else {
         full.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncates_sha_after_at() {
+        assert_eq!(
+            short_revision("8.19.0@sha1:bbb7041bcaceb908"),
+            "8.19.0@bbb7041"
+        );
+    }
+
+    #[test]
+    fn passes_through_without_at() {
+        assert_eq!(short_revision("just-a-tag"), "just-a-tag");
+    }
+
+    #[test]
+    fn handles_short_hash_without_truncation() {
+        assert_eq!(short_revision("8.19.0@abc"), "8.19.0@abc");
+    }
+
+    #[test]
+    fn does_not_split_multibyte_chars_when_truncating() {
+        // 7 bytes of "héllo" lands mid char-boundary; trimmer must back off.
+        // ("héllo" is 6 bytes, so pad it to 8+ with multibyte chars.)
+        let rev = short_revision("v1@héllo🌱world");
+        assert!(
+            rev.starts_with("v1@"),
+            "tag prefix must survive: {rev}"
+        );
+        // Body must still be valid UTF-8 (just compiling/asserting len works).
+        assert!(rev.is_char_boundary(rev.len()));
     }
 }
