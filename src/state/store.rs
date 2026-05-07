@@ -252,6 +252,11 @@ pub struct AppState {
     pub mouse_enabled: bool,
     pub tick_count: usize,
 
+    /// Whether `tfctl` is on $PATH (probed once at startup).
+    /// Replan and Break-the-Glass shell out to tfctl, so we surface a
+    /// warning when it's missing rather than failing silently at use.
+    pub tfctl_available: bool,
+
     /// Whether the on-demand controller metrics panel is enabled.
     pub metrics_enabled: bool,
     /// Most recent metrics snapshot (None if never fetched or after disable).
@@ -344,6 +349,7 @@ impl AppState {
             body_height: 20,
             mouse_enabled: false,
             tick_count: 0,
+            tfctl_available: false,
             metrics_enabled: false,
             metrics_snapshot: None,
             metrics_prev: PrevCounters::default(),

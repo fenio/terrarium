@@ -76,6 +76,24 @@ async fn main() -> anyhow::Result<()> {
     let mouse_enabled = cli.mouse;
     app_state.mouse_enabled = mouse_enabled;
 
+    // Probe $PATH for tfctl once at startup. Replan and Break-the-Glass
+    // delegate to tfctl, so flag the absence early rather than silently
+    // failing when the user presses 'R' or 'x'.
+    app_state.tfctl_available = std::process::Command::new("tfctl")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !app_state.tfctl_available {
+        app_state.flash_message = Some((
+            "tfctl not found in PATH — Replan (R) and Break-the-Glass (x) will fail".to_string(),
+            std::time::Instant::now(),
+            state::store::FlashKind::Error,
+        ));
+    }
+
     // Init terminal and start the app event loop immediately
     let mut terminal = tui::init(mouse_enabled)?;
 
