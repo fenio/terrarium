@@ -178,6 +178,13 @@ pub enum Action {
         name: String,
         values: std::collections::HashMap<String, String>,
     },
+    // Cached values from an arbitrary Secret (for {secret.X.Y} templates).
+    SecretValuesFetched {
+        namespace: String,
+        secret_name: String,
+        values: std::collections::HashMap<String, String>,
+    },
+    SecretValuesFetchError(String),
     JsonFetched(String),
     JsonFetchError(String),
 

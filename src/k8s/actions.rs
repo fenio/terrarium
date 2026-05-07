@@ -140,6 +140,34 @@ pub async fn fetch_output_values(
     Ok(values)
 }
 
+/// Fetch all data keys from an arbitrary Secret in `ns`. Generic — used
+/// by the shortcut template engine's `{secret.<name>.<key>}` placeholder
+/// so users can reference any cluster-side Secret (e.g. tofu-controller's
+/// `varsFrom` input secret) without baking platform conventions into the
+/// codebase. Values that decode as JSON-quoted strings are unwrapped to
+/// match the convention used by `fetch_output_values`.
+pub async fn fetch_secret_values(
+    client: &kube::Client,
+    ns: &str,
+    secret_name: &str,
+) -> Result<std::collections::HashMap<String, String>> {
+    let api: Api<k8s_openapi::api::core::v1::Secret> = Api::namespaced(client.clone(), ns);
+    let secret = api.get(secret_name).await?;
+
+    let mut values = std::collections::HashMap::new();
+    if let Some(data) = &secret.data {
+        for (key, value) in data {
+            let decoded = String::from_utf8_lossy(&value.0).to_string();
+            if let Ok(serde_json::Value::String(s)) = serde_json::from_str(&decoded) {
+                values.insert(key.clone(), s);
+            } else {
+                values.insert(key.clone(), decoded);
+            }
+        }
+    }
+    Ok(values)
+}
+
 pub async fn delete_terraform(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
     let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
     api.delete(name, &Default::default()).await?;

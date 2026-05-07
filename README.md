@@ -260,6 +260,7 @@ without reading URLs.
 | `{name}` | Resource name |
 | `{output.KEY}` | Value from the Terraform outputs secret |
 | `{output.KEY.subkey...}` | Nested JSON path into a JSON-valued output |
+| `{secret.NAME.KEY}` | Value from any other Secret in the resource's namespace |
 
 For `{output.KEY}`, `KEY` is a top-level entry in the secret written via the
 controller's `spec.writeOutputsToSecret`. If the value is itself a JSON object,
@@ -269,6 +270,13 @@ substitute as empty strings.
 
 Shortcuts that use `{output.…}` lazily fetch the outputs secret when first
 pressed, so they work from the list view without opening the detail view first.
+
+`{secret.NAME.KEY}` reads from any Secret named `NAME` in the resource's
+namespace — useful when a per-cluster URL or identifier lives in an input
+Secret (e.g. tofu-controller's `varsFrom` secret) rather than the outputs
+Secret. Like `{output.…}`, the secret is fetched lazily on first use and
+cached for subsequent activations. Missing secrets and missing keys
+substitute as empty strings.
 
 **Activating a shortcut:**
 

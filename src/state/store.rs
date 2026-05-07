@@ -168,6 +168,11 @@ pub struct AppState {
     /// Cached output values for the detail view: (namespace, name) -> key-value pairs
     pub cached_outputs: Option<((String, String), HashMap<String, String>)>,
 
+    /// Cached values from arbitrary Secrets, keyed by (namespace, secret_name).
+    /// Populated lazily by `{secret.X.Y}` template placeholders so the next
+    /// activation of the same shortcut doesn't refetch.
+    pub cached_secrets: HashMap<(String, String), HashMap<String, String>>,
+
     pub context_name: String,
 
     pub active_tab: TabKind,
@@ -290,6 +295,7 @@ impl AppState {
             runner_logs: HashMap::new(),
             controller_info: ControllerInfo::default(),
             cached_outputs: None,
+            cached_secrets: HashMap::new(),
             context_name,
             active_tab: TabKind::Controller,
             view_stacks,

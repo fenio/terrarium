@@ -1445,6 +1445,22 @@ impl App {
             } => {
                 self.state.cached_outputs = Some(((namespace, name), values));
             }
+            Action::SecretValuesFetched {
+                namespace,
+                secret_name,
+                values,
+            } => {
+                self.state
+                    .cached_secrets
+                    .insert((namespace, secret_name), values);
+            }
+            Action::SecretValuesFetchError(e) => {
+                self.state.flash_message = Some((
+                    format!("Secret error: {e}"),
+                    Instant::now(),
+                    FlashKind::Error,
+                ));
+            }
             Action::EventsFetchError(e) => {
                 self.state.flash_message =
                     Some((format!("Error: {e}"), Instant::now(), FlashKind::Error));
@@ -1845,6 +1861,51 @@ impl App {
             }
         }
 
+        // Same lazy-fetch-and-retry dance for {secret.X.Y} placeholders:
+        // pick the first uncached secret name referenced in the URL, fetch
+        // it, and re-send OpenShortcut. Loop converges once all are cached.
+        if let Some(missing) =
+            first_uncached_secret(&url_template, namespace, &self.state.cached_secrets)
+        {
+            let Some(client) = self.require_client() else {
+                self.state.flash_message = Some((
+                    "K8s client not ready yet".to_string(),
+                    Instant::now(),
+                    FlashKind::Error,
+                ));
+                return;
+            };
+            self.state.flash_message = Some((
+                format!("Loading secret {namespace}/{missing}..."),
+                Instant::now(),
+                FlashKind::Success,
+            ));
+            let tx = self.action_tx.clone();
+            let ns = namespace.to_string();
+            let nm = name.to_string();
+            let secret_name = missing.clone();
+            tokio::spawn(async move {
+                match k8s_actions::fetch_secret_values(&client, &ns, &secret_name).await {
+                    Ok(values) => {
+                        let _ = tx.send(Action::SecretValuesFetched {
+                            namespace: ns.clone(),
+                            secret_name,
+                            values,
+                        });
+                        let _ = tx.send(Action::OpenShortcut {
+                            namespace: ns,
+                            name: nm,
+                            shortcut_idx,
+                        });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Action::SecretValuesFetchError(format!("{e}")));
+                    }
+                }
+            });
+            return;
+        }
+
         // Resolve template variables
         let mut url = url_template.clone();
         url = url.replace("{context}", &self.state.context_name);
@@ -1855,6 +1916,9 @@ impl App {
             if let Some((_, outputs)) = &self.state.cached_outputs {
                 url = resolve_output_placeholders(&url, outputs);
             }
+        }
+        if url.contains("{secret.") {
+            url = resolve_secret_placeholders(&url, namespace, &self.state.cached_secrets);
         }
 
         // Open in browser
@@ -2213,6 +2277,66 @@ fn resolve_output_placeholders(
     result
 }
 
+/// Substitute `{secret.<name>.<key>}` placeholders in a URL. The secret
+/// must already be in the cache (use `first_uncached_secret` first to
+/// trigger lazy fetches). Missing secrets/keys substitute as empty.
+fn resolve_secret_placeholders(
+    url: &str,
+    namespace: &str,
+    cache: &std::collections::HashMap<(String, String), std::collections::HashMap<String, String>>,
+) -> String {
+    let mut result = String::with_capacity(url.len());
+    let mut rest = url;
+    while let Some(start) = rest.find("{secret.") {
+        result.push_str(&rest[..start]);
+        let after = &rest[start + 8..];
+        match after.find('}') {
+            Some(end) => {
+                let path = &after[..end];
+                if let Some((sec_name, key)) = path.split_once('.') {
+                    let value = cache
+                        .get(&(namespace.to_string(), sec_name.to_string()))
+                        .and_then(|m| m.get(key))
+                        .cloned()
+                        .unwrap_or_default();
+                    result.push_str(&value);
+                }
+                rest = &after[end + 1..];
+            }
+            None => {
+                result.push_str(&rest[start..]);
+                return result;
+            }
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
+/// Scan a URL template for `{secret.<name>.<key>}` placeholders and
+/// return the first secret name that isn't cached for `namespace` yet.
+/// Returns `None` once every referenced secret is in the cache.
+fn first_uncached_secret(
+    url: &str,
+    namespace: &str,
+    cache: &std::collections::HashMap<(String, String), std::collections::HashMap<String, String>>,
+) -> Option<String> {
+    let mut rest = url;
+    while let Some(start) = rest.find("{secret.") {
+        let after = &rest[start + 8..];
+        let end = after.find('}')?;
+        let path = &after[..end];
+        if let Some((sec_name, _)) = path.split_once('.') {
+            let key = (namespace.to_string(), sec_name.to_string());
+            if !cache.contains_key(&key) {
+                return Some(sec_name.to_string());
+            }
+        }
+        rest = &after[end + 1..];
+    }
+    None
+}
+
 fn lookup_output_path(outputs: &std::collections::HashMap<String, String>, path: &str) -> String {
     let mut parts = path.split('.');
     let head = match parts.next() {
@@ -2247,7 +2371,7 @@ fn lookup_output_path(outputs: &std::collections::HashMap<String, String>, path:
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_output_placeholders;
+    use super::{first_uncached_secret, resolve_output_placeholders, resolve_secret_placeholders};
     use std::collections::HashMap;
 
     fn outputs(pairs: &[(&str, &str)]) -> HashMap<String, String> {
@@ -2255,6 +2379,62 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    fn secret_cache(
+        ns: &str,
+        secret: &str,
+        pairs: &[(&str, &str)],
+    ) -> HashMap<(String, String), HashMap<String, String>> {
+        let mut cache = HashMap::new();
+        cache.insert((ns.to_string(), secret.to_string()), outputs(pairs));
+        cache
+    }
+
+    #[test]
+    fn secret_placeholder_substitutes_cached_value() {
+        let cache = secret_cache(
+            "ns1",
+            "base-vars",
+            &[("infra_argocd_url", "https://argo-coms-02")],
+        );
+        let out = resolve_secret_placeholders(
+            "{secret.base-vars.infra_argocd_url}/apps?search=600849",
+            "ns1",
+            &cache,
+        );
+        assert_eq!(out, "https://argo-coms-02/apps?search=600849");
+    }
+
+    #[test]
+    fn secret_placeholder_substitutes_empty_when_key_missing() {
+        let cache = secret_cache("ns1", "base-vars", &[("other", "x")]);
+        let out = resolve_secret_placeholders("{secret.base-vars.absent}/foo", "ns1", &cache);
+        assert_eq!(out, "/foo");
+    }
+
+    #[test]
+    fn first_uncached_secret_returns_missing_name() {
+        let cache: HashMap<(String, String), HashMap<String, String>> = HashMap::new();
+        assert_eq!(
+            first_uncached_secret("{secret.base-vars.k}", "ns1", &cache),
+            Some("base-vars".to_string())
+        );
+    }
+
+    #[test]
+    fn first_uncached_secret_skips_cached_entries() {
+        let cache = secret_cache("ns1", "base-vars", &[("k", "v")]);
+        // Only base-vars referenced and it's cached → None.
+        assert_eq!(
+            first_uncached_secret("{secret.base-vars.k}", "ns1", &cache),
+            None
+        );
+        // Different secret name not cached → returns it.
+        assert_eq!(
+            first_uncached_secret("{secret.base-vars.k}/{secret.other.x}", "ns1", &cache),
+            Some("other".to_string())
+        );
     }
 
     #[test]
