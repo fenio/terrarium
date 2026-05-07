@@ -236,7 +236,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         ])), fr_area);
     }
 
-    // -- Row 3: Navigation tabs --
+    // -- Rows 3-4: Browser-tab-style navigation --
     // (number, label, count_or_none, failures, crd_missing)
     type NavItem = (usize, String, Option<usize>, Option<usize>, bool);
     let tf_count_opt = if state.tf_synced { Some(tf_count) } else { None };
@@ -252,12 +252,20 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         nav_items.push((5 + i, ct.name.clone(), count, None, false));
     }
 
-    // Pad nav tabs to start after the logo
     let nav_pad = " ".repeat(logo_width as usize);
-    let mut nav_spans: Vec<Span> = vec![Span::styled(&nav_pad, hdr_bg)];
+    let mut top_spans: Vec<Span> = vec![Span::styled(nav_pad.clone(), hdr_bg)];
+    let mut body_spans: Vec<Span> = vec![Span::styled(nav_pad.clone(), hdr_bg)];
     let total_tabs = state.tab_count();
-    for (num, label, count, failures, crd_missing) in &nav_items {
+    for (i, (num, label, count, failures, crd_missing)) in nav_items.iter().enumerate() {
         let is_active = state.active_tab.index(total_tabs) == *num - 1;
+
+        let border_style = if is_active {
+            theme::BORDER.bg(theme::HEADER_BAR_BG)
+        } else {
+            Style::default()
+                .fg(Color::Rgb(60, 70, 90))
+                .bg(theme::HEADER_BAR_BG)
+        };
 
         let num_style = if is_active {
             Style::default()
@@ -269,7 +277,6 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
                 .fg(Color::Rgb(80, 80, 100))
                 .bg(theme::HEADER_BAR_BG)
         };
-        nav_spans.push(Span::styled(format!(" {num} "), num_style));
 
         let label_style = if is_active {
             Style::default()
@@ -280,129 +287,89 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
             bright
         };
 
+        // Build inner spans for the body row (between the side borders).
+        // Layout per tab: " <num> <label> [count] [fails!]"
+        let mut inner: Vec<Span> = Vec::new();
+        inner.push(Span::styled(format!(" {num} "), num_style));
         if *crd_missing {
-            nav_spans.push(Span::styled(
-                format!("{label:<15}"),
-                Style::default().fg(Color::Rgb(180, 150, 50)).bg(theme::HEADER_BAR_BG),
+            inner.push(Span::styled(format!("{label} "), label_style));
+            inner.push(Span::styled(
+                "no CRD ",
+                Style::default()
+                    .fg(Color::Rgb(240, 200, 60))
+                    .bg(theme::HEADER_BAR_BG),
             ));
-            nav_spans.push(Span::styled("no CRD  ", Style::default().fg(Color::Rgb(240, 200, 60)).bg(theme::HEADER_BAR_BG)));
-        } else if *num == 1 {
-            nav_spans.push(Span::styled(format!("{label:<15}        "), label_style));
         } else {
-            nav_spans.push(Span::styled(format!("{label:<15}"), label_style));
+            inner.push(Span::styled(format!("{label} "), label_style));
             match count {
-                Some(c) => nav_spans.push(Span::styled(format!("{c:>3} "), dim)),
+                Some(c) => inner.push(Span::styled(format!("{c} "), dim)),
+                None if *num == 1 => {} // Controller has no count
                 None => {
                     let dots = ".".repeat((state.tick_count % 3) + 1);
-                    nav_spans.push(Span::styled(format!("{dots:>4}"), dim));
+                    inner.push(Span::styled(format!("{dots} "), dim));
                 }
             }
             if let Some(fails) = failures {
-                nav_spans.push(Span::styled(format!("{fails:>3}!"), fail_style));
-            } else {
-                nav_spans.push(Span::styled("    ", hdr_bg));
+                inner.push(Span::styled(format!("{fails}! "), fail_style));
             }
+        }
+
+        // Total visible width of the inner content (assumes ASCII / single-
+        // width chars, which matches every label/digit/glyph used here).
+        let inner_width: usize = inner.iter().map(|s| s.content.chars().count()).sum();
+
+        // Row 3: ╭───╮  Row 4: │ inner │
+        top_spans.push(Span::styled("╭", border_style));
+        top_spans.push(Span::styled("─".repeat(inner_width), border_style));
+        top_spans.push(Span::styled("╮", border_style));
+
+        body_spans.push(Span::styled("│", border_style));
+        body_spans.extend(inner);
+        body_spans.push(Span::styled("│", border_style));
+
+        // Single-cell gap between tabs (skip after last).
+        if i < nav_items.len() - 1 {
+            top_spans.push(Span::styled(" ", hdr_bg));
+            body_spans.push(Span::styled(" ", hdr_bg));
         }
     }
 
     let r3_area = Rect { y: area.y + 3, height: 1, ..area };
-    f.render_widget(Paragraph::new(Line::from(nav_spans)), r3_area);
-
-    // -- Row 4: filter indicators or container tabs --
+    f.render_widget(Paragraph::new(Line::from(top_spans)), r3_area);
     let r4_area = Rect { y: area.y + 4, height: 1, ..area };
-    match state.current_view() {
-        ViewState::LogViewer {
-            namespace,
-            pod_name,
-            containers,
-            active_container,
-            ..
-        } => {
-            let mut spans: Vec<Span> = vec![
-                Span::styled(
-                    format!(" {namespace}/{pod_name} "),
-                    Style::default()
-                        .fg(Color::Rgb(140, 200, 255))
-                        .bg(theme::HEADER_BAR_BG)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    " Containers: ",
-                    Style::default()
-                        .fg(Color::Rgb(140, 145, 165))
-                        .bg(theme::HEADER_BAR_BG),
-                ),
-            ];
-            for (i, name) in containers.iter().enumerate() {
-                if i > 0 {
-                    spans.push(Span::styled(" ", hdr_bg));
-                }
-                if i == *active_container {
-                    spans.push(Span::styled(
-                        format!(" {name} "),
-                        Style::default()
-                            .fg(Color::Rgb(30, 30, 40))
-                            .bg(Color::Rgb(100, 220, 140))
-                            .add_modifier(Modifier::BOLD),
-                    ));
-                } else {
-                    spans.push(Span::styled(
-                        format!(" {name} "),
-                        Style::default()
-                            .fg(Color::Rgb(140, 140, 160))
-                            .bg(Color::Rgb(40, 42, 54)),
-                    ));
-                }
-            }
-            f.render_widget(Paragraph::new(Line::from(spans)), r4_area);
-        }
-        _ => {
-            let mut info_spans: Vec<Span> = vec![Span::styled(" ", hdr_bg)];
-            if state.show_failures_only {
-                info_spans.push(Span::styled(
-                    " FAILURES ONLY ",
-                    Style::default()
-                        .fg(Color::Rgb(30, 30, 40))
-                        .bg(Color::Rgb(240, 80, 80))
-                        .add_modifier(Modifier::BOLD),
-                ));
-                info_spans.push(Span::styled(" ", hdr_bg));
-            }
-            if state.show_waiting_only {
-                info_spans.push(Span::styled(
-                    " WAITING ONLY ",
-                    Style::default()
-                        .fg(Color::Rgb(30, 30, 40))
-                        .bg(Color::Rgb(240, 200, 60))
-                        .add_modifier(Modifier::BOLD),
-                ));
-                info_spans.push(Span::styled(" ", hdr_bg));
-            }
-            if !state.search_query.is_empty() {
-                if state.search_suspended {
-                    info_spans.push(Span::styled(
-                        format!(" filter: {} [paused] ", state.search_query),
-                        Style::default()
-                            .fg(Color::Rgb(120, 120, 140))
-                            .bg(Color::Rgb(30, 40, 60)),
-                    ));
-                } else {
-                    info_spans.push(Span::styled(
-                        format!(" filter: {} ", state.search_query),
-                        Style::default()
-                            .fg(Color::Rgb(140, 200, 255))
-                            .bg(Color::Rgb(30, 40, 60)),
-                    ));
-                }
-                info_spans.push(Span::styled(" ", hdr_bg));
-            }
-            let sort_label = state.sort_column.label();
-            info_spans.push(Span::styled(
-                format!("sort:{sort_label}"),
-                dim,
+    f.render_widget(Paragraph::new(Line::from(body_spans)), r4_area);
+
+    // FAILURES ONLY / WAITING ONLY pills retained from the old layout —
+    // visually loud so users can't forget the filter is on. Render them
+    // in the rightmost slot of the tab body row when active.
+    if state.show_failures_only || state.show_waiting_only {
+        let mut pill_spans: Vec<Span> = Vec::new();
+        if state.show_failures_only {
+            pill_spans.push(Span::styled(
+                " FAILURES ONLY ",
+                Style::default()
+                    .fg(Color::Rgb(30, 30, 40))
+                    .bg(Color::Rgb(240, 80, 80))
+                    .add_modifier(Modifier::BOLD),
             ));
-            f.render_widget(Paragraph::new(Line::from(info_spans)), r4_area);
         }
+        if state.show_waiting_only {
+            if !pill_spans.is_empty() {
+                pill_spans.push(Span::styled(" ", hdr_bg));
+            }
+            pill_spans.push(Span::styled(
+                " WAITING ONLY ",
+                Style::default()
+                    .fg(Color::Rgb(30, 30, 40))
+                    .bg(Color::Rgb(240, 200, 60))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+        let pill_width: usize = pill_spans.iter().map(|s| s.content.chars().count()).sum();
+        let pill_width = pill_width.min(area.width as usize);
+        let pill_x = area.x + area.width.saturating_sub(pill_width as u16 + 1);
+        let pill_area = Rect { x: pill_x, y: area.y + 4, width: pill_width as u16, height: 1 };
+        f.render_widget(Paragraph::new(Line::from(pill_spans)), pill_area);
     }
 }
 
@@ -565,11 +532,68 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
             let vp = ViewerParams { scroll: state.plan_scroll, hscroll: state.horizontal_scroll, wrap: state.viewer_wrap, search_query: &state.viewer_search_query };
             render_viewer(f, area, content, &vp);
         }
-        ViewState::LogViewer { ref content, .. } => {
+        ViewState::LogViewer {
+            ref namespace,
+            ref pod_name,
+            ref containers,
+            active_container,
+            ref content,
+        } => {
             let vp = ViewerParams { scroll: state.plan_scroll, hscroll: state.horizontal_scroll, wrap: state.viewer_wrap, search_query: &state.viewer_search_query };
-            render_viewer(f, area, content, &vp);
+            // Reserve a top row for the container picker so it stays close
+            // to the log content it controls.
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0)])
+                .split(area);
+            render_log_picker(f, chunks[0], namespace, pod_name, containers, active_container);
+            render_viewer(f, chunks[1], content, &vp);
         }
     }
+}
+
+fn render_log_picker(
+    f: &mut Frame,
+    area: Rect,
+    namespace: &str,
+    pod_name: &str,
+    containers: &[String],
+    active_container: usize,
+) {
+    let mut spans: Vec<Span> = vec![
+        Span::styled(
+            format!(" {namespace}/{pod_name} "),
+            Style::default()
+                .fg(Color::Rgb(140, 200, 255))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            " Containers: ",
+            Style::default().fg(Color::Rgb(140, 145, 165)),
+        ),
+    ];
+    for (i, name) in containers.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(" "));
+        }
+        if i == active_container {
+            spans.push(Span::styled(
+                format!(" {name} "),
+                Style::default()
+                    .fg(Color::Rgb(30, 30, 40))
+                    .bg(Color::Rgb(100, 220, 140))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            spans.push(Span::styled(
+                format!(" {name} "),
+                Style::default()
+                    .fg(Color::Rgb(140, 140, 160))
+                    .bg(Color::Rgb(40, 42, 54)),
+            ));
+        }
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 struct ViewerParams<'a> {
