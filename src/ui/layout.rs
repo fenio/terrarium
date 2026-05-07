@@ -410,14 +410,12 @@ fn count_failures_tf(state: &AppState) -> usize {
         .state()
         .iter()
         .filter(|tf| {
-            let is_ready = tf
-                .status
+            tf.status
                 .as_ref()
                 .and_then(|s| s.conditions.as_ref())
                 .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-                .map(|c| c.status == "True")
-                .unwrap_or(false);
-            !is_ready
+                .map(|c| c.status == "False")
+                .unwrap_or(false)
         })
         .count()
 }
@@ -428,14 +426,12 @@ fn count_failures_ks(state: &AppState) -> usize {
         .state()
         .iter()
         .filter(|ks| {
-            let is_ready = ks
-                .status
+            ks.status
                 .as_ref()
                 .and_then(|s| s.conditions.as_ref())
                 .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-                .map(|c| c.status == "True")
-                .unwrap_or(false);
-            !is_ready
+                .map(|c| c.status == "False")
+                .unwrap_or(false)
         })
         .count()
 }

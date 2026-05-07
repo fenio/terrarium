@@ -129,14 +129,12 @@ pub fn get_filtered_kustomizations(
             if !failures_only {
                 return true;
             }
-            let is_ready = ks
-                .status
+            ks.status
                 .as_ref()
                 .and_then(|s| s.conditions.as_ref())
                 .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-                .map(|c| c.status == "True")
-                .unwrap_or(false);
-            !is_ready
+                .map(|c| c.status == "False")
+                .unwrap_or(false)
         })
         .collect();
 

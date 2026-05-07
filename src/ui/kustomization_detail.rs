@@ -152,11 +152,10 @@ fn render_conditions(f: &mut Frame, area: Rect, ks: &Kustomization) {
         conditions
             .iter()
             .map(|c| {
-                let icon = if c.status == "True" { "✓" } else { "✗" };
-                let style = if c.status == "True" {
-                    theme::STATUS_READY
-                } else {
-                    theme::STATUS_NOT_READY
+                let (icon, style) = match c.status.as_str() {
+                    "True" => ("✓", theme::STATUS_READY),
+                    "False" => ("✗", theme::STATUS_NOT_READY),
+                    _ => ("⋯", theme::STATUS_UNKNOWN),
                 };
                 Line::from(vec![
                     Span::styled(format!(" {icon} "), style),

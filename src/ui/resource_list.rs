@@ -123,14 +123,13 @@ pub fn get_filtered_terraforms(
         })
         .filter(|tf| {
             if failures_only {
-                let is_ready = tf
+                return tf
                     .status
                     .as_ref()
                     .and_then(|s| s.conditions.as_ref())
                     .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-                    .map(|c| c.status == "True")
+                    .map(|c| c.status == "False")
                     .unwrap_or(false);
-                return !is_ready;
             }
             if waiting_only {
                 return is_waiting(tf);

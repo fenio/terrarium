@@ -1438,14 +1438,14 @@ impl App {
                     self.state.sort_descending,
                 );
                 for (i, tf) in items.iter().enumerate() {
-                    let is_ready = tf
+                    let failed = tf
                         .status
                         .as_ref()
                         .and_then(|s| s.conditions.as_ref())
                         .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-                        .map(|c| c.status == "True")
+                        .map(|c| c.status == "False")
                         .unwrap_or(false);
-                    if !is_ready {
+                    if failed {
                         self.state.tf_table_state.select(Some(i));
                         return;
                     }
@@ -1462,14 +1462,14 @@ impl App {
                     self.state.sort_descending,
                 );
                 for (i, ks) in items.iter().enumerate() {
-                    let is_ready = ks
+                    let failed = ks
                         .status
                         .as_ref()
                         .and_then(|s| s.conditions.as_ref())
                         .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-                        .map(|c| c.status == "True")
+                        .map(|c| c.status == "False")
                         .unwrap_or(false);
-                    if !is_ready {
+                    if failed {
                         self.state.ks_table_state.select(Some(i));
                         return;
                     }

@@ -342,11 +342,10 @@ fn render_conditions_compact(f: &mut Frame, area: Rect, tf: &Terraform) {
 
         let mut lines: Vec<Line> = Vec::new();
         for c in conditions {
-            let icon = if c.status == "True" { "✓" } else { "✗" };
-            let style = if c.status == "True" {
-                theme::STATUS_READY
-            } else {
-                theme::STATUS_NOT_READY
+            let (icon, style) = match c.status.as_str() {
+                "True" => ("✓", theme::STATUS_READY),
+                "False" => ("✗", theme::STATUS_NOT_READY),
+                _ => ("⋯", theme::STATUS_UNKNOWN),
             };
 
             if msg_width == 0 || c.message.len() <= msg_width {
