@@ -110,6 +110,10 @@ async fn main() -> anyhow::Result<()> {
     let context = cli.context.clone();
     let namespace = cli.namespace.clone();
     let controller_ns = cli.controller_ns.clone();
+    // Optional per-event TF condition trace, enabled by setting
+    // TERRARIUM_DEBUG_LOG=/path/to/file. Used to diagnose transient
+    // Ready=False flickers when the user can't press `c` fast enough.
+    let tf_debug_log = std::env::var_os("TERRARIUM_DEBUG_LOG").map(std::path::PathBuf::from);
     tokio::spawn(async move {
         match k8s::client::create_client(context.as_deref()).await {
             Ok((client, cluster_info)) => {
@@ -122,8 +126,11 @@ async fn main() -> anyhow::Result<()> {
                 // Now spawn all watchers
                 let wtx = tx.clone();
                 let c = client.clone();
+                let dbg = tf_debug_log.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = k8s::watcher::run_tf_watcher(c, tf_writer, wtx.clone()).await {
+                    if let Err(e) =
+                        k8s::watcher::run_tf_watcher(c, tf_writer, wtx.clone(), dbg).await
+                    {
                         let _ = wtx.send(action::Action::ConnectionError(format!(
                             "Terraform watcher failed: {e}"
                         )));

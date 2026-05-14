@@ -1,3 +1,7 @@
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::Mutex;
+
 use anyhow::Result;
 use futures::TryStreamExt;
 use kube::{
@@ -14,6 +18,7 @@ use crate::action::Action;
 use crate::k8s::kustomization::Kustomization;
 use crate::k8s::source::GitRepository;
 use crate::k8s::terraform::Terraform;
+use crate::util;
 
 pub type TfStore = reflector::Store<Terraform>;
 pub type KsStore = reflector::Store<Kustomization>;
@@ -35,13 +40,30 @@ pub async fn run_tf_watcher(
     client: kube::Client,
     writer: Writer<Terraform>,
     tx: UnboundedSender<Action>,
+    debug_log: Option<PathBuf>,
 ) -> Result<()> {
     let api: Api<Terraform> = Api::all(client);
+    let debug_writer: Option<Mutex<std::fs::File>> = debug_log.as_ref().and_then(|p| {
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+        {
+            Ok(f) => Some(Mutex::new(f)),
+            Err(e) => {
+                tracing::warn!("could not open debug log {}: {e}", p.display());
+                None
+            }
+        }
+    });
     let result = watcher(api, watcher::Config::default())
         .default_backoff()
         .reflect(writer)
         .applied_objects()
-        .try_for_each(|_obj| {
+        .try_for_each(|obj| {
+            if let Some(w) = debug_writer.as_ref() {
+                log_tf_condition_snapshot(w, &obj);
+            }
             let _ = tx.send(Action::TerraformStoreUpdated);
             futures::future::ready(Ok(()))
         })
@@ -59,6 +81,32 @@ pub async fn run_tf_watcher(
     }
     result?;
     Ok(())
+}
+
+/// Append one line per Terraform watcher event capturing Ready + Reconciling
+/// state and our classification, so transient flickers can be analysed
+/// post-hoc instead of trying to press `c` at the right moment.
+fn log_tf_condition_snapshot(writer: &Mutex<std::fs::File>, tf: &Terraform) {
+    let ns = tf.metadata.namespace.as_deref().unwrap_or("-");
+    let name = tf.metadata.name.as_deref().unwrap_or("-");
+    let conds = tf.status.as_ref().and_then(|s| s.conditions.as_ref());
+    let (ready_status, ready_reason, ready_msg) = conds
+        .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
+        .map(|c| (c.status.as_str(), c.reason.as_str(), c.message.as_str()))
+        .unwrap_or(("<absent>", "", ""));
+    let (recon_status, recon_reason) = conds
+        .and_then(|cs| cs.iter().find(|c| c.type_ == "Reconciling"))
+        .map(|c| (c.status.as_str(), c.reason.as_str()))
+        .unwrap_or(("<absent>", ""));
+    let classification = format!("{:?}", util::classify_ready(conds));
+    let msg_short: String = ready_msg.chars().take(120).collect();
+    let line = format!(
+        "{ts} {ns}/{name}\tready={ready_status}/{ready_reason}\treconciling={recon_status}/{recon_reason}\tclass={classification}\tmsg={msg_short}\n",
+        ts = jiff::Zoned::now(),
+    );
+    if let Ok(mut f) = writer.lock() {
+        let _ = f.write_all(line.as_bytes());
+    }
 }
 
 pub async fn run_ks_watcher(
