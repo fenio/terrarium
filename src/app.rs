@@ -2071,6 +2071,36 @@ impl App {
         url = url.replace("{namespace}", namespace);
         url = url.replace("{name}", name);
 
+        // {label.KEY} / {annotation.KEY} read directly from the TF
+        // resource's metadata — already cached in the store, so no
+        // lazy fetch is needed (unlike outputs and secrets). Useful
+        // when the cluster identity / environment / module lives on
+        // a label rather than in a tofu output.
+        if url.contains("{label.") || url.contains("{annotation.") {
+            let (labels, annotations) = self
+                .state
+                .tf_store
+                .state()
+                .iter()
+                .find(|arc| {
+                    arc.metadata.namespace.as_deref() == Some(namespace)
+                        && arc.metadata.name.as_deref() == Some(name)
+                })
+                .map(|arc| {
+                    (
+                        arc.metadata.labels.clone(),
+                        arc.metadata.annotations.clone(),
+                    )
+                })
+                .unwrap_or((None, None));
+            if url.contains("{label.") {
+                url = resolve_map_placeholders(&url, "label", labels.as_ref());
+            }
+            if url.contains("{annotation.") {
+                url = resolve_map_placeholders(&url, "annotation", annotations.as_ref());
+            }
+        }
+
         if needs_outputs {
             if let Some((_, outputs)) = &self.state.cached_outputs {
                 url = resolve_output_placeholders(&url, outputs);
@@ -2466,6 +2496,41 @@ fn resolve_output_placeholders(
     result
 }
 
+/// Substitute `{<prefix>.<key>}` placeholders against an optional
+/// BTreeMap (used for `{label.KEY}` and `{annotation.KEY}`). Missing
+/// keys substitute as empty, matching the `{output.KEY}` semantics.
+///
+/// Key syntax matches anything between the `{<prefix>.` and the next
+/// `}` — so dotted/slashed Kubernetes label keys like
+/// `kustomize.toolkit.fluxcd.io/name` work without escaping.
+fn resolve_map_placeholders(
+    url: &str,
+    prefix: &str,
+    map: Option<&std::collections::BTreeMap<String, String>>,
+) -> String {
+    let pattern = format!("{{{prefix}.");
+    let mut result = String::with_capacity(url.len());
+    let mut rest = url;
+    while let Some(start) = rest.find(&pattern) {
+        result.push_str(&rest[..start]);
+        let after = &rest[start + pattern.len()..];
+        match after.find('}') {
+            Some(end) => {
+                let key = &after[..end];
+                let value = map.and_then(|m| m.get(key)).cloned().unwrap_or_default();
+                result.push_str(&value);
+                rest = &after[end + 1..];
+            }
+            None => {
+                result.push_str(&rest[start..]);
+                return result;
+            }
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
 /// Substitute `{secret.<name>.<key>}` placeholders in a URL. The secret
 /// must already be in the cache (use `first_uncached_secret` first to
 /// trigger lazy fetches). Missing secrets/keys substitute as empty.
@@ -2560,10 +2625,20 @@ fn lookup_output_path(outputs: &std::collections::HashMap<String, String>, path:
 
 #[cfg(test)]
 mod tests {
-    use super::{first_uncached_secret, resolve_output_placeholders, resolve_secret_placeholders};
-    use std::collections::HashMap;
+    use super::{
+        first_uncached_secret, resolve_map_placeholders, resolve_output_placeholders,
+        resolve_secret_placeholders,
+    };
+    use std::collections::{BTreeMap, HashMap};
 
     fn outputs(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    fn meta(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -2697,5 +2772,68 @@ mod tests {
         let out = outputs(&[("a", "1"), ("metadata", r#"{"b":"2"}"#)]);
         let result = resolve_output_placeholders("{output.a}-{output.metadata.b}-{output.a}", &out);
         assert_eq!(result, "1-2-1");
+    }
+
+    #[test]
+    fn label_placeholder_substitutes_metadata_value() {
+        let labels = meta(&[
+            ("armada_akam_ai_cluster_name", "us-ord-grf-mt01-prod"),
+            ("kustomize.toolkit.fluxcd.io/name", "external-resources"),
+        ]);
+        let result = resolve_map_placeholders(
+            "https://gitlab.example.com/tree/main/prod/{label.armada_akam_ai_cluster_name}",
+            "label",
+            Some(&labels),
+        );
+        assert_eq!(
+            result,
+            "https://gitlab.example.com/tree/main/prod/us-ord-grf-mt01-prod"
+        );
+    }
+
+    #[test]
+    fn label_key_with_dots_and_slashes_works() {
+        // K8s label keys frequently contain dots and slashes — they
+        // must round-trip through the placeholder grammar unscathed.
+        let labels = meta(&[("kustomize.toolkit.fluxcd.io/name", "external-resources")]);
+        let result = resolve_map_placeholders(
+            "https://x/{label.kustomize.toolkit.fluxcd.io/name}/y",
+            "label",
+            Some(&labels),
+        );
+        assert_eq!(result, "https://x/external-resources/y");
+    }
+
+    #[test]
+    fn missing_label_substitutes_empty() {
+        let labels = meta(&[("only", "x")]);
+        let result = resolve_map_placeholders("a-{label.missing}-b", "label", Some(&labels));
+        assert_eq!(result, "a--b");
+    }
+
+    #[test]
+    fn label_placeholder_with_no_map_substitutes_empty() {
+        // Resource doesn't exist / has no labels — placeholder still
+        // resolves to empty so the URL is well-formed.
+        let result = resolve_map_placeholders("a-{label.foo}-b", "label", None);
+        assert_eq!(result, "a--b");
+    }
+
+    #[test]
+    fn annotation_placeholder_uses_separate_prefix() {
+        let annotations = meta(&[("module", "postgres-v2-cfg")]);
+        let result = resolve_map_placeholders(
+            "https://x/{annotation.module}",
+            "annotation",
+            Some(&annotations),
+        );
+        assert_eq!(result, "https://x/postgres-v2-cfg");
+    }
+
+    #[test]
+    fn unterminated_label_placeholder_is_left_as_is() {
+        let labels = meta(&[("foo", "bar")]);
+        let result = resolve_map_placeholders("https://x/{label.foo", "label", Some(&labels));
+        assert_eq!(result, "https://x/{label.foo");
     }
 }

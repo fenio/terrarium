@@ -28,6 +28,10 @@
 #                              resource's namespace (e.g. tofu-controller's
 #                              varsFrom Secret) — fetched lazily on first
 #                              use, then cached
+#   {label.KEY}                value from the Terraform resource's
+#                              metadata.labels[KEY] — already in the
+#                              in-memory store, no fetch needed
+#   {annotation.KEY}           value from metadata.annotations[KEY]
 #
 # Notes:
 #
@@ -130,3 +134,22 @@ label = "GitOps tree"
 description = "fallback when no other pattern matches"
 group = "Repos"
 url = "https://git.example.com/platform/misc/-/tree/main/{name}"
+
+# ---------- {label.KEY} example ----------
+#
+# When the URL needs a value that doesn't appear in the resource name
+# itself but does appear on a label, pull it straight from
+# metadata.labels. Common case: a TF resource whose name is opaque
+# (`module-cfg-instance01-app-12345`) but whose parent cluster ID is
+# stored on a label like `parent_cluster_name`.
+#
+# Suppose labels include `parent_cluster_name = my-cluster-prod` and
+# `environment = prod`. The following shortcut opens
+# `.../tree/main/prod/my-cluster-prod`:
+
+[[shortcuts]]
+key = "G"
+label = "GitOps tree (by label)"
+description = "look up parent cluster via metadata.labels"
+group = "Repos"
+url = "https://git.example.com/platform/-/tree/main/{label.environment}/{label.parent_cluster_name}"

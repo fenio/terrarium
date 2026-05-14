@@ -301,6 +301,8 @@ popup. Shortcuts without a group render at the top in an unnamed first section.
 | `{output.KEY}` | Value from the Terraform outputs secret |
 | `{output.KEY.subkey...}` | Nested JSON path into a JSON-valued output |
 | `{secret.NAME.KEY}` | Value from any other Secret in the resource's namespace |
+| `{label.KEY}` | Value from `metadata.labels[KEY]` on the Terraform resource |
+| `{annotation.KEY}` | Value from `metadata.annotations[KEY]` on the Terraform resource |
 
 For `{output.KEY}`, `KEY` is a top-level entry in the secret written via the
 controller's `spec.writeOutputsToSecret`. If the value is itself a JSON object,
@@ -317,6 +319,13 @@ Secret (e.g. tofu-controller's `varsFrom` secret) rather than the outputs
 Secret. Like `{output.…}`, the secret is fetched lazily on first use and
 cached for subsequent activations. Missing secrets and missing keys
 substitute as empty strings.
+
+`{label.KEY}` and `{annotation.KEY}` read directly from the Terraform
+resource's `metadata.labels[KEY]` / `metadata.annotations[KEY]`. No
+extra fetch — the values come from the in-memory watcher store. Label
+keys with dots and slashes work as-is, so
+`{label.kustomize.toolkit.fluxcd.io/name}` resolves correctly.
+Missing labels/annotations substitute as empty strings.
 
 **Activating a shortcut:**
 
