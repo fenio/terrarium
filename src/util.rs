@@ -48,7 +48,7 @@ pub fn format_conditions_viewer(
         let icon = match c.status.as_str() {
             "True" => "✓",
             "False" => "✗",
-            _ => "⋯",
+            _ => "…",
         };
         let reason = if c.reason.is_empty() {
             String::new()
@@ -256,7 +256,7 @@ mod tests {
         assert!(out.starts_with("Terraform: ns/name\n\n"));
         assert!(out.contains("✓ Ready"), "True should use ✓: {out}");
         assert!(out.contains("✗ Apply"), "False should use ✗: {out}");
-        assert!(out.contains("⋯ Plan"), "Unknown should use ⋯: {out}");
+        assert!(out.contains("… Plan"), "Unknown should use …: {out}");
     }
 
     #[test]
