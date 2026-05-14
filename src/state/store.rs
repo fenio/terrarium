@@ -221,6 +221,7 @@ pub struct AppState {
     pub search_suspended: bool,
     pub show_failures_only: bool,
     pub show_waiting_only: bool,
+    pub show_progressing_only: bool,
     pub input_mode: InputMode,
 
     pub tf_table_state: TableState,
@@ -346,6 +347,7 @@ impl AppState {
             search_suspended: false,
             show_failures_only: false,
             show_waiting_only: false,
+            show_progressing_only: false,
             input_mode: InputMode::Normal,
             tf_table_state: TableState::default(),
             ks_table_state: TableState::default(),

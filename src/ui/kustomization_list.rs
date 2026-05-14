@@ -21,6 +21,7 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
         state.effective_search_query(),
         state.show_failures_only,
         state.show_waiting_only,
+        state.show_progressing_only,
         state.sort_column,
         state.sort_descending,
     );
@@ -93,12 +94,14 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
     f.render_stateful_widget(table, area, &mut state.ks_table_state);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn get_filtered_kustomizations(
     store: &KsStore,
     namespace_filter: &Option<String>,
     search_query: &str,
     failures_only: bool,
     _waiting_only: bool,
+    progressing_only: bool,
     sort_column: SortColumn,
     descending: bool,
 ) -> Vec<Kustomization> {
@@ -122,11 +125,19 @@ pub fn get_filtered_kustomizations(
             }
         })
         .filter(|ks| {
-            if !failures_only {
-                return true;
+            if failures_only {
+                return util::classify_ready(
+                    ks.status.as_ref().and_then(|s| s.conditions.as_ref()),
+                )
+                .is_real_failure();
             }
-            util::classify_ready(ks.status.as_ref().and_then(|s| s.conditions.as_ref()))
-                .is_real_failure()
+            if progressing_only {
+                return matches!(
+                    util::classify_ready(ks.status.as_ref().and_then(|s| s.conditions.as_ref())),
+                    util::ReadyState::Reconciling
+                );
+            }
+            true
         })
         .collect();
 

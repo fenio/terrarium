@@ -430,6 +430,7 @@ impl App {
             self.state.effective_search_query(),
             self.state.show_failures_only,
             self.state.show_waiting_only,
+            self.state.show_progressing_only,
             self.state.sort_column,
             self.state.sort_descending,
         );
@@ -448,6 +449,7 @@ impl App {
             self.state.effective_search_query(),
             self.state.show_failures_only,
             self.state.show_waiting_only,
+            self.state.show_progressing_only,
             self.state.sort_column,
             self.state.sort_descending,
         );
@@ -496,6 +498,7 @@ impl App {
                 self.state.effective_search_query(),
                 self.state.show_failures_only,
                 self.state.show_waiting_only,
+                self.state.show_progressing_only,
                 self.state.sort_column,
                 self.state.sort_descending,
             )
@@ -506,6 +509,7 @@ impl App {
                 self.state.effective_search_query(),
                 self.state.show_failures_only,
                 self.state.show_waiting_only,
+                self.state.show_progressing_only,
                 self.state.sort_column,
                 self.state.sort_descending,
             )
@@ -694,6 +698,15 @@ impl App {
                 self.state.show_failures_only = !self.state.show_failures_only;
                 if self.state.show_failures_only {
                     self.state.show_waiting_only = false;
+                    self.state.show_progressing_only = false;
+                }
+                self.state.current_table_state().select(Some(0));
+            }
+            Action::ToggleProgressingOnly => {
+                self.state.show_progressing_only = !self.state.show_progressing_only;
+                if self.state.show_progressing_only {
+                    self.state.show_failures_only = false;
+                    self.state.show_waiting_only = false;
                 }
                 self.state.current_table_state().select(Some(0));
             }
@@ -701,6 +714,7 @@ impl App {
                 self.state.show_waiting_only = !self.state.show_waiting_only;
                 if self.state.show_waiting_only {
                     self.state.show_failures_only = false;
+                    self.state.show_progressing_only = false;
                 }
                 self.state.current_table_state().select(Some(0));
             }
@@ -891,6 +905,8 @@ impl App {
                         if let Some((ns, _, _, _)) = self.state.backlog_namespaces.get(idx) {
                             self.state.namespace_filter = Some(ns.clone());
                             self.state.show_failures_only = true;
+                            self.state.show_progressing_only = false;
+                            self.state.show_waiting_only = false;
                             self.state.active_tab = TabKind::Terraform;
                             // Reset the TF tab back to its list root so the user
                             // sees the filtered Terraforms first, not whatever
@@ -949,6 +965,8 @@ impl App {
                         self.state.show_failures_only = false;
                     } else if self.state.show_waiting_only {
                         self.state.show_waiting_only = false;
+                    } else if self.state.show_progressing_only {
+                        self.state.show_progressing_only = false;
                     } else if self.state.namespace_filter.is_some() {
                         self.state.namespace_filter = None;
                     }
@@ -1708,6 +1726,7 @@ impl App {
                     self.state.effective_search_query(),
                     self.state.show_failures_only,
                     self.state.show_waiting_only,
+                    self.state.show_progressing_only,
                     self.state.sort_column,
                     self.state.sort_descending,
                 );
@@ -1729,6 +1748,7 @@ impl App {
                     self.state.effective_search_query(),
                     self.state.show_failures_only,
                     self.state.show_waiting_only,
+                    self.state.show_progressing_only,
                     self.state.sort_column,
                     self.state.sort_descending,
                 );

@@ -64,6 +64,7 @@ fn build_left_column() -> Vec<Line<'static>> {
         help_line("\\", "Pause / resume filter"),
         help_line("f", "Toggle failures only"),
         help_line("w", "Toggle waiting only"),
+        help_line("P", "Toggle progressing only"),
         help_line("n", "Namespace picker"),
         help_line("o", "Cycle sort column"),
         help_line("i", "Invert sort direction"),
