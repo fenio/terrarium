@@ -148,10 +148,16 @@ const RECONCILING_REASONS: &[&str] = &[
 
 /// Classify the Ready condition for display and filtering.
 ///
-/// A reconciling reason promotes both `Ready=False` and `Ready=Unknown`
-/// to `Reconciling` — tofu-controller emits the latter on fresh
-/// resources with `reason=Initializing`, and showing that as "Unknown"
-/// is misleading.
+/// The Reconciling state has two signals, in order of reliability:
+///   1. A `Reconciling` condition with `status=True` — tofu-controller
+///      sets this whenever a reconcile is in flight, regardless of what
+///      Ready currently says. This is the strongest indicator and it
+///      catches transient Ready=False flashes that use reason strings
+///      we don't recognize.
+///   2. A reconciling reason on the Ready condition itself (used as a
+///      fallback for controllers that don't set the Reconciling
+///      condition, and for `Ready=Unknown, reason=Initializing` on
+///      fresh resources).
 pub fn classify_ready(
     conditions: Option<&Vec<k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition>>,
 ) -> ReadyState {
@@ -161,23 +167,26 @@ pub fn classify_ready(
     let Some(ready) = cs.iter().find(|c| c.type_ == "Ready") else {
         return ReadyState::Missing;
     };
+
+    // Ready=True wins — a successful reconcile may leave a stale
+    // Reconciling=True for a brief moment, but Ready=True means the
+    // last reconcile succeeded, so show that.
+    if ready.status == "True" {
+        return ReadyState::True;
+    }
+
+    let reconciling_active = cs
+        .iter()
+        .any(|c| c.type_ == "Reconciling" && c.status == "True");
     let is_reconciling_reason = RECONCILING_REASONS.iter().any(|r| *r == ready.reason);
+
+    if reconciling_active || is_reconciling_reason {
+        return ReadyState::Reconciling;
+    }
+
     match ready.status.as_str() {
-        "True" => ReadyState::True,
-        "False" => {
-            if is_reconciling_reason {
-                ReadyState::Reconciling
-            } else {
-                ReadyState::Failed
-            }
-        }
-        _ => {
-            if is_reconciling_reason {
-                ReadyState::Reconciling
-            } else {
-                ReadyState::Unknown
-            }
-        }
+        "False" => ReadyState::Failed,
+        _ => ReadyState::Unknown,
     }
 }
 
@@ -321,6 +330,30 @@ mod tests {
         let empty: Vec<Condition> = vec![];
         assert_eq!(classify_ready(Some(&empty)), ReadyState::Missing);
         assert_eq!(classify_ready(None), ReadyState::Missing);
+
+        // Ready=False with an unknown reason but Reconciling=True is the
+        // in-flight reconcile state — the Reconciling condition catches
+        // cases where tofu-controller uses a reason we haven't enumerated.
+        let unknown_reason_but_reconciling = vec![
+            make_condition("Ready", "False", "SomeReasonWeDontKnow", "..."),
+            make_condition("Reconciling", "True", "Progressing", "..."),
+        ];
+        assert_eq!(
+            classify_ready(Some(&unknown_reason_but_reconciling)),
+            ReadyState::Reconciling,
+            "Reconciling=True must override an unrecognized Ready=False reason"
+        );
+
+        // But Ready=True still wins over a stale Reconciling=True so a
+        // freshly-finished resource shows green immediately.
+        let ready_true_with_stale_reconciling = vec![
+            make_condition("Ready", "True", "ReconciliationSucceeded", ""),
+            make_condition("Reconciling", "True", "Progressing", ""),
+        ];
+        assert_eq!(
+            classify_ready(Some(&ready_true_with_stale_reconciling)),
+            ReadyState::True
+        );
     }
 
     #[test]
