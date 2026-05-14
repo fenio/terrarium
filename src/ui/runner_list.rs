@@ -119,9 +119,7 @@ pub fn get_filtered_runners<'a>(
                 .cmp(&b.metadata.namespace)
                 .then(a.metadata.name.cmp(&b.metadata.name))
         }),
-        RunnerSortColumn::Name => {
-            filtered.sort_by(|a, b| a.metadata.name.cmp(&b.metadata.name))
-        }
+        RunnerSortColumn::Name => filtered.sort_by(|a, b| a.metadata.name.cmp(&b.metadata.name)),
         RunnerSortColumn::Terraform => filtered.sort_by(|a, b| {
             tf_name(a)
                 .cmp(&tf_name(b))

@@ -107,6 +107,80 @@ fn strip_runner_rpc_framing(msg: &str) -> &str {
     if rest.is_empty() { msg } else { rest }
 }
 
+/// Classified state derived from a Ready condition. The split between
+/// `Reconciling` and `Failed` exists because tofu-controller (and Flux
+/// generally) writes `Ready=False, reason=Progressing` at the start of
+/// every reconcile and flips back to `True` (or `False` with a real
+/// failure reason) when it finishes. Without this split, the UI paints
+/// every routine reconcile as a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadyState {
+    /// Ready=True
+    True,
+    /// Ready=False, reason indicates an in-flight reconcile.
+    Reconciling,
+    /// Ready=False with any other reason — a real failure.
+    Failed,
+    /// Ready exists but status is neither True nor False.
+    Unknown,
+    /// No Ready condition (or no conditions at all).
+    Missing,
+}
+
+impl ReadyState {
+    /// True only for real failures — used by failures-only filters and
+    /// header failure counts so they don't flicker on every reconcile.
+    pub fn is_real_failure(self) -> bool {
+        matches!(self, ReadyState::Failed)
+    }
+}
+
+/// Reasons that indicate a reconcile is in progress (not a real failure).
+/// `Progressing` is the standard Flux GOTK reason. Others cover older or
+/// variant code paths in the same ecosystem, plus `Initializing` which
+/// tofu-controller emits with `Ready=Unknown` on a fresh resource.
+const RECONCILING_REASONS: &[&str] = &[
+    "Progressing",
+    "ReconciliationProgressing",
+    "Reconciling",
+    "Initializing",
+];
+
+/// Classify the Ready condition for display and filtering.
+///
+/// A reconciling reason promotes both `Ready=False` and `Ready=Unknown`
+/// to `Reconciling` — tofu-controller emits the latter on fresh
+/// resources with `reason=Initializing`, and showing that as "Unknown"
+/// is misleading.
+pub fn classify_ready(
+    conditions: Option<&Vec<k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition>>,
+) -> ReadyState {
+    let Some(cs) = conditions else {
+        return ReadyState::Missing;
+    };
+    let Some(ready) = cs.iter().find(|c| c.type_ == "Ready") else {
+        return ReadyState::Missing;
+    };
+    let is_reconciling_reason = RECONCILING_REASONS.iter().any(|r| *r == ready.reason);
+    match ready.status.as_str() {
+        "True" => ReadyState::True,
+        "False" => {
+            if is_reconciling_reason {
+                ReadyState::Reconciling
+            } else {
+                ReadyState::Failed
+            }
+        }
+        _ => {
+            if is_reconciling_reason {
+                ReadyState::Reconciling
+            } else {
+                ReadyState::Unknown
+            }
+        }
+    }
+}
+
 /// Parse a Kubernetes/Go duration string (e.g. "1h", "30m", "10m0s", "1h30m") to seconds.
 pub fn parse_k8s_duration(s: &str) -> Option<i64> {
     let mut total: i64 = 0;
@@ -199,6 +273,54 @@ mod tests {
         let raw = "GitRepository.source.toolkit.fluxcd.io \"foo\" not found";
         let lines = humanize_condition_message(raw);
         assert_eq!(lines, vec![raw]);
+    }
+
+    #[test]
+    fn classify_ready_splits_reconciling_from_real_failure() {
+        let progressing = vec![make_condition(
+            "Ready",
+            "False",
+            "Progressing",
+            "reconciliation in progress",
+        )];
+        assert_eq!(
+            classify_ready(Some(&progressing)),
+            ReadyState::Reconciling,
+            "Ready=False with reason=Progressing must be Reconciling"
+        );
+        assert!(
+            !classify_ready(Some(&progressing)).is_real_failure(),
+            "Progressing must not count as a real failure"
+        );
+
+        let failed = vec![make_condition(
+            "Ready",
+            "False",
+            "TerraformPlanFailed",
+            "boom",
+        )];
+        assert_eq!(classify_ready(Some(&failed)), ReadyState::Failed);
+        assert!(classify_ready(Some(&failed)).is_real_failure());
+
+        let ok = vec![make_condition(
+            "Ready",
+            "True",
+            "ReconciliationSucceeded",
+            "",
+        )];
+        assert_eq!(classify_ready(Some(&ok)), ReadyState::True);
+
+        let unknown = vec![make_condition("Ready", "Unknown", "", "")];
+        assert_eq!(classify_ready(Some(&unknown)), ReadyState::Unknown);
+
+        // Ready=Unknown + reason=Initializing is the "fresh resource" state
+        // tofu-controller emits; treat it as Reconciling, not Unknown.
+        let initializing = vec![make_condition("Ready", "Unknown", "Initializing", "")];
+        assert_eq!(classify_ready(Some(&initializing)), ReadyState::Reconciling);
+
+        let empty: Vec<Condition> = vec![];
+        assert_eq!(classify_ready(Some(&empty)), ReadyState::Missing);
+        assert_eq!(classify_ready(None), ReadyState::Missing);
     }
 
     #[test]

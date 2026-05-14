@@ -237,19 +237,7 @@ pub fn count_entries(store: &TfStore, tab: &CustomTab) -> usize {
 
 fn get_ready_status(tf: &Terraform) -> (String, Style) {
     let conditions = tf.status.as_ref().and_then(|s| s.conditions.as_ref());
-    if let Some(conditions) = conditions {
-        if let Some(ready) = conditions.iter().find(|c| c.type_ == "Ready") {
-            match ready.status.as_str() {
-                "True" => ("True".to_string(), theme::STATUS_READY),
-                "False" => ("False".to_string(), theme::STATUS_NOT_READY),
-                _ => ("Unknown".to_string(), theme::STATUS_UNKNOWN),
-            }
-        } else {
-            ("Unknown".to_string(), theme::STATUS_UNKNOWN)
-        }
-    } else {
-        ("-".to_string(), theme::STATUS_UNKNOWN)
-    }
+    crate::ui::resource_list::ready_label_and_style(crate::util::classify_ready(conditions))
 }
 
 /// Color the date based on proximity: past = red, soon = yellow, future = green.

@@ -1,4 +1,3 @@
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
 use ratatui::{
     Frame,
     layout::{Constraint, Rect},
@@ -123,13 +122,10 @@ pub fn get_filtered_terraforms(
         })
         .filter(|tf| {
             if failures_only {
-                return tf
-                    .status
-                    .as_ref()
-                    .and_then(|s| s.conditions.as_ref())
-                    .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-                    .map(|c| c.status == "False")
-                    .unwrap_or(false);
+                return util::classify_ready(
+                    tf.status.as_ref().and_then(|s| s.conditions.as_ref()),
+                )
+                .is_real_failure();
             }
             if waiting_only {
                 return is_waiting(tf);
@@ -214,19 +210,16 @@ fn get_ready_str(tf: &Terraform) -> String {
 
 fn get_ready_status(tf: &Terraform) -> (String, Style) {
     let conditions = tf.status.as_ref().and_then(|s| s.conditions.as_ref());
+    ready_label_and_style(util::classify_ready(conditions))
+}
 
-    if let Some(conditions) = conditions {
-        if let Some(ready) = find_condition(conditions, "Ready") {
-            match ready.status.as_str() {
-                "True" => ("True".to_string(), theme::STATUS_READY),
-                "False" => ("False".to_string(), theme::STATUS_NOT_READY),
-                _ => ("Unknown".to_string(), theme::STATUS_UNKNOWN),
-            }
-        } else {
-            ("Unknown".to_string(), theme::STATUS_UNKNOWN)
-        }
-    } else {
-        ("-".to_string(), theme::STATUS_UNKNOWN)
+pub(crate) fn ready_label_and_style(state: util::ReadyState) -> (String, Style) {
+    match state {
+        util::ReadyState::True => ("True".to_string(), theme::STATUS_READY),
+        util::ReadyState::Reconciling => ("…".to_string(), theme::STATUS_RECONCILING),
+        util::ReadyState::Failed => ("False".to_string(), theme::STATUS_NOT_READY),
+        util::ReadyState::Unknown => ("Unknown".to_string(), theme::STATUS_UNKNOWN),
+        util::ReadyState::Missing => ("-".to_string(), theme::STATUS_UNKNOWN),
     }
 }
 
@@ -276,10 +269,6 @@ fn get_last_applied_time(tf: &Terraform) -> String {
         .and_then(|cs| cs.iter().find(|c| c.type_ == "Apply"))
         .map(|c| util::format_duration_ago(util::secs_since(c.last_transition_time.0)))
         .unwrap_or_else(|| "-".to_string())
-}
-
-fn find_condition<'a>(conditions: &'a [Condition], type_name: &str) -> Option<&'a Condition> {
-    conditions.iter().find(|c| c.type_ == type_name)
 }
 
 /// Ready=True but past its reconciliation interval + 5min grace period.

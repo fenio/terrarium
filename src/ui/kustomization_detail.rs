@@ -121,17 +121,9 @@ fn render_spec(
 fn render_status(f: &mut Frame, area: Rect, ks: &Kustomization) {
     let status = ks.status.as_ref();
 
-    let ready = status
-        .and_then(|s| s.conditions.as_ref())
-        .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-        .map(|c| c.status.clone())
-        .unwrap_or_else(|| "Unknown".to_string());
-
-    let ready_style = match ready.as_str() {
-        "True" => theme::STATUS_READY,
-        "False" => theme::STATUS_NOT_READY,
-        _ => theme::STATUS_UNKNOWN,
-    };
+    let (ready, ready_style) = crate::ui::resource_list::ready_label_and_style(
+        crate::util::classify_ready(status.and_then(|s| s.conditions.as_ref())),
+    );
 
     let last_applied = status
         .and_then(|s| s.last_applied_revision.as_deref())

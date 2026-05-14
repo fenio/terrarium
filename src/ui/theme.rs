@@ -35,6 +35,10 @@ pub const STATUS_READY: Style = Style::new().fg(Color::Rgb(80, 220, 100));
 pub const STATUS_NOT_READY: Style = Style::new().fg(Color::Rgb(240, 80, 80));
 pub const STATUS_PENDING: Style = Style::new().fg(Color::Rgb(240, 200, 60));
 pub const STATUS_UNKNOWN: Style = Style::new().fg(Color::Rgb(140, 145, 165));
+/// Ready=False with reason=Progressing — controller is actively
+/// reconciling, not a real failure. Muted cyan distinguishes it from
+/// the alarming red used for true failures.
+pub const STATUS_RECONCILING: Style = Style::new().fg(Color::Rgb(120, 200, 230));
 
 // Table rows
 pub const SELECTED_ROW: Style = Style::new()

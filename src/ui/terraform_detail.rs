@@ -165,17 +165,9 @@ fn render_status(
 ) {
     let status = tf.status.as_ref();
 
-    let ready = status
-        .and_then(|s| s.conditions.as_ref())
-        .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-        .map(|c| c.status.clone())
-        .unwrap_or_else(|| "Unknown".to_string());
-
-    let ready_style = match ready.as_str() {
-        "True" => theme::STATUS_READY,
-        "False" => theme::STATUS_NOT_READY,
-        _ => theme::STATUS_UNKNOWN,
-    };
+    let (ready, ready_style) = crate::ui::resource_list::ready_label_and_style(
+        crate::util::classify_ready(status.and_then(|s| s.conditions.as_ref())),
+    );
 
     let plan_status = status
         .and_then(|s| s.plan.as_ref())

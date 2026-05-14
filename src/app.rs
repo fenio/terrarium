@@ -737,8 +737,7 @@ impl App {
             Action::CycleSort => {
                 match self.state.active_tab {
                     TabKind::Runners => {
-                        self.state.runner_sort_column =
-                            self.state.runner_sort_column.next();
+                        self.state.runner_sort_column = self.state.runner_sort_column.next();
                     }
                     _ => {
                         self.state.sort_column = self.state.sort_column.next();
@@ -1713,14 +1712,11 @@ impl App {
                     self.state.sort_descending,
                 );
                 for (i, tf) in items.iter().enumerate() {
-                    let failed = tf
-                        .status
-                        .as_ref()
-                        .and_then(|s| s.conditions.as_ref())
-                        .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-                        .map(|c| c.status == "False")
-                        .unwrap_or(false);
-                    if failed {
+                    if crate::util::classify_ready(
+                        tf.status.as_ref().and_then(|s| s.conditions.as_ref()),
+                    )
+                    .is_real_failure()
+                    {
                         self.state.tf_table_state.select(Some(i));
                         return;
                     }
@@ -1737,14 +1733,11 @@ impl App {
                     self.state.sort_descending,
                 );
                 for (i, ks) in items.iter().enumerate() {
-                    let failed = ks
-                        .status
-                        .as_ref()
-                        .and_then(|s| s.conditions.as_ref())
-                        .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-                        .map(|c| c.status == "False")
-                        .unwrap_or(false);
-                    if failed {
+                    if crate::util::classify_ready(
+                        ks.status.as_ref().and_then(|s| s.conditions.as_ref()),
+                    )
+                    .is_real_failure()
+                    {
                         self.state.ks_table_state.select(Some(i));
                         return;
                     }

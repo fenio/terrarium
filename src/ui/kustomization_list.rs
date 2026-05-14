@@ -1,4 +1,3 @@
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
 use ratatui::{
     Frame,
     layout::{Constraint, Rect},
@@ -126,12 +125,8 @@ pub fn get_filtered_kustomizations(
             if !failures_only {
                 return true;
             }
-            ks.status
-                .as_ref()
-                .and_then(|s| s.conditions.as_ref())
-                .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-                .map(|c| c.status == "False")
-                .unwrap_or(false)
+            util::classify_ready(ks.status.as_ref().and_then(|s| s.conditions.as_ref()))
+                .is_real_failure()
         })
         .collect();
 
@@ -193,20 +188,7 @@ fn get_ready_str(ks: &Kustomization) -> String {
 
 fn get_ready_status(ks: &Kustomization) -> (String, Style) {
     let conditions = ks.status.as_ref().and_then(|s| s.conditions.as_ref());
-
-    if let Some(conditions) = conditions {
-        if let Some(ready) = find_condition(conditions, "Ready") {
-            match ready.status.as_str() {
-                "True" => ("True".to_string(), theme::STATUS_READY),
-                "False" => ("False".to_string(), theme::STATUS_NOT_READY),
-                _ => ("Unknown".to_string(), theme::STATUS_UNKNOWN),
-            }
-        } else {
-            ("Unknown".to_string(), theme::STATUS_UNKNOWN)
-        }
-    } else {
-        ("-".to_string(), theme::STATUS_UNKNOWN)
-    }
+    crate::ui::resource_list::ready_label_and_style(util::classify_ready(conditions))
 }
 
 fn truncate_revision(rev: &str) -> String {
@@ -239,8 +221,4 @@ fn get_last_applied_time(ks: &Kustomization) -> String {
         .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready" && c.status == "True"))
         .map(|c| util::format_duration_ago(util::secs_since(c.last_transition_time.0)))
         .unwrap_or_else(|| "-".to_string())
-}
-
-fn find_condition<'a>(conditions: &'a [Condition], type_name: &str) -> Option<&'a Condition> {
-    conditions.iter().find(|c| c.type_ == type_name)
 }
