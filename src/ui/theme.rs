@@ -63,6 +63,10 @@ pub const SUSPENDED: Style = Style::new().fg(Color::Rgb(240, 200, 60));
 pub const BULK_SELECTED: Style = Style::new()
     .fg(Color::Rgb(120, 200, 230))
     .add_modifier(Modifier::BOLD);
+/// Marker for rows that were just acted on (recently dispatched
+/// reconcile / suspend / approve / …). Muted slate-blue so it doesn't
+/// compete visually with the bulk-selection marker.
+pub const RECENTLY_ACTED: Style = Style::new().fg(Color::Rgb(140, 160, 200));
 
 // Plan syntax highlighting
 pub const PLAN_CREATE: Style = Style::new().fg(Color::Rgb(80, 220, 100));

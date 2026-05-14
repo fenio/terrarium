@@ -20,6 +20,7 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
         state.show_failures_only,
         state.show_waiting_only,
         state.show_progressing_only,
+        &state.recently_acted,
         state.sort_column,
         state.sort_descending,
     );
@@ -105,6 +106,7 @@ pub fn get_filtered_terraforms(
     failures_only: bool,
     waiting_only: bool,
     progressing_only: bool,
+    recently_acted: &std::collections::HashMap<(String, String), std::time::Instant>,
     sort_column: SortColumn,
     descending: bool,
 ) -> Vec<Terraform> {
@@ -128,20 +130,32 @@ pub fn get_filtered_terraforms(
             }
         })
         .filter(|tf| {
+            // Grace-period bypass: rows the user just acted on stay
+            // visible regardless of which state filter is active, so
+            // they can watch the resource transition instead of having
+            // it vanish out of the filtered view.
+            let ns = tf.metadata.namespace.as_deref().unwrap_or("");
+            let name = tf.metadata.name.as_deref().unwrap_or("");
+            let in_grace = recently_acted.contains_key(&(ns.to_string(), name.to_string()));
+
             if failures_only {
-                return util::classify_ready(
-                    tf.status.as_ref().and_then(|s| s.conditions.as_ref()),
-                )
-                .is_real_failure();
+                return in_grace
+                    || util::classify_ready(
+                        tf.status.as_ref().and_then(|s| s.conditions.as_ref()),
+                    )
+                    .is_real_failure();
             }
             if progressing_only {
-                return matches!(
-                    util::classify_ready(tf.status.as_ref().and_then(|s| s.conditions.as_ref())),
-                    util::ReadyState::Reconciling
-                );
+                return in_grace
+                    || matches!(
+                        util::classify_ready(
+                            tf.status.as_ref().and_then(|s| s.conditions.as_ref()),
+                        ),
+                        util::ReadyState::Reconciling
+                    );
             }
             if waiting_only {
-                return is_waiting(tf);
+                return in_grace || is_waiting(tf);
             }
             true
         })
@@ -187,14 +201,19 @@ pub fn get_filtered_terraforms(
     filtered
 }
 
-/// Marker cell for the leftmost list column. Shows `●` (styled) when
-/// `(namespace, name)` is in the bulk selection, otherwise blank.
+/// Marker cell for the leftmost list column. Layered priorities:
+///   * Bulk-selected → `●` in BULK_SELECTED style.
+///   * Recently acted on (within the grace window) → `↻` in
+///     RECENTLY_ACTED style — flags rows that the active filter would
+///     normally hide but that we keep visible so the user can watch
+///     the controller pick them up.
+///   * Otherwise blank.
 pub(crate) fn bulk_marker_cell(state: &AppState, namespace: &str, name: &str) -> Cell<'static> {
-    if state
-        .bulk_selected
-        .contains(&(namespace.to_string(), name.to_string()))
-    {
+    let key = (namespace.to_string(), name.to_string());
+    if state.bulk_selected.contains(&key) {
         Cell::from(Span::styled("●", theme::BULK_SELECTED))
+    } else if state.is_recently_acted(namespace, name) {
+        Cell::from(Span::styled("↻", theme::RECENTLY_ACTED))
     } else {
         Cell::from(" ")
     }

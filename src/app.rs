@@ -83,6 +83,7 @@ impl App {
                 }
                 _ = tick_interval.tick() => {
                     self.state.expire_flash();
+                    self.state.prune_recently_acted();
                     self.state.tick_count = self.state.tick_count.wrapping_add(1);
                 }
             }
@@ -496,6 +497,7 @@ impl App {
             self.state.show_failures_only,
             self.state.show_waiting_only,
             self.state.show_progressing_only,
+            &self.state.recently_acted,
             self.state.sort_column,
             self.state.sort_descending,
         );
@@ -515,6 +517,7 @@ impl App {
             self.state.show_failures_only,
             self.state.show_waiting_only,
             self.state.show_progressing_only,
+            &self.state.recently_acted,
             self.state.sort_column,
             self.state.sort_descending,
         );
@@ -564,6 +567,7 @@ impl App {
                 self.state.show_failures_only,
                 self.state.show_waiting_only,
                 self.state.show_progressing_only,
+                &self.state.recently_acted,
                 self.state.sort_column,
                 self.state.sort_descending,
             )
@@ -575,6 +579,7 @@ impl App {
                 self.state.show_failures_only,
                 self.state.show_waiting_only,
                 self.state.show_progressing_only,
+                &self.state.recently_acted,
                 self.state.sort_column,
                 self.state.sort_descending,
             )
@@ -1795,7 +1800,16 @@ impl App {
         });
     }
 
-    fn spawn_k8s_action(&self, action: Action) {
+    fn spawn_k8s_action(&mut self, action: Action) {
+        // Mark the target row as recently acted on so the filtered list
+        // keeps it visible during the grace window — without this, a
+        // reconcile from a failures-only view makes the row vanish the
+        // instant the controller starts reconciling. Covers all paths
+        // (single-row + bulk-fanout).
+        if let Some((ns, name)) = action_resource_target(&action) {
+            self.state.mark_recently_acted(ns, name);
+        }
+
         let client = match self.require_client() {
             Some(c) => c,
             None => {
@@ -1832,6 +1846,7 @@ impl App {
                     self.state.show_failures_only,
                     self.state.show_waiting_only,
                     self.state.show_progressing_only,
+                    &self.state.recently_acted,
                     self.state.sort_column,
                     self.state.sort_descending,
                 );
@@ -1854,6 +1869,7 @@ impl App {
                     self.state.show_failures_only,
                     self.state.show_waiting_only,
                     self.state.show_progressing_only,
+                    &self.state.recently_acted,
                     self.state.sort_column,
                     self.state.sort_descending,
                 );
@@ -2344,6 +2360,30 @@ async fn execute_k8s_action(
             k8s_actions::delete_pod(client, namespace, name).await
         }
         _ => Ok(()),
+    }
+}
+
+/// Extract the (namespace, name) target of a per-resource K8s action,
+/// for marking the row as recently acted on. Returns None for actions
+/// that don't target a specific listed resource (Bulk*, sync events,
+/// fetch-results, …).
+fn action_resource_target(action: &Action) -> Option<(&str, &str)> {
+    match action {
+        Action::ApprovePlan { namespace, name }
+        | Action::Replan { namespace, name }
+        | Action::ForceUnlock { namespace, name }
+        | Action::DeleteResource { namespace, name }
+        | Action::KillRunner { namespace, name } => Some((namespace, name)),
+        Action::Reconcile {
+            namespace, name, ..
+        }
+        | Action::Suspend {
+            namespace, name, ..
+        }
+        | Action::Resume {
+            namespace, name, ..
+        } => Some((namespace, name)),
+        _ => None,
     }
 }
 

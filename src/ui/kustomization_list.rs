@@ -22,6 +22,7 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
         state.show_failures_only,
         state.show_waiting_only,
         state.show_progressing_only,
+        &state.recently_acted,
         state.sort_column,
         state.sort_descending,
     );
@@ -106,6 +107,7 @@ pub fn get_filtered_kustomizations(
     failures_only: bool,
     _waiting_only: bool,
     progressing_only: bool,
+    recently_acted: &std::collections::HashMap<(String, String), std::time::Instant>,
     sort_column: SortColumn,
     descending: bool,
 ) -> Vec<Kustomization> {
@@ -129,17 +131,25 @@ pub fn get_filtered_kustomizations(
             }
         })
         .filter(|ks| {
+            let ns = ks.metadata.namespace.as_deref().unwrap_or("");
+            let name = ks.metadata.name.as_deref().unwrap_or("");
+            let in_grace = recently_acted.contains_key(&(ns.to_string(), name.to_string()));
+
             if failures_only {
-                return util::classify_ready(
-                    ks.status.as_ref().and_then(|s| s.conditions.as_ref()),
-                )
-                .is_real_failure();
+                return in_grace
+                    || util::classify_ready(
+                        ks.status.as_ref().and_then(|s| s.conditions.as_ref()),
+                    )
+                    .is_real_failure();
             }
             if progressing_only {
-                return matches!(
-                    util::classify_ready(ks.status.as_ref().and_then(|s| s.conditions.as_ref())),
-                    util::ReadyState::Reconciling
-                );
+                return in_grace
+                    || matches!(
+                        util::classify_ready(
+                            ks.status.as_ref().and_then(|s| s.conditions.as_ref()),
+                        ),
+                        util::ReadyState::Reconciling
+                    );
             }
             true
         })

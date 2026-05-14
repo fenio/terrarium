@@ -35,6 +35,12 @@ pub fn tab_count(config: &Config) -> usize {
     4 + config.custom_tabs.len()
 }
 
+/// How long a row stays "visible" in a filtered list after the user
+/// dispatches a K8s action on it. Long enough to watch the controller
+/// pick the resource up and transition it, short enough that the list
+/// settles back to honoring the active filter promptly.
+pub const RECENTLY_ACTED_GRACE_SECS: u64 = 15;
+
 /// Map an index to a TabKind.
 pub fn tab_from_index(idx: usize, config: &Config) -> Option<TabKind> {
     match idx {
@@ -274,6 +280,14 @@ pub struct AppState {
     /// Set of (namespace, name) for bulk-selected resources
     pub bulk_selected: std::collections::HashSet<(String, String)>,
 
+    /// Rows the user has recently acted on (Reconcile / Suspend / Resume /
+    /// Approve / Replan / etc.). Each entry holds the time of dispatch and
+    /// is pruned after `RECENTLY_ACTED_GRACE_SECS`. While present, the
+    /// list-view filters treat the row as visible even if it no longer
+    /// matches the active filter — so the user sees the resources they
+    /// just acted on transition in place instead of vanishing.
+    pub recently_acted: HashMap<(String, String), std::time::Instant>,
+
     pub tf_synced: bool,
     pub ks_synced: bool,
     pub gr_synced: bool,
@@ -448,6 +462,7 @@ impl AppState {
             runner_sort_column: RunnerSortColumn::Namespace,
             sort_descending: false,
             bulk_selected: std::collections::HashSet::new(),
+            recently_acted: HashMap::new(),
             tf_synced: false,
             ks_synced: false,
             gr_synced: false,
@@ -655,6 +670,34 @@ impl AppState {
         }
     }
 
+    /// Drop `recently_acted` entries that are past the grace window.
+    /// Called on every tick so rows the user acted on stay visible long
+    /// enough to see the controller pick them up, then fall back to
+    /// honoring the active filter.
+    pub fn prune_recently_acted(&mut self) {
+        let cutoff = std::time::Duration::from_secs(RECENTLY_ACTED_GRACE_SECS);
+        self.recently_acted
+            .retain(|_, instant| instant.elapsed() <= cutoff);
+    }
+
+    /// Mark a (namespace, name) as recently acted on, restarting its
+    /// grace window. Called from every K8s-action dispatch path —
+    /// single-resource and bulk — so a reconciled row stays visible
+    /// even if the active filter would normally hide it.
+    pub fn mark_recently_acted(&mut self, namespace: &str, name: &str) {
+        self.recently_acted.insert(
+            (namespace.to_string(), name.to_string()),
+            std::time::Instant::now(),
+        );
+    }
+
+    /// True when (namespace, name) is in the grace window — used by the
+    /// list filters as an OR-bypass and by the marker column.
+    pub fn is_recently_acted(&self, namespace: &str, name: &str) -> bool {
+        self.recently_acted
+            .contains_key(&(namespace.to_string(), name.to_string()))
+    }
+
     /// Collect unique namespaces from TF and KS stores for the namespace picker.
     pub fn collect_namespaces(&self) -> Vec<String> {
         let mut namespaces = BTreeSet::new();
@@ -821,6 +864,24 @@ mod tests {
                 other => panic!("tab {i} root should be List, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn recently_acted_pruning_drops_old_entries_only() {
+        let mut state = make_state();
+        state.mark_recently_acted("ns", "fresh");
+        // Antedate one entry past the grace window.
+        let stale_key = ("ns".to_string(), "stale".to_string());
+        state.recently_acted.insert(
+            stale_key.clone(),
+            std::time::Instant::now()
+                - std::time::Duration::from_secs(RECENTLY_ACTED_GRACE_SECS + 5),
+        );
+        assert_eq!(state.recently_acted.len(), 2);
+        state.prune_recently_acted();
+        assert!(state.is_recently_acted("ns", "fresh"));
+        assert!(!state.is_recently_acted("ns", "stale"));
+        assert!(!state.recently_acted.contains_key(&stale_key));
     }
 
     #[test]
