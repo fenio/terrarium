@@ -477,6 +477,8 @@ impl App {
             &self.state.runner_pods,
             &self.state.namespace_filter,
             self.state.effective_search_query(),
+            self.state.runner_sort_column,
+            self.state.sort_descending,
         );
         let pod = items.get(selected_idx)?;
         Some((
@@ -512,6 +514,8 @@ impl App {
                 &self.state.runner_pods,
                 &self.state.namespace_filter,
                 self.state.effective_search_query(),
+                self.state.runner_sort_column,
+                self.state.sort_descending,
             )
             .len(),
             TabKind::CustomTab(i) => {
@@ -731,7 +735,15 @@ impl App {
                 self.state.metrics_last_error = Some(msg);
             }
             Action::CycleSort => {
-                self.state.sort_column = self.state.sort_column.next();
+                match self.state.active_tab {
+                    TabKind::Runners => {
+                        self.state.runner_sort_column =
+                            self.state.runner_sort_column.next();
+                    }
+                    _ => {
+                        self.state.sort_column = self.state.sort_column.next();
+                    }
+                }
                 self.state.current_table_state().select(Some(0));
             }
             Action::InvertSort => {

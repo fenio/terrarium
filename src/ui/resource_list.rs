@@ -27,14 +27,14 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     let active = state.sort_column;
     let desc = state.sort_descending;
     let header = Row::new(vec![
-        sort_cell(SortColumn::Namespace, "NAMESPACE", active, desc),
-        sort_cell(SortColumn::Name, "NAME", active, desc),
-        sort_cell(SortColumn::Ready, "READY", active, desc),
+        sort_cell("NAMESPACE", active == SortColumn::Namespace, desc),
+        sort_cell("NAME", active == SortColumn::Name, desc),
+        sort_cell("READY", active == SortColumn::Ready, desc),
         Cell::from("S"),
         Cell::from("PLAN"),
         Cell::from("REVISION"),
-        sort_cell(SortColumn::LastApplied, "LAST APPLIED", active, desc),
-        sort_cell(SortColumn::Age, "AGE", active, desc),
+        sort_cell("LAST APPLIED", active == SortColumn::LastApplied, desc),
+        sort_cell("AGE", active == SortColumn::Age, desc),
     ])
     .style(theme::COLUMN_HEADER)
     .bottom_margin(1);
@@ -180,13 +180,8 @@ pub fn get_filtered_terraforms(
 
 /// Build a column header cell that highlights when it's the active sort.
 /// Arrow indicates direction: ▲ ascending, ▼ descending.
-pub(crate) fn sort_cell(
-    col: SortColumn,
-    label: &'static str,
-    active: SortColumn,
-    descending: bool,
-) -> Cell<'static> {
-    if col == active {
+pub(crate) fn sort_cell(label: &'static str, active: bool, descending: bool) -> Cell<'static> {
+    if active {
         let style = Style::default()
             .fg(Color::Rgb(140, 200, 255))
             .add_modifier(Modifier::BOLD);

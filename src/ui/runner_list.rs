@@ -7,7 +7,8 @@ use ratatui::{
     widgets::{Cell, Row, Table},
 };
 
-use crate::state::store::AppState;
+use crate::state::store::{AppState, RunnerSortColumn};
+use crate::ui::resource_list::sort_cell;
 use crate::ui::theme;
 use crate::util;
 
@@ -16,15 +17,19 @@ pub fn render_runner_list(f: &mut Frame, area: Rect, state: &mut AppState) {
         &state.runner_pods,
         &state.namespace_filter,
         state.effective_search_query(),
+        state.runner_sort_column,
+        state.sort_descending,
     );
 
+    let active = state.runner_sort_column;
+    let desc = state.sort_descending;
     let header = Row::new(vec![
-        Cell::from("NAMESPACE"),
-        Cell::from("NAME"),
-        Cell::from("TERRAFORM"),
-        Cell::from("PHASE"),
+        sort_cell("NAMESPACE", active == RunnerSortColumn::Namespace, desc),
+        sort_cell("NAME", active == RunnerSortColumn::Name, desc),
+        sort_cell("TERRAFORM", active == RunnerSortColumn::Terraform, desc),
+        sort_cell("PHASE", active == RunnerSortColumn::Phase, desc),
         Cell::from("STATUS"),
-        Cell::from("AGE"),
+        sort_cell("AGE", active == RunnerSortColumn::Age, desc),
     ])
     .style(theme::COLUMN_HEADER)
     .bottom_margin(1);
@@ -75,8 +80,11 @@ pub fn get_filtered_runners<'a>(
     pods: &'a [Pod],
     namespace_filter: &Option<String>,
     search_query: &str,
+    sort_column: RunnerSortColumn,
+    descending: bool,
 ) -> Vec<&'a Pod> {
-    pods.iter()
+    let mut filtered: Vec<&'a Pod> = pods
+        .iter()
         .filter(|pod| {
             if let Some(ns) = namespace_filter {
                 pod.metadata.namespace.as_deref() == Some(ns.as_str())
@@ -102,7 +110,57 @@ pub fn get_filtered_runners<'a>(
                     || tf.contains(search_query)
             }
         })
-        .collect()
+        .collect();
+
+    match sort_column {
+        RunnerSortColumn::Namespace => filtered.sort_by(|a, b| {
+            a.metadata
+                .namespace
+                .cmp(&b.metadata.namespace)
+                .then(a.metadata.name.cmp(&b.metadata.name))
+        }),
+        RunnerSortColumn::Name => {
+            filtered.sort_by(|a, b| a.metadata.name.cmp(&b.metadata.name))
+        }
+        RunnerSortColumn::Terraform => filtered.sort_by(|a, b| {
+            tf_name(a)
+                .cmp(&tf_name(b))
+                .then(a.metadata.name.cmp(&b.metadata.name))
+        }),
+        RunnerSortColumn::Phase => filtered.sort_by(|a, b| {
+            pod_phase(a)
+                .cmp(&pod_phase(b))
+                .then(a.metadata.name.cmp(&b.metadata.name))
+        }),
+        RunnerSortColumn::Age => filtered.sort_by(|a, b| {
+            // Ascending by creation timestamp = oldest first.
+            let age_a = a.metadata.creation_timestamp.as_ref().map(|t| t.0);
+            let age_b = b.metadata.creation_timestamp.as_ref().map(|t| t.0);
+            age_a.cmp(&age_b)
+        }),
+    }
+
+    if descending {
+        filtered.reverse();
+    }
+    filtered
+}
+
+fn tf_name(pod: &Pod) -> String {
+    pod.metadata
+        .name
+        .as_deref()
+        .and_then(|n| n.strip_suffix("-tf-runner"))
+        .unwrap_or("")
+        .to_string()
+}
+
+fn pod_phase(pod: &Pod) -> String {
+    pod.status
+        .as_ref()
+        .and_then(|s| s.phase.as_deref())
+        .unwrap_or("")
+        .to_string()
 }
 
 fn get_pod_status(pod: &Pod) -> (String, Style) {

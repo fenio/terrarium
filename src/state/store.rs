@@ -154,6 +154,42 @@ impl SortColumn {
     }
 }
 
+/// Sortable columns on the Runners tab. Kept separate from `SortColumn` because
+/// the Runners view has no Ready/LastApplied — but does have Terraform and
+/// Phase — so a shared enum would expose meaningless cycle entries.
+/// PHASE and STATUS render the same underlying pod phase with different
+/// styling, so only PHASE is in the cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunnerSortColumn {
+    Namespace,
+    Name,
+    Terraform,
+    Phase,
+    Age,
+}
+
+impl RunnerSortColumn {
+    pub fn next(self) -> Self {
+        match self {
+            RunnerSortColumn::Namespace => RunnerSortColumn::Name,
+            RunnerSortColumn::Name => RunnerSortColumn::Terraform,
+            RunnerSortColumn::Terraform => RunnerSortColumn::Phase,
+            RunnerSortColumn::Phase => RunnerSortColumn::Age,
+            RunnerSortColumn::Age => RunnerSortColumn::Namespace,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RunnerSortColumn::Namespace => "namespace",
+            RunnerSortColumn::Name => "name",
+            RunnerSortColumn::Terraform => "terraform",
+            RunnerSortColumn::Phase => "phase",
+            RunnerSortColumn::Age => "age",
+        }
+    }
+}
+
 pub struct AppState {
     pub config: Config,
 
@@ -205,6 +241,7 @@ pub struct AppState {
     pub viewer_search_index: usize,
 
     pub sort_column: SortColumn,
+    pub runner_sort_column: RunnerSortColumn,
     pub sort_descending: bool,
 
     /// Set of (namespace, name) for bulk-selected resources
@@ -325,6 +362,7 @@ impl AppState {
             viewer_search_matches: Vec::new(),
             viewer_search_index: 0,
             sort_column: SortColumn::Name,
+            runner_sort_column: RunnerSortColumn::Namespace,
             sort_descending: false,
             bulk_selected: std::collections::HashSet::new(),
             tf_synced: false,

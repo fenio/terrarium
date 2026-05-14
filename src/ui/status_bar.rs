@@ -329,9 +329,13 @@ fn build_meta_line(state: &AppState) -> Vec<Span<'static>> {
     if on_sortable_list || on_runners_list {
         meta.push(Span::styled(" n", k));
         meta.push(Span::styled(":ns ", t));
+        let arrow = if state.sort_descending { "▼" } else { "▲" };
         if on_sortable_list {
-            let arrow = if state.sort_descending { "▼" } else { "▲" };
             let sort_text = format!("sort:{}{}", state.sort_column.label(), arrow);
+            meta.push(Span::styled("o", k));
+            meta.push(Span::styled(format!(":{sort_text} "), t));
+        } else if on_runners_list {
+            let sort_text = format!("sort:{}{}", state.runner_sort_column.label(), arrow);
             meta.push(Span::styled("o", k));
             meta.push(Span::styled(format!(":{sort_text} "), t));
         }
