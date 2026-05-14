@@ -367,6 +367,25 @@ fn build_meta_line(state: &AppState) -> Vec<Span<'static>> {
         spans.push(Span::styled(label, t));
     }
 
+    // Bulk-selection count, when non-empty. Shown only on the lists
+    // where selection is meaningful (TF, KS, custom tabs).
+    let on_bulk_list = matches!(
+        state.current_view(),
+        ViewState::List(TabKind::Terraform)
+            | ViewState::List(TabKind::Kustomizations)
+            | ViewState::List(TabKind::CustomTab(_))
+    );
+    if on_bulk_list && !state.bulk_selected.is_empty() {
+        if spans.is_empty() {
+            spans.push(Span::styled(" ", t));
+        } else {
+            spans.push(Span::styled(" │ ", s));
+        }
+        let count = state.bulk_selected.len();
+        spans.push(Span::styled("●", theme::BULK_SELECTED));
+        spans.push(Span::styled(format!(" {count} selected"), t));
+    }
+
     // Configured shortcuts roll up under one S:shortcuts hint — the
     // popup (opened with S) shows the full list with resolved URLs.
     let is_tf_view = matches!(

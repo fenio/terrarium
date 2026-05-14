@@ -565,13 +565,13 @@ impl AppState {
         let cur = self.active_tab.index(count);
         let next = (cur + 1) % count;
         if let Some(tab) = tab_from_index(next, &self.config) {
-            self.active_tab = tab;
+            self.switch_tab_to(tab);
         }
     }
 
     pub fn go_to_tab(&mut self, idx: usize) {
         if let Some(tab) = tab_from_index(idx, &self.config) {
-            self.active_tab = tab;
+            self.switch_tab_to(tab);
         }
     }
 
@@ -580,8 +580,19 @@ impl AppState {
         let cur = self.active_tab.index(count);
         let prev = if cur == 0 { count - 1 } else { cur - 1 };
         if let Some(tab) = tab_from_index(prev, &self.config) {
-            self.active_tab = tab;
+            self.switch_tab_to(tab);
         }
+    }
+
+    /// Common tail of next_tab/prev_tab/go_to_tab. Clears the bulk
+    /// selection on a real switch — the selection is per-tab in spirit
+    /// (kinds differ between tabs), and carrying it across would let
+    /// the next keypress act on resources the user can no longer see.
+    fn switch_tab_to(&mut self, tab: TabKind) {
+        if self.active_tab != tab {
+            self.bulk_selected.clear();
+        }
+        self.active_tab = tab;
     }
 
     pub fn current_table_state(&mut self) -> &mut TableState {
@@ -810,6 +821,34 @@ mod tests {
                 other => panic!("tab {i} root should be List, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn switching_tabs_clears_bulk_selection() {
+        let mut state = make_state();
+        state.bulk_selected.insert(("ns".into(), "name".into()));
+        assert_eq!(state.bulk_selected.len(), 1);
+
+        // Switching to a different tab clears the selection — carrying
+        // it across would let the next keypress act on resources the
+        // user can no longer see.
+        state.next_tab();
+        assert!(
+            state.bulk_selected.is_empty(),
+            "selection must clear on tab switch"
+        );
+
+        // No-op "switch" to the same tab must NOT clear (helps keep
+        // accidental re-selections from costing the user their work).
+        state.bulk_selected.insert(("ns".into(), "name".into()));
+        let cur = state.active_tab.clone();
+        let idx = cur.index(state.tab_count());
+        state.go_to_tab(idx);
+        assert_eq!(
+            state.bulk_selected.len(),
+            1,
+            "same-tab go_to_tab must not clear selection"
+        );
     }
 
     #[test]

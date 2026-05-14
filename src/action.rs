@@ -81,12 +81,10 @@ pub enum Action {
 
     // Bulk selection
     ToggleSelect,
-    #[allow(dead_code)]
     BulkReconcile,
-    #[allow(dead_code)]
     BulkSuspend,
-    #[allow(dead_code)]
     BulkResume,
+    BulkApprovePlan,
 
     // K8s mutations (Terraform-specific)
     ApprovePlan {

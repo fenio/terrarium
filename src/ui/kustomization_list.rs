@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Cell, Row, Table},
 };
 
-use crate::ui::resource_list::sort_cell;
+use crate::ui::resource_list::{bulk_marker_cell, sort_cell};
 
 use crate::k8s::kustomization::Kustomization;
 use crate::k8s::watcher::KsStore;
@@ -29,6 +29,7 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
     let active = state.sort_column;
     let desc = state.sort_descending;
     let header = Row::new(vec![
+        Cell::from(" "),
         sort_cell("NAMESPACE", active == SortColumn::Namespace, desc),
         sort_cell("NAME", active == SortColumn::Name, desc),
         sort_cell("READY", active == SortColumn::Ready, desc),
@@ -47,6 +48,7 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
             let ns = ks.metadata.namespace.as_deref().unwrap_or("-");
             let name = ks.metadata.name.as_deref().unwrap_or("-");
             let (ready_text, ready_style) = get_ready_status(ks);
+            let bulk_cell = bulk_marker_cell(state, ns, name);
             let suspended_cell = if ks.spec.suspend.unwrap_or(false) {
                 Cell::from(Span::styled("S", theme::SUSPENDED))
             } else {
@@ -63,6 +65,7 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
             let age = get_age(ks);
 
             Row::new(vec![
+                bulk_cell,
                 Cell::from(ns.to_string()),
                 Cell::from(name.to_string()),
                 Cell::from(Span::styled(ready_text, ready_style)),
@@ -76,6 +79,7 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
         .collect();
 
     let widths = [
+        Constraint::Length(2),
         Constraint::Percentage(12),
         Constraint::Percentage(20),
         Constraint::Percentage(8),

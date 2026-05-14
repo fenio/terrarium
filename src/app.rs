@@ -208,6 +208,52 @@ impl App {
         self.resolve_tf_action(code, Some(&ns), Some(&name))
     }
 
+    /// Map a keypress to the right bulk action for the Terraform tab.
+    /// Returns `None` for keys that don't have a bulk equivalent,
+    /// letting the per-row resolver handle them as a fallback.
+    fn resolve_bulk_tf_action(&self, code: KeyCode) -> Option<Action> {
+        let n = self.state.bulk_selected.len();
+        match code {
+            KeyCode::Char('r') => Some(Action::ShowConfirmDialog(
+                Box::new(Action::BulkReconcile),
+                format!("Reconcile {n} selected Terraform resource(s)?"),
+            )),
+            KeyCode::Char('s') => Some(Action::ShowConfirmDialog(
+                Box::new(Action::BulkSuspend),
+                format!("Suspend {n} selected Terraform resource(s)?"),
+            )),
+            KeyCode::Char('u') => Some(Action::ShowConfirmDialog(
+                Box::new(Action::BulkResume),
+                format!("Resume {n} selected Terraform resource(s)?"),
+            )),
+            KeyCode::Char('a') => Some(Action::ShowConfirmDialog(
+                Box::new(Action::BulkApprovePlan),
+                format!("Approve plans for {n} selected Terraform resource(s)?"),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Map a keypress to the right bulk action for the Kustomization tab.
+    fn resolve_bulk_ks_action(&self, code: KeyCode) -> Option<Action> {
+        let n = self.state.bulk_selected.len();
+        match code {
+            KeyCode::Char('r') => Some(Action::ShowConfirmDialog(
+                Box::new(Action::BulkReconcile),
+                format!("Reconcile {n} selected Kustomization(s)?"),
+            )),
+            KeyCode::Char('s') => Some(Action::ShowConfirmDialog(
+                Box::new(Action::BulkSuspend),
+                format!("Suspend {n} selected Kustomization(s)?"),
+            )),
+            KeyCode::Char('u') => Some(Action::ShowConfirmDialog(
+                Box::new(Action::BulkResume),
+                format!("Resume {n} selected Kustomization(s)?"),
+            )),
+            _ => None,
+        }
+    }
+
     /// Resolve Terraform context-dependent actions.
     fn resolve_tf_action(
         &self,
@@ -215,6 +261,18 @@ impl App {
         ns: Option<&String>,
         name: Option<&String>,
     ) -> Option<Action> {
+        // Bulk-aware: when there's a multi-select, r/s/u/a operate on
+        // the selection instead of the row under the cursor. The
+        // single-resource fall-through below covers the empty-selection
+        // case and detail views (where bulk doesn't apply anyway).
+        if matches!(self.state.current_view(), ViewState::List(_))
+            && !self.state.bulk_selected.is_empty()
+        {
+            if let Some(action) = self.resolve_bulk_tf_action(code) {
+                return Some(action);
+            }
+        }
+
         let (ns, name) = match (ns, name) {
             (Some(n), Some(nm)) => (n.clone(), nm.clone()),
             _ => self.get_selected_terraform()?,
@@ -331,6 +389,15 @@ impl App {
         ns: Option<&String>,
         name: Option<&String>,
     ) -> Option<Action> {
+        // Bulk-aware: see resolve_tf_action for the rationale.
+        if matches!(self.state.current_view(), ViewState::List(_))
+            && !self.state.bulk_selected.is_empty()
+        {
+            if let Some(action) = self.resolve_bulk_ks_action(code) {
+                return Some(action);
+            }
+        }
+
         let (ns, name) = match (ns, name) {
             (Some(n), Some(nm)) => (n.clone(), nm.clone()),
             _ => self.get_selected_kustomization()?,
@@ -955,8 +1022,13 @@ impl App {
             },
             Action::Back => {
                 if matches!(self.state.current_view(), ViewState::List(_)) {
-                    // Peel off filters one at a time: search → failures/waiting → namespace
-                    if !self.state.search_query.is_empty() {
+                    // Peel off, most recent first: bulk selection → search →
+                    // failures/waiting/progressing → namespace. Clearing
+                    // bulk first gives the user a fast escape after a
+                    // multi-select they don't want to act on.
+                    if !self.state.bulk_selected.is_empty() {
+                        self.state.bulk_selected.clear();
+                    } else if !self.state.search_query.is_empty() {
                         self.state.search_query.clear();
                         self.state.search_suspended = false;
                     } else if self.state.show_failures_only {
@@ -1152,6 +1224,13 @@ impl App {
                 {
                     self.state.bulk_selected.insert(key);
                 }
+                // After toggling, march the cursor forward so repeated
+                // Space presses select consecutive rows (k9s pattern).
+                let count = self.current_list_count();
+                let cur = self.state.current_table_state().selected().unwrap_or(0);
+                if count > 0 && cur + 1 < count {
+                    self.state.current_table_state().select(Some(cur + 1));
+                }
             }
             Action::BulkReconcile => {
                 self.execute_bulk_action(|ns, name, kind| Action::Reconcile {
@@ -1170,6 +1249,15 @@ impl App {
             Action::BulkResume => {
                 self.execute_bulk_action(|ns, name, kind| Action::Resume {
                     kind,
+                    namespace: ns,
+                    name,
+                });
+            }
+            Action::BulkApprovePlan => {
+                // ApprovePlan is Terraform-only; the resolver gates the
+                // key binding on the TF tab, so the `kind` arg from
+                // execute_bulk_action is unused here.
+                self.execute_bulk_action(|ns, name, _kind| Action::ApprovePlan {
                     namespace: ns,
                     name,
                 });
@@ -1769,18 +1857,30 @@ impl App {
         }
     }
 
-    fn execute_bulk_action<F>(&self, make_action: F)
+    fn execute_bulk_action<F>(&mut self, make_action: F)
     where
         F: Fn(String, String, ResourceKind) -> Action,
     {
         let kind = match self.state.active_tab {
-            TabKind::Terraform => ResourceKind::Terraform,
+            TabKind::Terraform | TabKind::CustomTab(_) => ResourceKind::Terraform,
             TabKind::Kustomizations => ResourceKind::Kustomization,
             _ => return,
         };
-        for (ns, name) in &self.state.bulk_selected {
-            let action = make_action(ns.clone(), name.clone(), kind.clone());
+        // Take the selection so it auto-clears after dispatch — the
+        // user has acted on it, leaving it selected would be a footgun
+        // on the next keypress.
+        let selected = std::mem::take(&mut self.state.bulk_selected);
+        let count = selected.len();
+        for (ns, name) in selected {
+            let action = make_action(ns, name, kind.clone());
             self.spawn_k8s_action(action);
+        }
+        if count > 0 {
+            self.state.flash_message = Some((
+                format!("Dispatched {count} bulk action(s)"),
+                Instant::now(),
+                FlashKind::Success,
+            ));
         }
     }
 

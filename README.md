@@ -93,6 +93,23 @@ having to back out first.
 | `i` | Invert sort direction (ascending ↔ descending) |
 | `!` | Jump to first failure in the list |
 
+### Bulk Operations
+
+Select multiple Terraform or Kustomization resources and apply an
+action to all of them at once.
+
+| Key | Action |
+|-----|--------|
+| `Space` | Toggle selection on the current row (cursor advances) |
+| `r` | Reconcile all selected (with confirmation) |
+| `s` / `u` | Suspend / resume all selected (with confirmation) |
+| `a` | Approve plans for all selected (Terraform only) |
+| `Esc` | Clear the selection |
+
+Selected rows are marked with `●` in the leftmost column and a count
+appears in the status bar. With an empty selection, `r`/`s`/`u`/`a`
+keep their per-row behaviour. Switching tabs clears the selection.
+
 ### Controller Tab
 
 | Key | Action |

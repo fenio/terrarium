@@ -58,6 +58,11 @@ pub const DIALOG_BORDER: Style = Style::new().fg(Color::Rgb(240, 200, 60));
 
 // Special values
 pub const SUSPENDED: Style = Style::new().fg(Color::Rgb(240, 200, 60));
+/// Bulk-selection marker in the leftmost list column. Distinct enough
+/// from SUSPENDED's yellow that the two indicators don't run together.
+pub const BULK_SELECTED: Style = Style::new()
+    .fg(Color::Rgb(120, 200, 230))
+    .add_modifier(Modifier::BOLD);
 
 // Plan syntax highlighting
 pub const PLAN_CREATE: Style = Style::new().fg(Color::Rgb(80, 220, 100));

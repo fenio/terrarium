@@ -27,6 +27,7 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     let active = state.sort_column;
     let desc = state.sort_descending;
     let header = Row::new(vec![
+        Cell::from(" "),
         sort_cell("NAMESPACE", active == SortColumn::Namespace, desc),
         sort_cell("NAME", active == SortColumn::Name, desc),
         sort_cell("READY", active == SortColumn::Ready, desc),
@@ -46,6 +47,7 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
             let name = tf.metadata.name.as_deref().unwrap_or("-");
 
             let (ready_text, ready_style) = get_ready_status(tf);
+            let bulk_cell = bulk_marker_cell(state, ns, name);
             let suspended_cell = if tf.spec.suspend.unwrap_or(false) {
                 Cell::from(Span::styled("S", theme::SUSPENDED))
             } else {
@@ -62,6 +64,7 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
             let age = get_age(tf);
 
             Row::new(vec![
+                bulk_cell,
                 Cell::from(ns.to_string()),
                 Cell::from(name.to_string()),
                 Cell::from(Span::styled(ready_text, ready_style)),
@@ -75,6 +78,7 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
         .collect();
 
     let widths = [
+        Constraint::Length(2),
         Constraint::Percentage(12),
         Constraint::Percentage(23),
         Constraint::Percentage(8),
@@ -181,6 +185,19 @@ pub fn get_filtered_terraforms(
         filtered.reverse();
     }
     filtered
+}
+
+/// Marker cell for the leftmost list column. Shows `●` (styled) when
+/// `(namespace, name)` is in the bulk selection, otherwise blank.
+pub(crate) fn bulk_marker_cell(state: &AppState, namespace: &str, name: &str) -> Cell<'static> {
+    if state
+        .bulk_selected
+        .contains(&(namespace.to_string(), name.to_string()))
+    {
+        Cell::from(Span::styled("●", theme::BULK_SELECTED))
+    } else {
+        Cell::from(" ")
+    }
 }
 
 /// Build a column header cell that highlights when it's the active sort.
