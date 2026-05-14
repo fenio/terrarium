@@ -2777,17 +2777,17 @@ mod tests {
     #[test]
     fn label_placeholder_substitutes_metadata_value() {
         let labels = meta(&[
-            ("armada_akam_ai_cluster_name", "us-ord-grf-mt01-prod"),
+            ("parent_cluster_name", "app-prod-01"),
             ("kustomize.toolkit.fluxcd.io/name", "external-resources"),
         ]);
         let result = resolve_map_placeholders(
-            "https://gitlab.example.com/tree/main/prod/{label.armada_akam_ai_cluster_name}",
+            "https://gitlab.example.com/tree/main/prod/{label.parent_cluster_name}",
             "label",
             Some(&labels),
         );
         assert_eq!(
             result,
-            "https://gitlab.example.com/tree/main/prod/us-ord-grf-mt01-prod"
+            "https://gitlab.example.com/tree/main/prod/app-prod-01"
         );
     }
 
