@@ -1280,7 +1280,22 @@ impl App {
                 self.state.input_mode = InputMode::Normal;
                 if confirmed {
                     if let Some(dialog) = self.state.pending_dialog.take() {
-                        self.spawn_k8s_action(dialog.wrapped_action);
+                        match dialog.wrapped_action {
+                            // Bulk meta-actions need the main dispatcher's
+                            // BulkReconcile/Suspend/Resume/ApprovePlan
+                            // handlers, which iterate bulk_selected and
+                            // call spawn_k8s_action per row. Re-enqueueing
+                            // through action_tx routes them there;
+                            // spawn_k8s_action would hit the catch-all in
+                            // execute_k8s_action and silently no-op.
+                            wrapped @ (Action::BulkReconcile
+                            | Action::BulkSuspend
+                            | Action::BulkResume
+                            | Action::BulkApprovePlan) => {
+                                let _ = self.action_tx.send(wrapped);
+                            }
+                            wrapped => self.spawn_k8s_action(wrapped),
+                        }
                     }
                 } else {
                     self.state.pending_dialog = None;
