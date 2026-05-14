@@ -19,7 +19,17 @@ pub fn render(f: &mut Frame, state: &AppState) {
     let Some((ns, name)) = state.shortcuts_popup_resource.as_ref() else {
         return;
     };
-    let shortcuts = &state.config.shortcuts;
+    if state.config.shortcuts.is_empty() {
+        return;
+    }
+    // Only entries whose `when` matches the open resource are shown.
+    // Computed once when the popup opens; we just project the indices
+    // back to Shortcut references here.
+    let shortcuts: Vec<&Shortcut> = state
+        .shortcuts_popup_visible
+        .iter()
+        .filter_map(|&i| state.config.shortcuts.get(i))
+        .collect();
     if shortcuts.is_empty() {
         return;
     }
@@ -30,9 +40,9 @@ pub fn render(f: &mut Frame, state: &AppState) {
     // height calculation and the render — so what you see is exactly
     // what was sized for, no clipping or trailing whitespace.
     let label_width = shortcuts.iter().map(|s| s.label.len()).max().unwrap_or(0);
-    let area_for_sizing = popup_rect(f.area(), shortcuts, &title, label_width);
+    let area_for_sizing = popup_rect(f.area(), &shortcuts, &title, label_width);
     let inner_width = area_for_sizing.width.saturating_sub(2) as usize;
-    let lines = build_lines(state, shortcuts, label_width, inner_width);
+    let lines = build_lines(state, &shortcuts, label_width, inner_width);
 
     f.render_widget(Clear, area_for_sizing);
     let block = detail::block(&title);
@@ -56,7 +66,7 @@ pub fn render(f: &mut Frame, state: &AppState) {
 
 fn build_lines(
     state: &AppState,
-    shortcuts: &[Shortcut],
+    shortcuts: &[&Shortcut],
     label_width: usize,
     inner_width: usize,
 ) -> Vec<Line<'static>> {
@@ -85,7 +95,7 @@ fn build_lines(
     let mut current_group: Option<String> = None;
     let mut first = true;
 
-    for (i, sc) in shortcuts.iter().enumerate() {
+    for (i, sc) in shortcuts.iter().copied().enumerate() {
         let group_changed = sc.group != current_group;
         if group_changed {
             if !first {
@@ -241,7 +251,7 @@ fn truncate_visual(s: &str, budget: usize) -> String {
 /// Center a popup whose default size is generous (~60% screen width)
 /// and which only grows beyond that to fit content. Height is
 /// content-driven (entries + section headers + chrome).
-fn popup_rect(screen: Rect, shortcuts: &[Shortcut], title: &str, label_width: usize) -> Rect {
+fn popup_rect(screen: Rect, shortcuts: &[&Shortcut], title: &str, label_width: usize) -> Rect {
     let desc_width = shortcuts
         .iter()
         .map(|s| description_for(s).chars().count())

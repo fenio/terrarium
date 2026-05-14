@@ -72,11 +72,32 @@ pub struct Shortcut {
     /// instead.
     #[serde(default)]
     pub url: Option<String>,
+    /// Optional applicability filter. Multiple shortcuts can share a
+    /// `key`; on activation terrarium picks the first one whose `when`
+    /// matches the selected resource. Entries without a `when` always
+    /// match (the historical behaviour). All specified `when` fields
+    /// must match (AND).
+    #[serde(default)]
+    pub when: Option<When>,
     /// Nested submenu entries. When present, activating this shortcut
     /// drills into a submenu in the Shortcuts popup. Each child can
     /// itself have children for deeper menus.
     #[serde(default)]
     pub children: Vec<Shortcut>,
+}
+
+/// Resource-applicability filter for a shortcut. Field values are
+/// regular expressions matched against the corresponding part of the
+/// selected resource. Empty/missing fields impose no constraint.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct When {
+    /// Regex matched against the resource name (e.g. `^cluster-`).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Regex matched against the resource namespace.
+    #[serde(default)]
+    pub namespace: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

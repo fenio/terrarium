@@ -92,3 +92,41 @@ label = "ArgoCD"
 description = "apps search on this cluster's ArgoCD"
 group = "GitOps"
 url = "https://{secret.cluster-config.argocd_url}/applications?search={output.cluster_id}"
+
+# ---------- Conditional shortcuts (`when`) ----------
+#
+# Multiple shortcuts can share a key. terrarium picks the first one
+# whose `when` filter matches the selected resource; entries without a
+# `when` always match. The Shortcuts popup hides entries that don't
+# apply to the open resource, so each kind of TF only sees its own
+# shortcuts.
+#
+# `when.name` and `when.namespace` are regex patterns (the `regex` crate).
+# Use anchors `^`/`$` for prefix/exact matches. Both are optional;
+# when both are present, they must both match (AND).
+#
+# Example: a single `g` key that opens the right gitops tree depending
+# on the resource's name shape.
+
+[[shortcuts]]
+key = "g"
+label = "GitOps tree"
+description = "cluster bundle in the platform repo"
+group = "Repos"
+when = { name = "^cluster-" }
+url = "https://git.example.com/platform/clusters/-/tree/main/{name}"
+
+[[shortcuts]]
+key = "g"
+label = "GitOps tree"
+description = "GTM automation entry"
+group = "Repos"
+when = { name = "^gtm-automation-" }
+url = "https://git.example.com/platform/gtm/-/tree/main/{name}"
+
+[[shortcuts]]
+key = "g"
+label = "GitOps tree"
+description = "fallback when no other pattern matches"
+group = "Repos"
+url = "https://git.example.com/platform/misc/-/tree/main/{name}"

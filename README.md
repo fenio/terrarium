@@ -315,6 +315,42 @@ Submenu shortcuts (nesting one shortcut under another via a `children` array
 of further `[[shortcuts]]`) are accepted by the config parser but the popup
 doesn't drill into them yet — that's planned for a later release.
 
+**Conditional shortcuts (`when`):**
+
+Multiple shortcuts can share the same `key`. When the key is pressed,
+terrarium picks the first entry whose `when` filter matches the
+selected resource. Entries without a `when` always match. The
+Shortcuts popup hides entries that don't apply to the open resource.
+
+```toml
+# GitOps tree for clusters (most resources)
+[[shortcuts]]
+key = "g"
+label = "GitOps tree"
+when = { name = "^cluster-" }
+url = "https://git.example.com/repo/-/tree/main/clusters/{name}"
+
+# Same key, different repo path for GTM automation resources
+[[shortcuts]]
+key = "g"
+label = "GitOps tree"
+when = { name = "^gtm-automation-" }
+url = "https://git.example.com/repo/-/tree/main/gtm/{name}"
+
+# Fallback that matches anything (no `when`); listed last so the more
+# specific entries above win when applicable.
+[[shortcuts]]
+key = "g"
+label = "GitOps tree (fallback)"
+url = "https://git.example.com/repo/-/tree/main/other/{name}"
+```
+
+`when.name` and `when.namespace` are Rust regex strings (the
+[`regex` crate](https://docs.rs/regex)); use anchors `^`/`$` for
+prefix/exact matches. Both fields are optional; when both are
+present, they're combined with AND. Invalid regexes are skipped with a
+stderr warning at startup rather than crashing.
+
 See [examples/shortcuts.toml](examples/shortcuts.toml) for examples including
 Grafana, Vault, and cloud console links.
 

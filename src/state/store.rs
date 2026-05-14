@@ -154,6 +154,32 @@ impl SortColumn {
     }
 }
 
+/// Compiled `when` filter for a shortcut. Built once at config load
+/// from `config::When` so each render frame doesn't recompile regexes.
+#[derive(Debug, Clone)]
+pub struct CompiledWhen {
+    pub name: Option<regex::Regex>,
+    pub namespace: Option<regex::Regex>,
+}
+
+impl CompiledWhen {
+    /// True when this filter allows the given resource. All specified
+    /// fields must match; missing fields impose no constraint.
+    pub fn matches(&self, namespace: &str, name: &str) -> bool {
+        if let Some(re) = &self.name
+            && !re.is_match(name)
+        {
+            return false;
+        }
+        if let Some(re) = &self.namespace
+            && !re.is_match(namespace)
+        {
+            return false;
+        }
+        true
+    }
+}
+
 /// Sortable columns on the Runners tab. Kept separate from `SortColumn` because
 /// the Runners view has no Ready/LastApplied — but does have Terraform and
 /// Phase — so a shared enum would expose meaningless cycle entries.
@@ -268,6 +294,18 @@ pub struct AppState {
     /// All shortcut URLs render with this resource's placeholders resolved.
     pub shortcuts_popup_resource: Option<(String, String)>,
     pub shortcuts_popup_selected: usize,
+    /// Config indices of the shortcuts visible in the popup for the
+    /// currently-open resource. Computed when the popup is opened so
+    /// `when` regexes don't have to be re-evaluated per render frame.
+    /// `shortcuts_popup_selected` indexes into this list, not the raw
+    /// config vector.
+    pub shortcuts_popup_visible: Vec<usize>,
+
+    /// Compiled `when` filters parallel to `config.shortcuts`. Entry
+    /// `i` is `None` when the shortcut has no filter (or its regex
+    /// failed to compile — see config load warnings). Populated once
+    /// at startup; never reallocated afterwards.
+    pub compiled_shortcut_filters: Vec<Option<CompiledWhen>>,
 
     // Log streaming
     pub log_stream_handle: Option<tokio::task::JoinHandle<()>>,
@@ -313,6 +351,48 @@ pub enum FlashKind {
     Error,
 }
 
+/// Compile each shortcut's `when` filter to a runtime-checkable form.
+/// On bad regex syntax the entry collapses to `None` (always matches)
+/// with a stderr warning — consistent with the config loader's lenient
+/// posture toward malformed entries.
+fn compile_shortcut_filters(shortcuts: &[crate::config::Shortcut]) -> Vec<Option<CompiledWhen>> {
+    shortcuts
+        .iter()
+        .map(|s| {
+            let when = s.when.as_ref()?;
+            let name = when
+                .name
+                .as_deref()
+                .map(|r| compile_or_warn(r, "name", s.key, &s.label))
+                .unwrap_or(None);
+            let namespace = when
+                .namespace
+                .as_deref()
+                .map(|r| compile_or_warn(r, "namespace", s.key, &s.label))
+                .unwrap_or(None);
+            // If both fields are absent (or both failed to compile),
+            // there's nothing to enforce — fall back to "always match".
+            if name.is_none() && namespace.is_none() {
+                None
+            } else {
+                Some(CompiledWhen { name, namespace })
+            }
+        })
+        .collect()
+}
+
+fn compile_or_warn(pattern: &str, field: &str, key: char, label: &str) -> Option<regex::Regex> {
+    match regex::Regex::new(pattern) {
+        Ok(re) => Some(re),
+        Err(e) => {
+            eprintln!(
+                "Warning: shortcut '{label}' ({key}) has invalid `when.{field}` regex {pattern:?}: {e}"
+            );
+            None
+        }
+    }
+}
+
 impl AppState {
     pub fn new(
         tf_store: TfStore,
@@ -329,6 +409,7 @@ impl AppState {
                 vec![ViewState::List(tab)]
             })
             .collect();
+        let compiled_shortcut_filters = compile_shortcut_filters(&config.shortcuts);
         Self {
             config,
             tf_store,
@@ -379,6 +460,8 @@ impl AppState {
             ns_picker_selected: 0,
             shortcuts_popup_resource: None,
             shortcuts_popup_selected: 0,
+            shortcuts_popup_visible: Vec::new(),
+            compiled_shortcut_filters,
             log_stream_handle: None,
             log_auto_follow: true,
             pending_dialog: None,
@@ -396,6 +479,39 @@ impl AppState {
             metrics_last_error: None,
             metrics_task: None,
         }
+    }
+
+    /// True when the shortcut at `idx` applies to the given resource.
+    /// Out-of-range indices and shortcuts without a `when` always match.
+    pub fn shortcut_applies(&self, idx: usize, namespace: &str, name: &str) -> bool {
+        match self.compiled_shortcut_filters.get(idx) {
+            Some(Some(filter)) => filter.matches(namespace, name),
+            _ => true,
+        }
+    }
+
+    /// Find the index of the first shortcut bound to `key` whose `when`
+    /// matches the given resource. Returns `None` when no shortcut
+    /// matches — direct-activation paths flash an error in that case.
+    pub fn resolve_shortcut_for(&self, key: char, namespace: &str, name: &str) -> Option<usize> {
+        self.config
+            .shortcuts
+            .iter()
+            .enumerate()
+            .find(|(i, s)| s.key == key && self.shortcut_applies(*i, namespace, name))
+            .map(|(i, _)| i)
+    }
+
+    /// Indices into `config.shortcuts` of all entries applicable to the
+    /// given resource — used by the popup to hide non-matching entries.
+    pub fn visible_shortcut_indices(&self, namespace: &str, name: &str) -> Vec<usize> {
+        self.config
+            .shortcuts
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.shortcut_applies(*i, namespace, name))
+            .map(|(i, _)| i)
+            .collect()
     }
 
     /// Returns the search query used for filtering. Empty when search is suspended.
@@ -550,6 +666,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Shortcut, When};
     use crate::k8s::watcher::{create_gitrepo_store, create_ks_store, create_tf_store};
 
     fn make_state() -> AppState {
@@ -557,6 +674,128 @@ mod tests {
         let (ks, _) = create_ks_store();
         let (gr, _) = create_gitrepo_store();
         AppState::new(tf, ks, gr, "test-ctx".to_string(), Config::default())
+    }
+
+    fn shortcut(key: char, label: &str, when: Option<When>) -> Shortcut {
+        Shortcut {
+            key,
+            label: label.into(),
+            description: None,
+            group: None,
+            url: Some(format!("https://example.com/{label}")),
+            when,
+            children: Vec::new(),
+        }
+    }
+
+    fn state_with_shortcuts(shortcuts: Vec<Shortcut>) -> AppState {
+        let config = Config {
+            shortcuts,
+            ..Config::default()
+        };
+        let (tf, _) = create_tf_store();
+        let (ks, _) = create_ks_store();
+        let (gr, _) = create_gitrepo_store();
+        AppState::new(tf, ks, gr, "test-ctx".to_string(), config)
+    }
+
+    #[test]
+    fn resolve_shortcut_picks_first_matching_when() {
+        let state = state_with_shortcuts(vec![
+            shortcut(
+                'g',
+                "clusters",
+                Some(When {
+                    name: Some("^cluster-".into()),
+                    namespace: None,
+                }),
+            ),
+            shortcut(
+                'g',
+                "gtm",
+                Some(When {
+                    name: Some("^gtm-automation-".into()),
+                    namespace: None,
+                }),
+            ),
+            // Fallback with no when — should win for anything that
+            // doesn't match the patterns above.
+            shortcut('g', "fallback", None),
+        ]);
+
+        assert_eq!(
+            state.resolve_shortcut_for('g', "ns", "cluster-us-ord-tsdb-aclp01-prod"),
+            Some(0),
+            "cluster-* should resolve to the clusters shortcut"
+        );
+        assert_eq!(
+            state.resolve_shortcut_for('g', "ns", "gtm-automation-acme"),
+            Some(1),
+            "gtm-* should resolve to the gtm shortcut"
+        );
+        assert_eq!(
+            state.resolve_shortcut_for('g', "ns", "psv2-cfg-cloudlogs01-grafana-xyz"),
+            Some(2),
+            "everything else should fall through to the fallback shortcut"
+        );
+    }
+
+    #[test]
+    fn resolve_shortcut_returns_none_when_nothing_matches() {
+        let state = state_with_shortcuts(vec![shortcut(
+            'g',
+            "clusters",
+            Some(When {
+                name: Some("^cluster-".into()),
+                namespace: None,
+            }),
+        )]);
+        assert_eq!(
+            state.resolve_shortcut_for('g', "ns", "gtm-automation-acme"),
+            None,
+        );
+    }
+
+    #[test]
+    fn when_namespace_filter_is_anded_with_name() {
+        let state = state_with_shortcuts(vec![shortcut(
+            'g',
+            "prod-clusters",
+            Some(When {
+                name: Some("^cluster-".into()),
+                namespace: Some("^flux-prod-".into()),
+            }),
+        )]);
+        assert_eq!(
+            state.resolve_shortcut_for('g', "flux-prod-shared", "cluster-us-ord-foo"),
+            Some(0)
+        );
+        // Wrong namespace — must not match.
+        assert_eq!(
+            state.resolve_shortcut_for('g', "flux-stag-shared", "cluster-us-ord-foo"),
+            None
+        );
+        // Right namespace, wrong name — must not match either.
+        assert_eq!(
+            state.resolve_shortcut_for('g', "flux-prod-shared", "gtm-automation-acme"),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_regex_falls_back_to_always_match() {
+        // A bad regex should not crash; the entry should just match
+        // anything (lenient config behavior consistent with the rest of
+        // the loader).
+        let state = state_with_shortcuts(vec![shortcut(
+            'g',
+            "broken",
+            Some(When {
+                name: Some("[bad-regex".into()),
+                namespace: None,
+            }),
+        )]);
+        assert_eq!(state.resolve_shortcut_for('g', "ns", "anything"), Some(0));
     }
 
     #[test]

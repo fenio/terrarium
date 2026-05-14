@@ -132,7 +132,7 @@ impl App {
                     && self.state.input_mode == InputMode::ShortcutsPopup
                     && let KeyCode::Char(c) = key.code
                     && let Some((ns, nm)) = self.state.shortcuts_popup_resource.clone()
-                    && let Some(idx) = self.state.config.shortcuts.iter().position(|s| s.key == c)
+                    && let Some(idx) = self.state.resolve_shortcut_for(c, &ns, &nm)
                 {
                     return Some(Action::OpenShortcut {
                         namespace: ns,
@@ -311,17 +311,15 @@ impl App {
                     })
                 }
             }
-            KeyCode::Char(c) => self
-                .state
-                .config
-                .shortcuts
-                .iter()
-                .position(|s| s.key == c)
-                .map(|idx| Action::OpenShortcut {
-                    namespace: ns.clone(),
-                    name: name.clone(),
-                    shortcut_idx: idx,
-                }),
+            KeyCode::Char(c) => {
+                self.state
+                    .resolve_shortcut_for(c, &ns, &name)
+                    .map(|idx| Action::OpenShortcut {
+                        namespace: ns.clone(),
+                        name: name.clone(),
+                        shortcut_idx: idx,
+                    })
+            }
             _ => None,
         }
     }
@@ -1064,12 +1062,14 @@ impl App {
 
             // Shortcuts popup
             Action::OpenShortcutsPopup { namespace, name } => {
+                let visible = self.state.visible_shortcut_indices(&namespace, &name);
                 self.state.input_mode = InputMode::ShortcutsPopup;
                 self.state.shortcuts_popup_resource = Some((namespace, name));
                 self.state.shortcuts_popup_selected = 0;
+                self.state.shortcuts_popup_visible = visible;
             }
             Action::ShortcutsPopupNext => {
-                let max = self.state.config.shortcuts.len().saturating_sub(1);
+                let max = self.state.shortcuts_popup_visible.len().saturating_sub(1);
                 if self.state.shortcuts_popup_selected < max {
                     self.state.shortcuts_popup_selected += 1;
                 }
@@ -1080,10 +1080,11 @@ impl App {
             }
             Action::ShortcutsPopupSelect => {
                 if let Some((ns, nm)) = self.state.shortcuts_popup_resource.clone() {
-                    let idx = self.state.shortcuts_popup_selected;
-                    if idx < self.state.config.shortcuts.len() {
+                    let sel = self.state.shortcuts_popup_selected;
+                    if let Some(&idx) = self.state.shortcuts_popup_visible.get(sel) {
                         self.state.input_mode = InputMode::Normal;
                         self.state.shortcuts_popup_resource = None;
+                        self.state.shortcuts_popup_visible.clear();
                         // Reuse the existing helper so output-template
                         // fetching stays consistent with direct activation.
                         self.open_shortcut(&ns, &nm, idx);
@@ -1093,6 +1094,7 @@ impl App {
             Action::ShortcutsPopupCancel => {
                 self.state.input_mode = InputMode::Normal;
                 self.state.shortcuts_popup_resource = None;
+                self.state.shortcuts_popup_visible.clear();
             }
 
             // Viewer search
