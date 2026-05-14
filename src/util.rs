@@ -156,16 +156,19 @@ const RECONCILING_REASONS: &[&str] = &[
 
 /// Classify the Ready condition for display and filtering.
 ///
-/// The Reconciling state has two signals, in order of reliability:
+/// The Reconciling state has three signals, in order of reliability:
 ///   1. A `Reconciling` condition with `status=True` — tofu-controller
 ///      sets this whenever a reconcile is in flight, regardless of what
-///      Ready currently says. This is the strongest indicator and it
-///      catches transient Ready=False flashes that use reason strings
-///      we don't recognize.
-///   2. A reconciling reason on the Ready condition itself (used as a
-///      fallback for controllers that don't set the Reconciling
-///      condition, and for `Ready=Unknown, reason=Initializing` on
-///      fresh resources).
+///      Ready currently says. Strongest indicator; catches transient
+///      Ready=False flashes that use reason strings we don't recognize.
+///   2. A reconciling reason on the Ready condition itself (covers
+///      tofu-controller events that don't set the Reconciling condition
+///      — most flickers fall into this bucket).
+///   3. `Ready=Unknown` — in practice tofu-controller only emits this
+///      mid-reconcile (fresh resource, between phases), so it's never
+///      really "unknown" in the literal sense. Treat as Reconciling.
+///      The `ReadyState::Unknown` variant is retained only for a
+///      theoretically-possible-but-never-observed status string.
 pub fn classify_ready(
     conditions: Option<&Vec<k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition>>,
 ) -> ReadyState {
@@ -181,6 +184,13 @@ pub fn classify_ready(
     // last reconcile succeeded, so show that.
     if ready.status == "True" {
         return ReadyState::True;
+    }
+
+    // Ready=Unknown is effectively a reconcile-in-flight state for
+    // tofu-controller — collapse it before the reason check so the
+    // user sees "…" instead of an alarming "Unknown" label.
+    if ready.status == "Unknown" {
+        return ReadyState::Reconciling;
     }
 
     let reconciling_active = cs
@@ -327,11 +337,14 @@ mod tests {
         )];
         assert_eq!(classify_ready(Some(&ok)), ReadyState::True);
 
+        // Plain Ready=Unknown (no reason) is treated as Reconciling — in
+        // tofu-controller this is always a mid-reconcile state, never a
+        // genuine "we don't know" state.
         let unknown = vec![make_condition("Ready", "Unknown", "", "")];
-        assert_eq!(classify_ready(Some(&unknown)), ReadyState::Unknown);
+        assert_eq!(classify_ready(Some(&unknown)), ReadyState::Reconciling);
 
-        // Ready=Unknown + reason=Initializing is the "fresh resource" state
-        // tofu-controller emits; treat it as Reconciling, not Unknown.
+        // Ready=Unknown + reason=Initializing is the same in-flight state
+        // with a friendlier reason — classification is identical.
         let initializing = vec![make_condition("Ready", "Unknown", "Initializing", "")];
         assert_eq!(classify_ready(Some(&initializing)), ReadyState::Reconciling);
 
