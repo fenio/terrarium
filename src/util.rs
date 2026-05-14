@@ -135,15 +135,23 @@ impl ReadyState {
     }
 }
 
-/// Reasons that indicate a reconcile is in progress (not a real failure).
-/// `Progressing` is the standard Flux GOTK reason. Others cover older or
-/// variant code paths in the same ecosystem, plus `Initializing` which
+/// Reasons that indicate a reconcile is in progress (or otherwise not a
+/// real failure). `Progressing` is the standard Flux GOTK reason; older
+/// or variant code paths use the next two. `Initializing` is what
 /// tofu-controller emits with `Ready=Unknown` on a fresh resource.
+///
+/// `DriftDetected` is tofu-controller-specific: when the controller
+/// notices live infra has drifted from desired state it flashes
+/// `Ready=False, reason=DriftDetected` for a few hundred milliseconds
+/// before the auto-apply puts things back. That's expected behaviour,
+/// not a failure — but it produces a visible red flicker on the list
+/// view if we don't classify it as in-flight.
 const RECONCILING_REASONS: &[&str] = &[
     "Progressing",
     "ReconciliationProgressing",
     "Reconciling",
     "Initializing",
+    "DriftDetected",
 ];
 
 /// Classify the Ready condition for display and filtering.
@@ -354,6 +362,17 @@ mod tests {
             classify_ready(Some(&ready_true_with_stale_reconciling)),
             ReadyState::True
         );
+
+        // tofu-controller flashes Ready=False/DriftDetected during an
+        // auto-apply cycle. Reconciling condition is typically absent,
+        // so the only signal is the reason — it must classify as
+        // Reconciling, not Failed.
+        let drift_detected = vec![make_condition("Ready", "False", "DriftDetected", "")];
+        assert_eq!(
+            classify_ready(Some(&drift_detected)),
+            ReadyState::Reconciling
+        );
+        assert!(!classify_ready(Some(&drift_detected)).is_real_failure());
     }
 
     #[test]
