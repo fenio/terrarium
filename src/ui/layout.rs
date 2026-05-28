@@ -693,7 +693,7 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
                 wrap: state.viewer_wrap,
                 search_query: &state.viewer_search_query,
             };
-            render_viewer(f, area, content, &vp);
+            render_events_viewer(f, area, content, &vp);
         }
         ViewState::OutputsViewer { ref content } => {
             let vp = ViewerParams {
@@ -711,7 +711,7 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
                 wrap: state.viewer_wrap,
                 search_query: &state.viewer_search_query,
             };
-            render_viewer(f, area, content, &vp);
+            render_conditions_viewer(f, area, content, &vp);
         }
         ViewState::LogViewer {
             ref namespace,
@@ -971,7 +971,261 @@ fn render_plan_viewer(f: &mut Frame, area: Rect, content: &str, vp: &ViewerParam
     f.render_widget(para, area);
 }
 
-fn colorize_json_line<'a>(line: &'a str) -> Line<'a> {
+/// Colorize a single line of the Conditions viewer. Recognises the
+/// scaffolding emitted by `util::format_conditions_viewer` (kind/name
+/// header, "icon type status (reason)" rows, transition/gen metadata)
+/// and the structured terraform/Helm output that follows:
+///   - `Error: …` lines highlighted in red,
+///   - `on <file> line N` source-location lines dimmed,
+///   - numbered code excerpts (`   28: resource …`) dimmed with the
+///     line number tinted so it scans against the body.
+///
+/// Falls back to plain white for anything that doesn't match a pattern.
+fn colorize_condition_line(line: &str) -> Line<'_> {
+    let trimmed_start = line.trim_start();
+    let indent = &line[..line.len() - trimmed_start.len()];
+
+    // Kind: ns/name header (first line of viewer output)
+    if indent.is_empty()
+        && !line.starts_with(['✓', '✗', '…'])
+        && let Some(colon) = line.find(':')
+        && line[colon + 1..].contains('/')
+    {
+        let (k, rest) = line.split_at(colon);
+        return Line::from(vec![
+            Span::styled(k.to_string(), theme::BLOCK_TITLE),
+            Span::styled(":", theme::JSON_BRACE),
+            Span::styled(rest[1..].to_string(), Style::default().fg(Color::White)),
+        ]);
+    }
+
+    // Condition header: "✓ Type           Status  (Reason)"
+    let first_char = trimmed_start.chars().next();
+    if matches!(first_char, Some('✓') | Some('✗') | Some('…')) {
+        let icon = first_char.unwrap();
+        let icon_style = match icon {
+            '✓' => theme::STATUS_READY,
+            '✗' => theme::STATUS_NOT_READY,
+            _ => theme::STATUS_UNKNOWN,
+        };
+        let (head, reason) = match trimmed_start.find(" (") {
+            Some(i) => (&trimmed_start[..i], Some(&trimmed_start[i..])),
+            None => (trimmed_start, None),
+        };
+        let mut parts = head.splitn(2, ' ');
+        let _icon_str = parts.next().unwrap_or("");
+        let rest = parts.next().unwrap_or("");
+        let (ty, status) = match rest.rfind("  ") {
+            Some(i) => (rest[..i].trim_end(), rest[i..].trim_start()),
+            None => (rest, ""),
+        };
+        let pad_after_type = rest.len().saturating_sub(ty.len() + status.len());
+        let mut spans = vec![
+            Span::raw(indent.to_string()),
+            Span::styled(format!("{icon} "), icon_style),
+            Span::styled(
+                ty.to_string(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" ".repeat(pad_after_type)),
+            Span::styled(status.to_string(), icon_style),
+        ];
+        if let Some(r) = reason {
+            spans.push(Span::styled(r.to_string(), theme::LABEL));
+        }
+        return Line::from(spans);
+    }
+
+    // Metadata line: "   transition: …   gen: N"
+    if trimmed_start.starts_with("transition:") || trimmed_start.starts_with("gen:") {
+        return Line::styled(line, theme::LABEL);
+    }
+
+    // Error/Warning headings.
+    if trimmed_start.starts_with("Error:") || trimmed_start.starts_with("Error running") {
+        return Line::from(vec![
+            Span::raw(indent.to_string()),
+            Span::styled(trimmed_start.to_string(), theme::STATUS_NOT_READY),
+        ]);
+    }
+    if trimmed_start.starts_with("Warning:") {
+        return Line::from(vec![
+            Span::raw(indent.to_string()),
+            Span::styled(trimmed_start.to_string(), theme::PLAN_CHANGE),
+        ]);
+    }
+
+    // Source-location hints: "on <file> line N[, in …]"
+    if trimmed_start.starts_with("on ") && trimmed_start.contains(" line ") {
+        return Line::styled(line, theme::LABEL);
+    }
+
+    // Numbered code excerpts: "   28: resource …"
+    if let Some(colon_pos) = trimmed_start.find(':') {
+        let num_part = &trimmed_start[..colon_pos];
+        if !num_part.is_empty() && num_part.chars().all(|c| c.is_ascii_digit()) {
+            let rest = &trimmed_start[colon_pos..];
+            return Line::from(vec![
+                Span::raw(indent.to_string()),
+                Span::styled(num_part.to_string(), theme::JSON_NUMBER),
+                Span::styled(
+                    rest.to_string(),
+                    Style::default().fg(Color::Rgb(160, 170, 200)),
+                ),
+            ]);
+        }
+    }
+
+    Line::styled(line, Style::default().fg(Color::White))
+}
+
+/// Colorize a single line of the Events viewer. The fetch_events
+/// helper formats each event as
+/// `<RFC3339-timestamp> [<Type>] <Reason> (xN) — <message>`, where the
+/// message body may itself contain embedded newlines (tofu-controller's
+/// DriftDetected event, for instance, ships the entire plan in the
+/// message). Header lines are decomposed and styled per field; lines
+/// that don't match the header shape are treated as message
+/// continuations and routed through the plan colorizer so embedded
+/// terraform output picks up the same +/-/~/<= highlighting.
+fn colorize_event_line(line: &str) -> Line<'_> {
+    let bytes = line.as_bytes();
+    let looks_like_timestamp =
+        bytes.len() >= 20 && bytes[4] == b'-' && bytes[7] == b'-' && bytes[10] == b'T';
+    if !looks_like_timestamp {
+        return colorize_plan_line(line);
+    }
+
+    let Some(after_ts) = line.find(" [") else {
+        return Line::styled(line, Style::default().fg(Color::White));
+    };
+    let ts = &line[..after_ts];
+    let rest = &line[after_ts + 1..];
+    let Some(end_type) = rest.find("] ") else {
+        return Line::styled(line, Style::default().fg(Color::White));
+    };
+    let type_with_brackets = &rest[..=end_type];
+    let type_inner = &rest[1..end_type];
+    let after_type = &rest[end_type + 2..];
+
+    let type_style = match type_inner {
+        "Normal" => theme::STATUS_READY,
+        "Warning" => theme::PLAN_CHANGE,
+        "Error" => theme::STATUS_NOT_READY,
+        _ => theme::STATUS_UNKNOWN,
+    };
+
+    let (reason, after_reason) = if let Some(i) = after_type.find(" (x") {
+        (&after_type[..i], &after_type[i..])
+    } else if let Some(i) = after_type.find(" — ") {
+        (&after_type[..i], &after_type[i..])
+    } else {
+        (after_type, "")
+    };
+
+    let mut spans = vec![
+        Span::styled(ts.to_string(), theme::LABEL),
+        Span::raw(" "),
+        Span::styled(type_with_brackets.to_string(), type_style),
+        Span::raw(" "),
+        Span::styled(
+            reason.to_string(),
+            Style::default()
+                .fg(Color::Rgb(140, 200, 255))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    let after_reason = if let Some(stripped) = after_reason.strip_prefix(' ')
+        && stripped.starts_with("(x")
+        && let Some(end) = stripped.find(')')
+    {
+        let count = &stripped[..=end];
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(count.to_string(), theme::LABEL));
+        &stripped[end + 1..]
+    } else {
+        after_reason
+    };
+
+    if !after_reason.is_empty() {
+        spans.push(Span::styled(
+            after_reason.to_string(),
+            Style::default().fg(Color::White),
+        ));
+    }
+
+    Line::from(spans)
+}
+
+/// Plan-line colorizer used by both the dedicated plan viewer and the
+/// events viewer (for continuation lines coming from embedded plan
+/// output in event messages).
+fn colorize_plan_line(line: &str) -> Line<'_> {
+    let trimmed = line.trim_start();
+    let style = if trimmed.starts_with("+ ") || trimmed.starts_with("+\t") || trimmed == "+" {
+        theme::PLAN_CREATE
+    } else if trimmed.starts_with("- ")
+        || trimmed.starts_with("-\t")
+        || trimmed == "-"
+        || trimmed.starts_with("-/")
+    {
+        theme::PLAN_DESTROY
+    } else if trimmed.starts_with("~ ") || trimmed.starts_with("~\t") || trimmed == "~" {
+        theme::PLAN_CHANGE
+    } else if trimmed.starts_with("<= ") || trimmed.starts_with("<=\t") {
+        theme::PLAN_READ
+    } else {
+        Style::default().fg(Color::White)
+    };
+    Line::styled(line, style)
+}
+
+fn render_events_viewer(f: &mut Frame, area: Rect, content: &str, vp: &ViewerParams) {
+    let lines: Vec<Line> = content
+        .lines()
+        .map(|line| {
+            let colorized = colorize_event_line(line);
+            if !vp.search_query.is_empty() {
+                highlight_search_in_spans(colorized, vp.search_query)
+            } else {
+                colorized
+            }
+        })
+        .collect();
+
+    let scroll_u16 = vp.scroll.min(u16::MAX as usize) as u16;
+    let hscroll_u16 = vp.hscroll.min(u16::MAX as usize) as u16;
+    let mut para = Paragraph::new(lines).scroll((scroll_u16, hscroll_u16));
+    if vp.wrap {
+        para = para.wrap(Wrap { trim: false });
+    }
+    f.render_widget(para, area);
+}
+
+fn render_conditions_viewer(f: &mut Frame, area: Rect, content: &str, vp: &ViewerParams) {
+    let lines: Vec<Line> = content
+        .lines()
+        .map(|line| {
+            let colorized = colorize_condition_line(line);
+            if !vp.search_query.is_empty() {
+                highlight_search_in_spans(colorized, vp.search_query)
+            } else {
+                colorized
+            }
+        })
+        .collect();
+
+    let scroll_u16 = vp.scroll.min(u16::MAX as usize) as u16;
+    let hscroll_u16 = vp.hscroll.min(u16::MAX as usize) as u16;
+    let mut para = Paragraph::new(lines).scroll((scroll_u16, hscroll_u16));
+    if vp.wrap {
+        para = para.wrap(Wrap { trim: false });
+    }
+    f.render_widget(para, area);
+}
+
+fn colorize_json_line(line: &str) -> Line<'_> {
     let trimmed = line.trim();
 
     // Header lines (non-JSON context lines like "Terraform Outputs for ...")
