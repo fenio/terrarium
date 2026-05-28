@@ -27,7 +27,8 @@ pub fn render(f: &mut Frame, area: Rect, tf: &Terraform, ctx: &RenderCtx<'_>) {
     let ns = tf.metadata.namespace.as_deref().unwrap_or("-");
     let name = tf.metadata.name.as_deref().unwrap_or("-");
 
-    // Fixed heights
+    // Fixed heights — Conditions stays at 5 inner rows; the dedicated
+    // viewer (`c`) handles full multi-screen error blobs.
     let spec_status_height = 8_u16;
     let conditions_height = 7_u16;
 

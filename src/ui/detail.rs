@@ -60,11 +60,30 @@ pub fn render_title(f: &mut Frame, area: Rect, kind: &str, ns: &str, name: &str)
     f.render_widget(Paragraph::new(line), area);
 }
 
+/// Prefix width consumed by the icon + type + status columns in the
+/// Conditions panel.
+const CONDITIONS_PREFIX_WIDTH: usize = 25;
+const CONDITIONS_TYPE_PAD: usize = 14;
+
 /// Render the Conditions panel: icon + type + status + humanized message.
 /// Wraps the message body to the panel width, indenting continuation
 /// lines under the message column.
 pub fn render_conditions(f: &mut Frame, area: Rect, conditions: Option<&Vec<Condition>>) {
-    let block = block("Conditions");
+    // Custom block (instead of `block("Conditions")`) so the title can
+    // carry a dim "(c for full view)" affordance — the inline panel
+    // shows the first conditions only, and users routinely forget the
+    // dedicated Conditions viewer exists for the full, scrollable text.
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::styled(" Conditions ", theme::BLOCK_TITLE),
+            Span::styled(
+                "(c for full view) ",
+                Style::default().fg(Color::Rgb(110, 115, 130)),
+            ),
+        ]))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme::BORDER);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -75,8 +94,8 @@ pub fn render_conditions(f: &mut Frame, area: Rect, conditions: Option<&Vec<Cond
 
     let msg_style = Style::default().fg(Color::Rgb(180, 180, 200));
     // Prefix: " ✓ " (3) + type (14) + status (8) = 25 columns
-    let type_pad: usize = 14;
-    let prefix_width: usize = 11 + type_pad;
+    let type_pad: usize = CONDITIONS_TYPE_PAD;
+    let prefix_width: usize = CONDITIONS_PREFIX_WIDTH;
     let msg_width = (inner.width as usize).saturating_sub(prefix_width);
 
     let mut lines: Vec<Line> = Vec::new();
