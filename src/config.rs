@@ -22,6 +22,8 @@ pub struct Config {
     ///   {context}      - kubeconfig context name
     ///   {namespace}    - resource namespace
     ///   {name}         - resource name
+    ///   {var.KEY}      - value from a matching [[context_vars]] entry,
+    ///                    selected by the active kube context (see below)
     ///   {output.KEY}   - value from the Terraform outputs secret
     ///                    (nested JSON paths supported, e.g. {output.metadata.tenant})
     ///
@@ -43,6 +45,28 @@ pub struct Config {
     ///     url = "https://..."
     #[serde(default)]
     pub shortcuts: Vec<Shortcut>,
+
+    /// Per-environment variable sets keyed by kube-context regex. Used
+    /// to drive `{var.KEY}` placeholders in shortcut URLs, so a single
+    /// shortcut can route to a different host depending on which
+    /// cluster the user is pointed at.
+    ///
+    /// Entries are checked top-to-bottom; for each `{var.KEY}` lookup
+    /// the first matching entry that defines `KEY` wins. Put narrow
+    /// matches first, broad catch-all entries (`match = ".*"`) last.
+    ///
+    /// Example:
+    ///   [[context_vars]]
+    ///   match = "devcloud"
+    ///   vars  = { grafana_host = "grafana-shared.example.net",
+    ///             linode_host  = "admin.devcloud.linode.com" }
+    ///
+    ///   [[context_vars]]
+    ///   match = ".*"
+    ///   vars  = { grafana_host = "grafana-prod.example.net",
+    ///             linode_host  = "admin.linode.com" }
+    #[serde(default)]
+    pub context_vars: Vec<ContextVars>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -66,10 +90,10 @@ pub struct Shortcut {
     /// render in an unnamed first section.
     #[serde(default)]
     pub group: Option<String>,
-    /// URL template with {context}, {namespace}, {name}, {output.KEY}
-    /// placeholders. Leaf shortcuts must have a url; submenu shortcuts
-    /// (with `children`) leave it absent and drill into their children
-    /// instead.
+    /// URL template with {context}, {namespace}, {name}, {var.KEY},
+    /// {output.KEY} placeholders. Leaf shortcuts must have a url;
+    /// submenu shortcuts (with `children`) leave it absent and drill
+    /// into their children instead.
     #[serde(default)]
     pub url: Option<String>,
     /// Optional applicability filter. Multiple shortcuts can share a
@@ -88,7 +112,8 @@ pub struct Shortcut {
 
 /// Resource-applicability filter for a shortcut. Field values are
 /// regular expressions matched against the corresponding part of the
-/// selected resource. Empty/missing fields impose no constraint.
+/// selected resource (or the active kube context, for `context`).
+/// Empty/missing fields impose no constraint.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct When {
@@ -98,6 +123,27 @@ pub struct When {
     /// Regex matched against the resource namespace.
     #[serde(default)]
     pub namespace: Option<String>,
+    /// Regex matched against the active kubeconfig context name
+    /// (e.g. `devcloud` to gate a shortcut to QA-style contexts).
+    #[serde(default)]
+    pub context: Option<String>,
+}
+
+/// A context-scoped set of variables exposed to shortcut URL templates
+/// via `{var.KEY}`. `match` is a regex against the active kube context
+/// name; the variable map is consulted in declaration order and the
+/// first entry that both matches the current context AND defines the
+/// requested key wins. This lets a narrow override entry sit above a
+/// broad catch-all that supplies defaults for keys it doesn't override.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextVars {
+    /// Regex matched against the active kube context name. Use `.*`
+    /// for a fallback / default entry.
+    #[serde(rename = "match")]
+    pub match_: String,
+    /// Variable map. Keys appear in shortcut URLs as `{var.KEY}`.
+    pub vars: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

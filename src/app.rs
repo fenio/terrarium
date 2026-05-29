@@ -2092,6 +2092,20 @@ impl App {
         url = url.replace("{namespace}", namespace);
         url = url.replace("{name}", name);
 
+        // {var.KEY} reads from the merged [[context_vars]] table for the
+        // active kube context. Resolved before the resource-scoped
+        // placeholders so a context_vars entry can supply, say, a host
+        // that the rest of the URL then parameterizes with {name}.
+        if url.contains("{var.") {
+            let vars = self.state.vars_for_context();
+            url = resolve_var_placeholders(
+                &url,
+                &vars,
+                &self.state.context_name,
+                &mut self.state.var_warned,
+            );
+        }
+
         // {label.KEY} / {annotation.KEY} read directly from the TF
         // resource's metadata — already cached in the store, so no
         // lazy fetch is needed (unlike outputs and secrets). Useful
@@ -2517,6 +2531,54 @@ fn resolve_output_placeholders(
     result
 }
 
+/// Substitute `{var.KEY}` placeholders against the merged context_vars
+/// map for the active kube context. Missing keys substitute as empty
+/// — matching the `{output.KEY}` / `{label.KEY}` semantics — and emit
+/// a `tracing::warn!` the first time a given `(context, key)` pair
+/// goes unresolved so the user can spot a misconfigured [[context_vars]]
+/// table without the log filling up on every shortcut activation.
+fn resolve_var_placeholders(
+    url: &str,
+    vars: &std::collections::BTreeMap<String, String>,
+    context: &str,
+    warned: &mut std::collections::HashSet<(String, String)>,
+) -> String {
+    let mut result = String::with_capacity(url.len());
+    let mut rest = url;
+    while let Some(start) = rest.find("{var.") {
+        result.push_str(&rest[..start]);
+        let after = &rest[start + 5..];
+        match after.find('}') {
+            Some(end) => {
+                let key = &after[..end];
+                match vars.get(key) {
+                    Some(value) => result.push_str(value),
+                    None => {
+                        let warn_key = (context.to_string(), key.to_string());
+                        if warned.insert(warn_key) {
+                            tracing::warn!(
+                                context = context,
+                                key = key,
+                                "shortcut URL references {{var.{key}}} but no \
+                                 matching [[context_vars]] entry for context \
+                                 '{context}' defines it — substituting empty"
+                            );
+                        }
+                    }
+                }
+                rest = &after[end + 1..];
+            }
+            None => {
+                // Malformed (unterminated `{var.`) — leave as-is.
+                result.push_str(&rest[start..]);
+                return result;
+            }
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
 /// Substitute `{<prefix>.<key>}` placeholders against an optional
 /// BTreeMap (used for `{label.KEY}` and `{annotation.KEY}`). Missing
 /// keys substitute as empty, matching the `{output.KEY}` semantics.
@@ -2648,7 +2710,7 @@ fn lookup_output_path(outputs: &std::collections::HashMap<String, String>, path:
 mod tests {
     use super::{
         first_uncached_secret, resolve_map_placeholders, resolve_output_placeholders,
-        resolve_secret_placeholders,
+        resolve_secret_placeholders, resolve_var_placeholders,
     };
     use std::collections::{BTreeMap, HashMap};
 
@@ -2856,5 +2918,67 @@ mod tests {
         let labels = meta(&[("foo", "bar")]);
         let result = resolve_map_placeholders("https://x/{label.foo", "label", Some(&labels));
         assert_eq!(result, "https://x/{label.foo");
+    }
+
+    // ---- {var.KEY} ----
+
+    fn vars(pairs: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn var_placeholder_substitutes_from_vars() {
+        let vars = vars(&[("grafana_host", "grafana-shared.example.net")]);
+        let mut warned = std::collections::HashSet::new();
+        let result = resolve_var_placeholders(
+            "https://{var.grafana_host}/d/x?cluster={name}",
+            &vars,
+            "devcloud",
+            &mut warned,
+        );
+        // Note: {name} isn't substituted by this helper — it's resolved
+        // by the surrounding code in activate_shortcut.
+        assert_eq!(
+            result,
+            "https://grafana-shared.example.net/d/x?cluster={name}"
+        );
+        assert!(
+            warned.is_empty(),
+            "no warning expected when the key is present"
+        );
+    }
+
+    #[test]
+    fn var_placeholder_substitutes_empty_when_missing() {
+        let vars = vars(&[]);
+        let mut warned = std::collections::HashSet::new();
+        let result = resolve_var_placeholders("a-{var.missing}-b", &vars, "prod-ctx", &mut warned);
+        assert_eq!(result, "a--b");
+        // Warned exactly once for (context, key).
+        assert!(warned.contains(&("prod-ctx".to_string(), "missing".to_string())));
+        // Re-running with the same key shouldn't double-warn.
+        let len_before = warned.len();
+        let _ = resolve_var_placeholders("{var.missing}", &vars, "prod-ctx", &mut warned);
+        assert_eq!(warned.len(), len_before, "warning must not duplicate");
+    }
+
+    #[test]
+    fn var_placeholder_unterminated_is_left_as_is() {
+        let vars = vars(&[("k", "v")]);
+        let mut warned = std::collections::HashSet::new();
+        let result = resolve_var_placeholders("https://x/{var.k", &vars, "ctx", &mut warned);
+        assert_eq!(result, "https://x/{var.k");
+    }
+
+    #[test]
+    fn var_placeholder_substitutes_multiple_occurrences() {
+        let vars = vars(&[("host", "h.example"), ("env", "prod")]);
+        let mut warned = std::collections::HashSet::new();
+        let result =
+            resolve_var_placeholders("{var.host}/{var.env}/{var.host}", &vars, "ctx", &mut warned);
+        assert_eq!(result, "h.example/prod/h.example");
     }
 }

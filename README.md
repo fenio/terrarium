@@ -299,6 +299,7 @@ popup. Shortcuts without a group render at the top in an unnamed first section.
 | `{context}` | Kubeconfig context name |
 | `{namespace}` | Resource namespace |
 | `{name}` | Resource name |
+| `{var.KEY}` | Value from a matching `[[context_vars]]` entry (see [Context-aware shortcuts](#context-aware-shortcuts)) |
 | `{output.KEY}` | Value from the Terraform outputs secret |
 | `{output.KEY.subkey...}` | Nested JSON path into a JSON-valued output |
 | `{secret.NAME.KEY}` | Value from any other Secret in the resource's namespace |
@@ -372,11 +373,52 @@ label = "GitOps tree (fallback)"
 url = "https://git.example.com/repo/-/tree/main/other/{name}"
 ```
 
-`when.name` and `when.namespace` are Rust regex strings (the
-[`regex` crate](https://docs.rs/regex)); use anchors `^`/`$` for
-prefix/exact matches. Both fields are optional; when both are
-present, they're combined with AND. Invalid regexes are skipped with a
-stderr warning at startup rather than crashing.
+`when.name`, `when.namespace`, and `when.context` are Rust regex
+strings (the [`regex` crate](https://docs.rs/regex)); use anchors
+`^`/`$` for prefix/exact matches. All three fields are optional; when
+multiple are present, they're combined with AND. `when.context` matches
+against the active kubeconfig context name — handy for routing the same
+key to different URLs in QA vs prod environments. Invalid regexes are
+skipped with a stderr warning at startup rather than crashing.
+
+### Context-aware shortcuts
+
+When the same logical shortcut (Grafana, Vault, ArgoCD, …) lives on a
+different host depending on which kube context is active, you can
+either:
+
+1. **Duplicate the shortcut with `when.context`** — works, but tedious if
+   you have many environments or many shortcuts that need swapping.
+2. **Define `[[context_vars]]` and reference `{var.KEY}` in the URL** —
+   one shortcut, environment-aware host. Recommended for the common
+   "just the host changes" case.
+
+```toml
+# Narrow override sits above a broad catch-all. Per key, the first
+# matching entry that defines that key wins; the catch-all fills in
+# any keys the override doesn't set.
+[[context_vars]]
+match = "devcloud"
+vars  = { grafana_host = "grafana-mom-shared-ord.cloud-observability.akadns.net",
+          linode_host  = "admin.devcloud.linode.com" }
+
+[[context_vars]]
+match = ".*"
+vars  = { grafana_host = "grafana-mom-prod-lax.cloud-observability.akadns.net",
+          linode_host  = "admin.linode.com" }
+
+# Single shortcut for Grafana — the host swaps automatically based on
+# whichever kube context you're pointed at when you press `b`.
+[[shortcuts]]
+key = "b"
+label = "Grafana"
+url = "https://{var.grafana_host}/d/terraform?var-cluster={name}"
+```
+
+`match` is a Rust regex against the active kube context name. Missing
+`{var.KEY}` lookups substitute as empty and log a `tracing::warn!`
+once per `(context, key)` so a misconfigured table is visible in
+`$RUST_LOG` output without spamming on every activation.
 
 See [examples/shortcuts.toml](examples/shortcuts.toml) for examples including
 Grafana, Vault, and cloud console links.

@@ -169,12 +169,13 @@ impl SortColumn {
 pub struct CompiledWhen {
     pub name: Option<regex::Regex>,
     pub namespace: Option<regex::Regex>,
+    pub context: Option<regex::Regex>,
 }
 
 impl CompiledWhen {
     /// True when this filter allows the given resource. All specified
     /// fields must match; missing fields impose no constraint.
-    pub fn matches(&self, namespace: &str, name: &str) -> bool {
+    pub fn matches(&self, namespace: &str, name: &str, context: &str) -> bool {
         if let Some(re) = &self.name
             && !re.is_match(name)
         {
@@ -182,6 +183,11 @@ impl CompiledWhen {
         }
         if let Some(re) = &self.namespace
             && !re.is_match(namespace)
+        {
+            return false;
+        }
+        if let Some(re) = &self.context
+            && !re.is_match(context)
         {
             return false;
         }
@@ -325,6 +331,16 @@ pub struct AppState {
     /// at startup; never reallocated afterwards.
     pub compiled_shortcut_filters: Vec<Option<CompiledWhen>>,
 
+    /// Compiled `[[context_vars]]` table: each entry's `match` regex
+    /// paired with its variable map. Looked up by `vars_for_context`
+    /// when resolving `{var.KEY}` placeholders in shortcut URLs.
+    pub compiled_context_vars: Vec<(regex::Regex, std::collections::BTreeMap<String, String>)>,
+    /// `{var.KEY}` lookups that have already been logged as missing for
+    /// the current context. Used to throttle the warning to once per
+    /// (context, key) so a shortcut activated repeatedly doesn't spam
+    /// the tracing log.
+    pub var_warned: std::collections::HashSet<(String, String)>,
+
     // Log streaming
     pub log_stream_handle: Option<tokio::task::JoinHandle<()>>,
     /// When true, log viewer auto-scrolls to bottom on new chunks.
@@ -388,12 +404,43 @@ fn compile_shortcut_filters(shortcuts: &[crate::config::Shortcut]) -> Vec<Option
                 .as_deref()
                 .map(|r| compile_or_warn(r, "namespace", s.key, &s.label))
                 .unwrap_or(None);
-            // If both fields are absent (or both failed to compile),
+            let context = when
+                .context
+                .as_deref()
+                .map(|r| compile_or_warn(r, "context", s.key, &s.label))
+                .unwrap_or(None);
+            // If every field is absent (or all failed to compile),
             // there's nothing to enforce — fall back to "always match".
-            if name.is_none() && namespace.is_none() {
+            if name.is_none() && namespace.is_none() && context.is_none() {
                 None
             } else {
-                Some(CompiledWhen { name, namespace })
+                Some(CompiledWhen {
+                    name,
+                    namespace,
+                    context,
+                })
+            }
+        })
+        .collect()
+}
+
+/// Compile each `[[context_vars]]` entry's `match` regex up-front.
+/// Entries whose regex fails to compile are dropped with a warning,
+/// matching the lenient posture of `compile_shortcut_filters` — the
+/// remaining (valid) entries still function.
+fn compile_context_vars(
+    entries: &[crate::config::ContextVars],
+) -> Vec<(regex::Regex, std::collections::BTreeMap<String, String>)> {
+    entries
+        .iter()
+        .filter_map(|e| match regex::Regex::new(&e.match_) {
+            Ok(re) => Some((re, e.vars.clone())),
+            Err(err) => {
+                eprintln!(
+                    "Warning: context_vars entry has invalid `match` regex {:?}: {}",
+                    e.match_, err
+                );
+                None
             }
         })
         .collect()
@@ -428,6 +475,7 @@ impl AppState {
             })
             .collect();
         let compiled_shortcut_filters = compile_shortcut_filters(&config.shortcuts);
+        let compiled_context_vars = compile_context_vars(&config.context_vars);
         Self {
             config,
             tf_store,
@@ -482,6 +530,8 @@ impl AppState {
             shortcuts_popup_selected: 0,
             shortcuts_popup_visible: Vec::new(),
             compiled_shortcut_filters,
+            compiled_context_vars,
+            var_warned: std::collections::HashSet::new(),
             log_stream_handle: None,
             log_auto_follow: true,
             pending_dialog: None,
@@ -501,11 +551,12 @@ impl AppState {
         }
     }
 
-    /// True when the shortcut at `idx` applies to the given resource.
-    /// Out-of-range indices and shortcuts without a `when` always match.
+    /// True when the shortcut at `idx` applies to the given resource
+    /// under the current kube context. Out-of-range indices and
+    /// shortcuts without a `when` always match.
     pub fn shortcut_applies(&self, idx: usize, namespace: &str, name: &str) -> bool {
         match self.compiled_shortcut_filters.get(idx) {
-            Some(Some(filter)) => filter.matches(namespace, name),
+            Some(Some(filter)) => filter.matches(namespace, name, &self.context_name),
             _ => true,
         }
     }
@@ -532,6 +583,26 @@ impl AppState {
             .filter(|(i, _)| self.shortcut_applies(*i, namespace, name))
             .map(|(i, _)| i)
             .collect()
+    }
+
+    /// Merge all `[[context_vars]]` entries whose `match` regex matches
+    /// the active kube context, in declaration order, with first-match-
+    /// wins semantics per key. This lets a narrow override entry sit
+    /// above a broad `match = ".*"` catch-all that supplies defaults
+    /// for keys it doesn't override. Returned by value (small map,
+    /// built once per shortcut activation).
+    pub fn vars_for_context(&self) -> std::collections::BTreeMap<String, String> {
+        let mut merged: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for (re, vars) in &self.compiled_context_vars {
+            if !re.is_match(&self.context_name) {
+                continue;
+            }
+            for (k, v) in vars {
+                merged.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+        }
+        merged
     }
 
     /// Returns the search query used for filtering. Empty when search is suspended.
@@ -767,6 +838,7 @@ mod tests {
                 Some(When {
                     name: Some("^cluster-".into()),
                     namespace: None,
+                    context: None,
                 }),
             ),
             shortcut(
@@ -775,6 +847,7 @@ mod tests {
                 Some(When {
                     name: Some("^gtm-automation-".into()),
                     namespace: None,
+                    context: None,
                 }),
             ),
             // Fallback with no when — should win for anything that
@@ -807,6 +880,7 @@ mod tests {
             Some(When {
                 name: Some("^cluster-".into()),
                 namespace: None,
+                context: None,
             }),
         )]);
         assert_eq!(
@@ -823,6 +897,7 @@ mod tests {
             Some(When {
                 name: Some("^cluster-".into()),
                 namespace: Some("^flux-prod-".into()),
+                context: None,
             }),
         )]);
         assert_eq!(
@@ -852,6 +927,7 @@ mod tests {
             Some(When {
                 name: Some("[bad-regex".into()),
                 namespace: None,
+                context: None,
             }),
         )]);
         assert_eq!(state.resolve_shortcut_for('g', "ns", "anything"), Some(0));
@@ -987,5 +1063,125 @@ mod tests {
             state.log_viewer_mut(),
             Some(ViewState::LogViewer { .. })
         ));
+    }
+
+    // ---- context_vars + when.context ----
+
+    fn state_with_context_and_shortcuts(context: &str, shortcuts: Vec<Shortcut>) -> AppState {
+        let config = Config {
+            shortcuts,
+            ..Config::default()
+        };
+        let (tf, _) = create_tf_store();
+        let (ks, _) = create_ks_store();
+        let (gr, _) = create_gitrepo_store();
+        AppState::new(tf, ks, gr, context.to_string(), config)
+    }
+
+    fn state_with_context_vars(context: &str, entries: Vec<(&str, Vec<(&str, &str)>)>) -> AppState {
+        let context_vars = entries
+            .into_iter()
+            .map(|(m, vars)| crate::config::ContextVars {
+                match_: m.to_string(),
+                vars: vars
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            })
+            .collect();
+        let config = Config {
+            context_vars,
+            ..Config::default()
+        };
+        let (tf, _) = create_tf_store();
+        let (ks, _) = create_ks_store();
+        let (gr, _) = create_gitrepo_store();
+        AppState::new(tf, ks, gr, context.to_string(), config)
+    }
+
+    #[test]
+    fn compiled_when_matches_by_context() {
+        let state = state_with_context_and_shortcuts(
+            "pl-labkrk-2-flux-devcloud-01",
+            vec![
+                shortcut(
+                    'b',
+                    "grafana-devcloud",
+                    Some(When {
+                        name: None,
+                        namespace: None,
+                        context: Some("devcloud".into()),
+                    }),
+                ),
+                shortcut('b', "grafana-prod", None),
+            ],
+        );
+        assert_eq!(
+            state.resolve_shortcut_for('b', "ns", "anything"),
+            Some(0),
+            "devcloud-context should pick the devcloud-gated shortcut first"
+        );
+
+        let state_prod = state_with_context_and_shortcuts(
+            "prod-lax-01",
+            vec![
+                shortcut(
+                    'b',
+                    "grafana-devcloud",
+                    Some(When {
+                        name: None,
+                        namespace: None,
+                        context: Some("devcloud".into()),
+                    }),
+                ),
+                shortcut('b', "grafana-prod", None),
+            ],
+        );
+        assert_eq!(
+            state_prod.resolve_shortcut_for('b', "ns", "anything"),
+            Some(1),
+            "non-devcloud context should fall through to the unfiltered shortcut"
+        );
+    }
+
+    #[test]
+    fn vars_for_context_merges_in_declaration_order() {
+        // Narrow override sits above a broad catch-all. First match
+        // per key wins, but keys the override doesn't define should
+        // still come from the catch-all.
+        let state = state_with_context_vars(
+            "pl-labkrk-2-flux-devcloud-01",
+            vec![
+                ("devcloud", vec![("grafana_host", "grafana-shared.x.net")]),
+                (
+                    ".*",
+                    vec![
+                        ("grafana_host", "grafana-prod.x.net"),
+                        ("linode_host", "admin.linode.com"),
+                    ],
+                ),
+            ],
+        );
+        let merged = state.vars_for_context();
+        assert_eq!(
+            merged.get("grafana_host").map(String::as_str),
+            Some("grafana-shared.x.net"),
+            "override entry should win"
+        );
+        assert_eq!(
+            merged.get("linode_host").map(String::as_str),
+            Some("admin.linode.com"),
+            "catch-all should fill in keys the override omits"
+        );
+    }
+
+    #[test]
+    fn vars_for_context_returns_empty_when_no_match() {
+        let state =
+            state_with_context_vars("prod-lax-01", vec![("^staging-", vec![("env", "stg")])]);
+        assert!(
+            state.vars_for_context().is_empty(),
+            "no matching [[context_vars]] entry should yield an empty map"
+        );
     }
 }

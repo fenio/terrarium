@@ -22,6 +22,10 @@
 #   {context}                  kubeconfig context name (e.g. "prod-us-east-1")
 #   {namespace}                resource namespace (e.g. "flux-system")
 #   {name}                     resource name (e.g. "my-database")
+#   {var.KEY}                  value from a matching [[context_vars]] entry,
+#                              selected by the active kube context — lets one
+#                              shortcut route to different hosts in different
+#                              environments (see the bottom of this file)
 #   {output.KEY}               value from the Terraform outputs secret
 #   {output.KEY.sub.path}      nested field if the output value is JSON
 #   {secret.NAME.KEY}          value from any other Secret in the
@@ -153,3 +157,70 @@ label = "GitOps tree (by label)"
 description = "look up parent cluster via metadata.labels"
 group = "Repos"
 url = "https://git.example.com/platform/-/tree/main/{label.environment}/{label.parent_cluster_name}"
+
+# ---------- Per-environment hosts ([[context_vars]] + {var.KEY}) ----------
+#
+# Some shared services (Grafana, Linode admin, ArgoCD, Vault, …) live
+# on a different host depending on which kube context is active. Rather
+# than duplicating each shortcut once per environment, define a table
+# of host names keyed by a regex against the kube-context name, and
+# reference them in URL templates as {var.KEY}.
+#
+# Entries are checked top-to-bottom; per key, the first matching entry
+# that defines the key wins — so a narrow override at the top can
+# replace a single host while leaving the broader catch-all to supply
+# defaults for the keys it doesn't override. A missing key substitutes
+# as the empty string and logs a tracing::warn! once per (context, key).
+#
+# This example: contexts containing "devcloud" route Grafana to the
+# shared host and Linode to the devcloud admin; every other context
+# inherits the prod defaults.
+
+[[context_vars]]
+match = "devcloud"
+vars  = { grafana_host = "grafana-mom-shared-ord.cloud-observability.akadns.net",
+          linode_host  = "admin.devcloud.linode.com" }
+
+[[context_vars]]
+match = ".*"
+vars  = { grafana_host = "grafana-mom-prod-lax.cloud-observability.akadns.net",
+          linode_host  = "admin.linode.com" }
+
+# Single shortcut for Grafana — same key in every environment, but
+# the host swaps automatically based on which cluster you're pointed at.
+[[shortcuts]]
+key = "b"
+label = "Grafana"
+description = "dashboard for this resource (env-aware)"
+group = "Observability"
+url = "https://{var.grafana_host}/d/terraform?var-cluster={context}&var-resource={name}&var-namespace={namespace}"
+
+# Linode admin — same pattern.
+[[shortcuts]]
+key = "l"
+label = "Linode admin"
+description = "Linode console (env-aware)"
+group = "Cloud"
+url = "https://{var.linode_host}/linodes?label={output.cluster_id}"
+
+# ---------- when.context — completely different URL per environment ----------
+#
+# When the URL shape (not just the host) differs across environments,
+# use `when.context` to gate one shortcut to a context name pattern and
+# add a fallback below it without a `when`. terrarium will pick the
+# first matching entry on activation, just like for name/namespace.
+
+[[shortcuts]]
+key = "T"
+label = "Tempo (devcloud)"
+description = "shared Tempo instance only available in devcloud"
+group = "Observability"
+when = { context = "devcloud" }
+url = "https://tempo-shared.devcloud.example.net/search?service={name}"
+
+[[shortcuts]]
+key = "T"
+label = "Tempo (prod)"
+description = "per-region prod Tempo"
+group = "Observability"
+url = "https://tempo-{context}.example.net/search?service={name}"
