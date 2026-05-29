@@ -18,7 +18,7 @@ A terminal dashboard for managing [tofu-controller](https://github.com/flux-iac/
 - **Per-tab state preservation** — detail views, viewers, and live log streams all survive jumping between tabs
 - **Content viewers** for plans, outputs, JSON resources, events, and full conditions with search and line wrap
 - **Filtering** — search, namespace picker, failures-only (real failures), progressing-only (in-flight reconciles), waiting-only (stale resources)
-- **Sorting** by namespace, name, ready status, last applied, or age — with direction toggle (Runners tab sorts by namespace, name, terraform, phase, or age)
+- **Sorting** by namespace, name, ready status, revision, last applied, or age — with direction toggle (Runners tab sorts by namespace, name, terraform, phase, or age)
 - **Configurable custom tabs** — filter resources by annotation with custom columns
 - **Configurable detail fields** — show extra data from Terraform outputs in the detail view
 - **Custom keyboard shortcuts** — open URLs in the browser with template variables
@@ -89,7 +89,7 @@ having to back out first.
 | `w` | Toggle waiting-only filter (Ready but past reconciliation interval) |
 | `P` | Toggle progressing-only filter (currently reconciling) |
 | `n` | Open namespace picker |
-| `o` | Cycle sort column (TF/KS: namespace / name / ready / applied / age — Runners: namespace / name / terraform / phase / age) |
+| `o` | Cycle sort column (TF/KS: namespace / name / ready / revision / applied / age — Runners: namespace / name / terraform / phase / age) |
 | `i` | Invert sort direction (ascending ↔ descending) |
 | `!` | Jump to first failure in the list |
 

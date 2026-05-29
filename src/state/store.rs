@@ -134,6 +134,7 @@ pub enum SortColumn {
     Namespace,
     Name,
     Ready,
+    Revision,
     LastApplied,
     Age,
 }
@@ -143,7 +144,8 @@ impl SortColumn {
         match self {
             SortColumn::Namespace => SortColumn::Name,
             SortColumn::Name => SortColumn::Ready,
-            SortColumn::Ready => SortColumn::LastApplied,
+            SortColumn::Ready => SortColumn::Revision,
+            SortColumn::Revision => SortColumn::LastApplied,
             SortColumn::LastApplied => SortColumn::Age,
             SortColumn::Age => SortColumn::Namespace,
         }
@@ -154,6 +156,7 @@ impl SortColumn {
             SortColumn::Namespace => "namespace",
             SortColumn::Name => "name",
             SortColumn::Ready => "ready",
+            SortColumn::Revision => "revision",
             SortColumn::LastApplied => "applied",
             SortColumn::Age => "age",
         }

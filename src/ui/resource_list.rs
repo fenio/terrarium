@@ -34,7 +34,7 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
         sort_cell("READY", active == SortColumn::Ready, desc),
         Cell::from("S"),
         Cell::from("PLAN"),
-        Cell::from("REVISION"),
+        sort_cell("REVISION", active == SortColumn::Revision, desc),
         sort_cell("LAST APPLIED", active == SortColumn::LastApplied, desc),
         sort_cell("AGE", active == SortColumn::Age, desc),
     ])
@@ -176,6 +176,18 @@ pub fn get_filtered_terraforms(
                 .cmp(&ready_b)
                 .then(a.metadata.name.cmp(&b.metadata.name))
         }),
+        SortColumn::Revision => filtered.sort_by(|a, b| {
+            // Ascending = lexicographic by last applied revision; resources
+            // without a revision sort last so they don't pile up at the top.
+            let rev_a = revision_str(a);
+            let rev_b = revision_str(b);
+            match (rev_a, rev_b) {
+                (Some(x), Some(y)) => x.cmp(&y).then(a.metadata.name.cmp(&b.metadata.name)),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.metadata.name.cmp(&b.metadata.name),
+            }
+        }),
         SortColumn::LastApplied => filtered.sort_by(|a, b| {
             // Ascending = oldest applied first; resources that have never applied sort last.
             let ts_a = applied_ts(a);
@@ -242,6 +254,13 @@ fn applied_ts(tf: &Terraform) -> Option<jiff::Timestamp> {
         .and_then(|s| s.conditions.as_ref())
         .and_then(|cs| cs.iter().find(|c| c.type_ == "Apply"))
         .map(|c| c.last_transition_time.0)
+}
+
+fn revision_str(tf: &Terraform) -> Option<String> {
+    tf.status
+        .as_ref()
+        .and_then(|s| s.last_applied_revision.as_deref())
+        .map(|s| s.to_string())
 }
 
 fn get_ready_str(tf: &Terraform) -> String {
