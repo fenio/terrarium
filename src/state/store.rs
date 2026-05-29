@@ -575,12 +575,21 @@ impl AppState {
 
     /// Indices into `config.shortcuts` of all entries applicable to the
     /// given resource — used by the popup to hide non-matching entries.
+    ///
+    /// Deduplicated by `key` with first-match-wins semantics, mirroring
+    /// `resolve_shortcut_for`: when several shortcuts share a key (e.g.
+    /// a narrow `when`-guarded override plus a no-condition catch-all),
+    /// only the entry that would actually fire on key-press is shown.
+    /// This lets a user stack any number of `when`-guarded variants on
+    /// the same key without writing negative-match rules on the
+    /// fallback.
     pub fn visible_shortcut_indices(&self, namespace: &str, name: &str) -> Vec<usize> {
+        let mut seen = std::collections::HashSet::new();
         self.config
             .shortcuts
             .iter()
             .enumerate()
-            .filter(|(i, _)| self.shortcut_applies(*i, namespace, name))
+            .filter(|(i, s)| self.shortcut_applies(*i, namespace, name) && seen.insert(s.key))
             .map(|(i, _)| i)
             .collect()
     }
@@ -869,6 +878,53 @@ mod tests {
             state.resolve_shortcut_for('g', "ns", "psv2-cfg-cloudlogs01-grafana-xyz"),
             Some(2),
             "everything else should fall through to the fallback shortcut"
+        );
+    }
+
+    #[test]
+    fn visible_shortcut_indices_dedupes_by_key_first_match_wins() {
+        // Three shortcuts share key 'g': two narrow `when`-guarded
+        // overrides and a catch-all. The popup must show only the
+        // entry that would actually fire on key-press, so users don't
+        // need negative-match rules on the catch-all to suppress it.
+        let state = state_with_shortcuts(vec![
+            shortcut(
+                'g',
+                "clusters",
+                Some(When {
+                    name: Some("^cluster-".into()),
+                    namespace: None,
+                    context: None,
+                }),
+            ),
+            shortcut(
+                'g',
+                "gtm",
+                Some(When {
+                    name: Some("^gtm-".into()),
+                    namespace: None,
+                    context: None,
+                }),
+            ),
+            shortcut('g', "fallback", None),
+            // A second key not involved in deduping — proves we don't
+            // accidentally collapse across keys.
+            shortcut('h', "help", None),
+        ]);
+
+        // cluster-* → only the clusters entry + the unrelated 'h'.
+        assert_eq!(
+            state.visible_shortcut_indices("ns", "cluster-foo"),
+            vec![0, 3],
+            "matching `when` should hide later same-key entries (including catch-all)"
+        );
+        // gtm-* → only the gtm entry + 'h'.
+        assert_eq!(state.visible_shortcut_indices("ns", "gtm-bar"), vec![1, 3],);
+        // No narrow match → catch-all wins, narrow entries are filtered
+        // out by their own `when`, so the visible set is just [2, 3].
+        assert_eq!(
+            state.visible_shortcut_indices("ns", "something-else"),
+            vec![2, 3],
         );
     }
 
