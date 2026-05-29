@@ -67,6 +67,13 @@ pub const BULK_SELECTED: Style = Style::new()
 /// reconcile / suspend / approve / …). Muted slate-blue so it doesn't
 /// compete visually with the bulk-selection marker.
 pub const RECENTLY_ACTED: Style = Style::new().fg(Color::Rgb(140, 160, 200));
+/// Marker for rows whose underlying resource has a non-empty
+/// `metadata.deletionTimestamp` — i.e. delete was requested but the
+/// finalizer chain hasn't completed yet. Bright red so it pops out of
+/// the list at a glance.
+pub const DELETING: Style = Style::new()
+    .fg(Color::Rgb(240, 100, 100))
+    .add_modifier(Modifier::BOLD);
 
 // Plan syntax highlighting
 pub const PLAN_CREATE: Style = Style::new().fg(Color::Rgb(80, 220, 100));

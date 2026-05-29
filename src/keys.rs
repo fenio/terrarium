@@ -119,6 +119,7 @@ fn handle_list_key(key: KeyEvent) -> Action {
         KeyCode::Char('f') => Action::ToggleFailuresOnly,
         KeyCode::Char('w') => Action::ToggleWaitingOnly,
         KeyCode::Char('P') => Action::ToggleProgressingOnly,
+        KeyCode::Char('D') => Action::ToggleDeletingOnly,
         KeyCode::Char('o') => Action::CycleSort,
         KeyCode::Char('i') => Action::InvertSort,
         KeyCode::Char('n') => Action::OpenNamespacePicker,

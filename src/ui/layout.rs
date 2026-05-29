@@ -501,6 +501,18 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
                 .add_modifier(Modifier::BOLD),
         ));
     }
+    if state.show_deleting_only {
+        if !pill_spans.is_empty() {
+            pill_spans.push(Span::styled(" ", hdr_bg));
+        }
+        pill_spans.push(Span::styled(
+            " DELETING ONLY ",
+            Style::default()
+                .fg(Color::Rgb(30, 30, 40))
+                .bg(Color::Rgb(240, 100, 100))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     if !state.search_query.is_empty() {
         if !pill_spans.is_empty() {
             pill_spans.push(Span::styled(" ", hdr_bg));

@@ -20,6 +20,7 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
         state.show_failures_only,
         state.show_waiting_only,
         state.show_progressing_only,
+        state.show_deleting_only,
         &state.recently_acted,
         state.sort_column,
         state.sort_descending,
@@ -48,7 +49,8 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
             let name = tf.metadata.name.as_deref().unwrap_or("-");
 
             let (ready_text, ready_style) = get_ready_status(tf);
-            let bulk_cell = bulk_marker_cell(state, ns, name);
+            let deleting = tf.metadata.deletion_timestamp.is_some();
+            let bulk_cell = bulk_marker_cell(state, ns, name, deleting);
             let suspended_cell = if tf.spec.suspend.unwrap_or(false) {
                 Cell::from(Span::styled("S", theme::SUSPENDED))
             } else {
@@ -106,6 +108,7 @@ pub fn get_filtered_terraforms(
     failures_only: bool,
     waiting_only: bool,
     progressing_only: bool,
+    deleting_only: bool,
     recently_acted: &std::collections::HashMap<(String, String), std::time::Instant>,
     sort_column: SortColumn,
     descending: bool,
@@ -156,6 +159,9 @@ pub fn get_filtered_terraforms(
             }
             if waiting_only {
                 return in_grace || is_waiting(tf);
+            }
+            if deleting_only {
+                return in_grace || tf.metadata.deletion_timestamp.is_some();
             }
             true
         })
@@ -219,13 +225,22 @@ pub fn get_filtered_terraforms(
 ///     RECENTLY_ACTED style — flags rows that the active filter would
 ///     normally hide but that we keep visible so the user can watch
 ///     the controller pick them up.
+///   * Resource has a `deletionTimestamp` (delete requested, but
+///     finalizers haven't drained yet) → `☠` in DELETING style.
 ///   * Otherwise blank.
-pub(crate) fn bulk_marker_cell(state: &AppState, namespace: &str, name: &str) -> Cell<'static> {
+pub(crate) fn bulk_marker_cell(
+    state: &AppState,
+    namespace: &str,
+    name: &str,
+    deleting: bool,
+) -> Cell<'static> {
     let key = (namespace.to_string(), name.to_string());
     if state.bulk_selected.contains(&key) {
         Cell::from(Span::styled("●", theme::BULK_SELECTED))
     } else if state.is_recently_acted(namespace, name) {
         Cell::from(Span::styled("↻", theme::RECENTLY_ACTED))
+    } else if deleting {
+        Cell::from(Span::styled("☠", theme::DELETING))
     } else {
         Cell::from(" ")
     }

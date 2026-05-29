@@ -497,6 +497,7 @@ impl App {
             self.state.show_failures_only,
             self.state.show_waiting_only,
             self.state.show_progressing_only,
+            self.state.show_deleting_only,
             &self.state.recently_acted,
             self.state.sort_column,
             self.state.sort_descending,
@@ -517,6 +518,7 @@ impl App {
             self.state.show_failures_only,
             self.state.show_waiting_only,
             self.state.show_progressing_only,
+            self.state.show_deleting_only,
             &self.state.recently_acted,
             self.state.sort_column,
             self.state.sort_descending,
@@ -567,6 +569,7 @@ impl App {
                 self.state.show_failures_only,
                 self.state.show_waiting_only,
                 self.state.show_progressing_only,
+                self.state.show_deleting_only,
                 &self.state.recently_acted,
                 self.state.sort_column,
                 self.state.sort_descending,
@@ -579,6 +582,7 @@ impl App {
                 self.state.show_failures_only,
                 self.state.show_waiting_only,
                 self.state.show_progressing_only,
+                self.state.show_deleting_only,
                 &self.state.recently_acted,
                 self.state.sort_column,
                 self.state.sort_descending,
@@ -769,6 +773,7 @@ impl App {
                 if self.state.show_failures_only {
                     self.state.show_waiting_only = false;
                     self.state.show_progressing_only = false;
+                    self.state.show_deleting_only = false;
                 }
                 self.state.current_table_state().select(Some(0));
             }
@@ -777,6 +782,7 @@ impl App {
                 if self.state.show_progressing_only {
                     self.state.show_failures_only = false;
                     self.state.show_waiting_only = false;
+                    self.state.show_deleting_only = false;
                 }
                 self.state.current_table_state().select(Some(0));
             }
@@ -784,6 +790,16 @@ impl App {
                 self.state.show_waiting_only = !self.state.show_waiting_only;
                 if self.state.show_waiting_only {
                     self.state.show_failures_only = false;
+                    self.state.show_progressing_only = false;
+                    self.state.show_deleting_only = false;
+                }
+                self.state.current_table_state().select(Some(0));
+            }
+            Action::ToggleDeletingOnly => {
+                self.state.show_deleting_only = !self.state.show_deleting_only;
+                if self.state.show_deleting_only {
+                    self.state.show_failures_only = false;
+                    self.state.show_waiting_only = false;
                     self.state.show_progressing_only = false;
                 }
                 self.state.current_table_state().select(Some(0));
@@ -977,6 +993,7 @@ impl App {
                             self.state.show_failures_only = true;
                             self.state.show_progressing_only = false;
                             self.state.show_waiting_only = false;
+                            self.state.show_deleting_only = false;
                             self.state.active_tab = TabKind::Terraform;
                             // Reset the TF tab back to its list root so the user
                             // sees the filtered Terraforms first, not whatever
@@ -1042,6 +1059,8 @@ impl App {
                         self.state.show_waiting_only = false;
                     } else if self.state.show_progressing_only {
                         self.state.show_progressing_only = false;
+                    } else if self.state.show_deleting_only {
+                        self.state.show_deleting_only = false;
                     } else if self.state.namespace_filter.is_some() {
                         self.state.namespace_filter = None;
                     }
@@ -1846,6 +1865,7 @@ impl App {
                     self.state.show_failures_only,
                     self.state.show_waiting_only,
                     self.state.show_progressing_only,
+                    self.state.show_deleting_only,
                     &self.state.recently_acted,
                     self.state.sort_column,
                     self.state.sort_descending,
@@ -1869,6 +1889,7 @@ impl App {
                     self.state.show_failures_only,
                     self.state.show_waiting_only,
                     self.state.show_progressing_only,
+                    self.state.show_deleting_only,
                     &self.state.recently_acted,
                     self.state.sort_column,
                     self.state.sort_descending,

@@ -22,6 +22,7 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
         state.show_failures_only,
         state.show_waiting_only,
         state.show_progressing_only,
+        state.show_deleting_only,
         &state.recently_acted,
         state.sort_column,
         state.sort_descending,
@@ -49,7 +50,8 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
             let ns = ks.metadata.namespace.as_deref().unwrap_or("-");
             let name = ks.metadata.name.as_deref().unwrap_or("-");
             let (ready_text, ready_style) = get_ready_status(ks);
-            let bulk_cell = bulk_marker_cell(state, ns, name);
+            let deleting = ks.metadata.deletion_timestamp.is_some();
+            let bulk_cell = bulk_marker_cell(state, ns, name, deleting);
             let suspended_cell = if ks.spec.suspend.unwrap_or(false) {
                 Cell::from(Span::styled("S", theme::SUSPENDED))
             } else {
@@ -107,6 +109,7 @@ pub fn get_filtered_kustomizations(
     failures_only: bool,
     _waiting_only: bool,
     progressing_only: bool,
+    deleting_only: bool,
     recently_acted: &std::collections::HashMap<(String, String), std::time::Instant>,
     sort_column: SortColumn,
     descending: bool,
@@ -150,6 +153,9 @@ pub fn get_filtered_kustomizations(
                         ),
                         util::ReadyState::Reconciling
                     );
+            }
+            if deleting_only {
+                return in_grace || ks.metadata.deletion_timestamp.is_some();
             }
             true
         })

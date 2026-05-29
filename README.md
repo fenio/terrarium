@@ -88,6 +88,7 @@ having to back out first.
 | `f` | Toggle failures-only filter (real failures — excludes in-flight reconciles) |
 | `w` | Toggle waiting-only filter (Ready but past reconciliation interval) |
 | `P` | Toggle progressing-only filter (currently reconciling) |
+| `D` | Toggle deleting-only filter (resources with a non-empty deletionTimestamp — delete requested but finalizers haven't drained yet; also marked in the leftmost column with `☠`) |
 | `n` | Open namespace picker |
 | `o` | Cycle sort column (TF/KS: namespace / name / ready / revision / applied / age — Runners: namespace / name / terraform / phase / age) |
 | `i` | Invert sort direction (ascending ↔ descending) |
