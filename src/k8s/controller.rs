@@ -73,11 +73,11 @@ async fn fetch_controller_info(client: &kube::Client, ns: &str) -> ControllerInf
     ];
     let mut pod_items = Vec::new();
     for selector in &label_selectors {
-        if let Ok(pods) = pod_api.list(&ListParams::default().labels(selector)).await {
-            if !pods.items.is_empty() {
-                pod_items = pods.items;
-                break;
-            }
+        if let Ok(pods) = pod_api.list(&ListParams::default().labels(selector)).await
+            && !pods.items.is_empty()
+        {
+            pod_items = pods.items;
+            break;
         }
     }
     if !pod_items.is_empty() {
