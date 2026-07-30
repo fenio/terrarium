@@ -129,13 +129,40 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
                     style.bg(theme::STATUS_BAR_BG),
                 )]);
                 f.render_widget(Paragraph::new(line), rows[0]);
+                // Keep a background-error indicator visible even under a flash.
+                if let Some(err) = bg_error_line(state) {
+                    f.render_widget(Paragraph::new(err), rows[1]);
+                }
             } else {
-                let (top, bottom) = build_help_lines(state);
+                let (top, mut bottom) = build_help_lines(state);
+                // Prepend a ⚠ background-error segment so recurring poller
+                // failures (e.g. runner listing) are never silent.
+                if let Some(mut err) = bg_error_line(state).map(|l| l.spans) {
+                    if !bottom.is_empty() {
+                        err.push(Span::styled(" │ ", theme::STATUS_BAR_SEP));
+                    }
+                    err.extend(bottom);
+                    bottom = err;
+                }
                 f.render_widget(Paragraph::new(Line::from(top)), rows[0]);
                 f.render_widget(Paragraph::new(Line::from(bottom)), rows[1]);
             }
         }
     }
+}
+
+/// A ⚠ status-bar segment for the current background-poller error, if any.
+fn bg_error_line(state: &AppState) -> Option<Line<'static>> {
+    let msg = state.background_error.as_ref()?;
+    Some(Line::from(vec![
+        Span::styled(" ⚠ ", theme::FLASH_ERROR.bg(theme::STATUS_BAR_BG)),
+        Span::styled(
+            msg.clone(),
+            Style::default()
+                .fg(Color::Rgb(240, 150, 150))
+                .bg(theme::STATUS_BAR_BG),
+        ),
+    ]))
 }
 
 /// A logical group of keybinds. Rendered as `key:label key:label ...`

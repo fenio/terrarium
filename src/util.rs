@@ -27,6 +27,61 @@ pub fn secs_since(ts: jiff::Timestamp) -> i64 {
     now.since(ts).unwrap_or_default().get_seconds()
 }
 
+/// Turn a raw cluster/API error (often a verbose `kube` Debug dump like
+/// `ApiError: Unauthorized: Failed to parse error data (Status { … })`) into
+/// a short, human-readable, actionable message for the UI. The full text is
+/// still written to the log file for diagnosis.
+pub fn humanize_cluster_error(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+
+    if lower.contains("401") || lower.contains("unauthorized") {
+        return "Unauthorized (401): your credentials are invalid or expired. \
+                Re-authenticate — press Ctrl-X to reconnect the context."
+            .to_string();
+    }
+    if lower.contains("403") || lower.contains("forbidden") {
+        return "Forbidden (403): your account lacks permission on this cluster.".to_string();
+    }
+    if lower.contains("connection refused")
+        || lower.contains("dns error")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("failed to lookup")
+        || lower.contains("tcp connect error")
+        || lower.contains("no route to host")
+        || lower.contains("network is unreachable")
+    {
+        return "Cannot reach the cluster API server. Check your kubeconfig, \
+                network/VPN, and that the context points at a running cluster."
+            .to_string();
+    }
+
+    // Otherwise strip the noisy `Status { … }` Debug framing and collapse
+    // whitespace so a single readable line remains.
+    strip_status_debug(raw)
+}
+
+/// Drop the `(Status { … })` / `Status { … }` Debug tail that `kube` appends,
+/// then collapse internal whitespace and trailing separators.
+fn strip_status_debug(raw: &str) -> String {
+    let head = raw
+        .find("(Status {")
+        .or_else(|| raw.find("Status {"))
+        .map(|i| &raw[..i])
+        .unwrap_or(raw);
+    let collapsed = head.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed
+        .trim()
+        .trim_end_matches([':', '-', ' '])
+        .trim()
+        .to_string();
+    if trimmed.is_empty() {
+        "Cluster API error (see log for details).".to_string()
+    } else {
+        trimmed
+    }
+}
+
 /// Format the conditions of a resource for the full-message viewer.
 /// Each condition is an icon + type + status header followed by its
 /// transition/generation metadata and the humanized message body.
@@ -233,6 +288,39 @@ pub fn parse_k8s_duration(s: &str) -> Option<i64> {
 mod tests {
     use super::*;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
+
+    #[test]
+    fn humanize_maps_401_to_reauth_hint() {
+        let raw = r#"Kustomization watcher failed: failed to perform initial object list: ApiError: Unauthorized: Failed to parse error data (Status { status: Some(Failure), code: 401, message: "Unauthorized\n", reason: "Failed to parse error data", details: None })"#;
+        let out = humanize_cluster_error(raw);
+        assert!(out.contains("Unauthorized (401)"), "got: {out}");
+        assert!(out.contains("Ctrl-X"), "got: {out}");
+        assert!(!out.contains("Status {"), "debug framing leaked: {out}");
+    }
+
+    #[test]
+    fn humanize_maps_403_to_forbidden() {
+        let out = humanize_cluster_error("ApiError: Forbidden (code: 403)");
+        assert!(out.contains("Forbidden (403)"), "got: {out}");
+    }
+
+    #[test]
+    fn humanize_maps_connection_errors() {
+        for raw in [
+            "error trying to connect: tcp connect error: Connection refused (os error 61)",
+            "dns error: failed to lookup address information",
+        ] {
+            let out = humanize_cluster_error(raw);
+            assert!(out.contains("Cannot reach the cluster"), "got: {out}");
+        }
+    }
+
+    #[test]
+    fn humanize_strips_status_framing_from_unknown_errors() {
+        let raw = "Terraform watcher failed: something odd (Status { code: 500, reason: \"x\" })";
+        let out = humanize_cluster_error(raw);
+        assert_eq!(out, "Terraform watcher failed: something odd");
+    }
 
     fn make_condition(type_: &str, status: &str, reason: &str, message: &str) -> Condition {
         Condition {
