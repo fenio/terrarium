@@ -24,6 +24,20 @@ pub struct App {
     action_rx: mpsc::UnboundedReceiver<Action>,
     client: Option<kube::Client>,
     should_quit: bool,
+
+    /// In-memory kubeconfig used by the context switcher. When present
+    /// (e.g. assembled by a `[switcher] builder` command), clients are
+    /// built from it; `None` falls back to on-disk kubeconfig resolution.
+    switcher_kubeconfig: Option<kube::config::Kubeconfig>,
+    /// CLI-derived settings replayed on every (re)connect.
+    namespace: Option<String>,
+    controller_ns: String,
+    tf_debug_log: Option<std::path::PathBuf>,
+    /// Handles for the current connection's background tasks (client
+    /// init + watchers/pollers). Aborted and replaced on every reconnect
+    /// so a context switch never leaves watchers pointed at the old
+    /// cluster writing into orphaned stores.
+    conn_tasks: std::sync::Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl App {
@@ -40,6 +54,11 @@ impl App {
             action_rx,
             client: Some(client),
             should_quit: false,
+            switcher_kubeconfig: None,
+            namespace: None,
+            controller_ns: "flux-system".to_string(),
+            tf_debug_log: None,
+            conn_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -47,6 +66,10 @@ impl App {
         state: AppState,
         action_tx: mpsc::UnboundedSender<Action>,
         action_rx: mpsc::UnboundedReceiver<Action>,
+        switcher_kubeconfig: Option<kube::config::Kubeconfig>,
+        namespace: Option<String>,
+        controller_ns: String,
+        tf_debug_log: Option<std::path::PathBuf>,
     ) -> Self {
         Self {
             state,
@@ -54,7 +77,206 @@ impl App {
             action_rx,
             client: None,
             should_quit: false,
+            switcher_kubeconfig,
+            namespace,
+            controller_ns,
+            tf_debug_log,
+            conn_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
+    }
+
+    /// (Re)connect the app to `context`, or the switcher kubeconfig's
+    /// current-context when `None`. Aborts the previous connection's
+    /// background tasks, swaps in fresh reflector stores, and spawns a
+    /// new client-init + watcher/poller fleet. Rendering continues
+    /// immediately; data refills as the new watchers sync.
+    pub fn connect(&mut self, context: Option<String>) {
+        // Abort the previous connection's tasks (no-op on first connect).
+        if let Ok(mut tasks) = self.conn_tasks.lock() {
+            for h in tasks.drain(..) {
+                h.abort();
+            }
+        }
+
+        // Fresh stores/writers for this connection generation. A Writer is
+        // permanently bound to its Store, so each connection needs its own
+        // pair; the read handles are swapped into AppState here and the
+        // writers move into the watchers spawned below.
+        let (tf_store, tf_writer) = crate::k8s::watcher::create_tf_store();
+        let (ks_store, ks_writer) = crate::k8s::watcher::create_ks_store();
+        let (gr_store, gr_writer) = crate::k8s::watcher::create_gitrepo_store();
+        self.state.reset_for_reconnect(tf_store, ks_store, gr_store);
+        self.client = None;
+
+        let tasks_arc = self.conn_tasks.clone();
+        let tx = self.action_tx.clone();
+        let kubeconfig = self.switcher_kubeconfig.clone();
+        let namespace = self.namespace.clone();
+        let controller_ns = self.controller_ns.clone();
+        let tf_debug_log = self.tf_debug_log.clone();
+
+        let outer = tokio::spawn(async move {
+            let client_res = match kubeconfig {
+                Some(kc) => {
+                    crate::k8s::client::create_client_from_kubeconfig(kc, context.as_deref()).await
+                }
+                None => crate::k8s::client::create_client(context.as_deref()).await,
+            };
+
+            match client_res {
+                Ok((client, cluster_info)) => {
+                    let _ = tx.send(Action::K8sClientReady {
+                        client: crate::action::K8sClient(client.clone()),
+                        context_name: cluster_info.context_name,
+                    });
+
+                    // Register each spawned task so a later reconnect can
+                    // abort it. `push` locks the shared vec per spawn.
+                    let push = |h: tokio::task::JoinHandle<()>| {
+                        if let Ok(mut t) = tasks_arc.lock() {
+                            t.push(h);
+                        }
+                    };
+
+                    let wtx = tx.clone();
+                    let c = client.clone();
+                    let dbg = tf_debug_log.clone();
+                    push(tokio::spawn(async move {
+                        if let Err(e) =
+                            crate::k8s::watcher::run_tf_watcher(c, tf_writer, wtx.clone(), dbg)
+                                .await
+                        {
+                            let _ = wtx.send(Action::ConnectionError(format!(
+                                "Terraform watcher failed: {e}"
+                            )));
+                        }
+                    }));
+
+                    let wtx = tx.clone();
+                    let c = client.clone();
+                    push(tokio::spawn(async move {
+                        if let Err(e) =
+                            crate::k8s::watcher::run_ks_watcher(c, ks_writer, wtx.clone()).await
+                        {
+                            let _ = wtx.send(Action::ConnectionError(format!(
+                                "Kustomization watcher failed: {e}"
+                            )));
+                        }
+                    }));
+
+                    let wtx = tx.clone();
+                    let c = client.clone();
+                    push(tokio::spawn(async move {
+                        if let Err(e) =
+                            crate::k8s::watcher::run_gitrepo_watcher(c, gr_writer, wtx.clone())
+                                .await
+                        {
+                            let _ = wtx.send(Action::ConnectionError(format!(
+                                "GitRepository watcher failed: {e}"
+                            )));
+                        }
+                    }));
+
+                    let wtx = tx.clone();
+                    let c = client.clone();
+                    let ns_clone = namespace.clone();
+                    push(tokio::spawn(async move {
+                        if let Err(e) =
+                            crate::k8s::runners::poll_runner_pods(c, wtx.clone(), ns_clone).await
+                        {
+                            let _ = wtx.send(Action::ConnectionError(format!(
+                                "Runner poller failed: {e}"
+                            )));
+                        }
+                    }));
+
+                    let wtx = tx.clone();
+                    let c = client.clone();
+                    push(tokio::spawn(async move {
+                        if let Err(e) = crate::k8s::controller::poll_controller_info(
+                            c,
+                            wtx.clone(),
+                            controller_ns,
+                        )
+                        .await
+                        {
+                            let _ = wtx.send(Action::ConnectionError(format!(
+                                "Controller poller failed: {e}"
+                            )));
+                        }
+                    }));
+                }
+                Err(e) => {
+                    let _ = tx.send(Action::ConnectionError(format!(
+                        "Failed to connect to cluster: {e}"
+                    )));
+                }
+            }
+        });
+
+        if let Ok(mut tasks) = self.conn_tasks.lock() {
+            tasks.push(outer);
+        }
+    }
+
+    /// Switch the app to `context`, first suspending the TUI to run an
+    /// interactive `exec`/OIDC credential plugin on a clean terminal when
+    /// the target context uses one — so a browser login never garbles the
+    /// alternate screen. Then reconnect (see [`Self::connect`]). No-op
+    /// suspend for token/cert contexts.
+    async fn switch_context(&mut self, terminal: &mut crate::tui::Tui, context: String) {
+        let exec = self
+            .switcher_kubeconfig
+            .clone()
+            .or_else(|| kube::config::Kubeconfig::read().ok())
+            .and_then(|kc| crate::k8s::exec_auth::exec_for_context(&kc, Some(&context)));
+
+        let mut auth_error: Option<String> = None;
+        if let Some(exec) = exec {
+            self.state.flash_message = Some((
+                format!("Authenticating to {context} …"),
+                Instant::now(),
+                FlashKind::Success,
+            ));
+            terminal.draw(|f| layout::render(f, &mut self.state)).ok();
+
+            if crate::tui::restore().is_ok() {
+                println!("\nAuthenticating to {context} … (a browser may open)\n");
+                if let Err(e) = crate::k8s::exec_auth::prewarm(&exec) {
+                    // Non-fatal: connect() still tries — kube-rs may already
+                    // hold a usable cached token. Surface it back in the TUI.
+                    auth_error = Some(format!("Pre-auth failed: {e}"));
+                }
+                if crate::tui::init_raw(self.state.mouse_enabled).is_err() {
+                    self.should_quit = true;
+                    return;
+                }
+                terminal.clear().ok();
+            }
+        }
+
+        self.state.context_name = context.clone();
+        self.connect(Some(context.clone()));
+        self.state.flash_message = Some(match auth_error {
+            Some(e) => (e, Instant::now(), FlashKind::Error),
+            None => (
+                format!("Switched to {context}"),
+                Instant::now(),
+                FlashKind::Success,
+            ),
+        });
+    }
+
+    /// Context names offered by the switcher, drawn from the switcher
+    /// kubeconfig when present, else the on-disk kubeconfig. Ordered as
+    /// they appear in the file.
+    fn switcher_contexts(&self) -> Vec<String> {
+        let kc = self
+            .switcher_kubeconfig
+            .clone()
+            .or_else(|| kube::config::Kubeconfig::read().ok());
+        kc.map(|kc| kc.contexts.into_iter().map(|c| c.name).collect())
+            .unwrap_or_default()
     }
 
     pub async fn run(&mut self, terminal: &mut crate::tui::Tui) -> anyhow::Result<()> {
@@ -69,16 +291,12 @@ impl App {
                 event = event_stream.next() => {
                     if let Some(Ok(evt)) = event
                         && let Some(action) = self.handle_crossterm_event(evt) {
-                            if let Action::ExecBreakTheGlass { namespace, name } = &action {
-                                self.exec_break_the_glass(terminal, namespace, name).await;
-                            } else {
-                                self.dispatch(action).await;
-                            }
+                            self.run_action(action, terminal).await;
                         }
                 }
                 action = self.action_rx.recv() => {
                     if let Some(action) = action {
-                        self.dispatch(action).await;
+                        self.run_action(action, terminal).await;
                     }
                 }
                 _ = tick_interval.tick() => {
@@ -93,11 +311,7 @@ impl App {
             while event::poll(std::time::Duration::ZERO)? {
                 if let Ok(evt) = event::read() {
                     if let Some(action) = self.handle_crossterm_event(evt) {
-                        if let Action::ExecBreakTheGlass { namespace, name } = &action {
-                            self.exec_break_the_glass(terminal, namespace, name).await;
-                        } else {
-                            self.dispatch(action).await;
-                        }
+                        self.run_action(action, terminal).await;
                     }
                 }
             }
@@ -108,6 +322,21 @@ impl App {
         }
 
         Ok(())
+    }
+
+    /// Route an action, intercepting the few that must run with access to
+    /// the terminal handle (they temporarily suspend the TUI); everything
+    /// else goes through the normal `dispatch`.
+    async fn run_action(&mut self, action: Action, terminal: &mut crate::tui::Tui) {
+        match action {
+            Action::ExecBreakTheGlass { namespace, name } => {
+                self.exec_break_the_glass(terminal, &namespace, &name).await;
+            }
+            Action::SwitchContext(context) => {
+                self.switch_context(terminal, context).await;
+            }
+            other => self.dispatch(other).await,
+        }
     }
 
     fn handle_crossterm_event(&self, event: Event) -> Option<Action> {
@@ -1154,6 +1383,59 @@ impl App {
             }
             Action::NamespacePickerCancel => {
                 self.state.input_mode = InputMode::Normal;
+            }
+
+            // Context picker (Ctrl-X)
+            Action::OpenContextPicker => {
+                let contexts = self.switcher_contexts();
+                if contexts.is_empty() {
+                    self.state.flash_message = Some((
+                        "No contexts available to switch to".to_string(),
+                        Instant::now(),
+                        FlashKind::Error,
+                    ));
+                } else {
+                    self.state.ctx_picker_selected = contexts
+                        .iter()
+                        .position(|c| *c == self.state.context_name)
+                        .unwrap_or(0);
+                    self.state.ctx_picker_items = contexts;
+                    self.state.input_mode = InputMode::ContextPicker;
+                }
+            }
+            Action::ContextPickerNext => {
+                let len = self.state.ctx_picker_items.len();
+                if len > 0 {
+                    self.state.ctx_picker_selected =
+                        (self.state.ctx_picker_selected + 1).min(len - 1);
+                }
+            }
+            Action::ContextPickerPrev => {
+                self.state.ctx_picker_selected = self.state.ctx_picker_selected.saturating_sub(1);
+            }
+            Action::ContextPickerSelect => {
+                self.state.input_mode = InputMode::Normal;
+                if let Some(ctx) = self
+                    .state
+                    .ctx_picker_items
+                    .get(self.state.ctx_picker_selected)
+                    .cloned()
+                {
+                    // Route through the run loop so the switch can suspend
+                    // the TUI for an interactive exec/OIDC login if needed.
+                    // Re-selecting the current context is allowed — it acts
+                    // as a reconnect / re-authenticate.
+                    let _ = self.action_tx.send(Action::SwitchContext(ctx));
+                }
+            }
+            Action::ContextPickerCancel => {
+                self.state.input_mode = InputMode::Normal;
+            }
+            Action::SwitchContext(ctx) => {
+                // Normally intercepted by the run loop (which can suspend
+                // the TUI for interactive auth); this is a plain fallback.
+                self.state.context_name = ctx.clone();
+                self.connect(Some(ctx));
             }
 
             // Shortcuts popup

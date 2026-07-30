@@ -70,6 +70,17 @@ pub enum Action {
     NamespacePickerSelect,
     NamespacePickerCancel,
 
+    // Context picker (Ctrl-X) — switches the active kube-context
+    OpenContextPicker,
+    ContextPickerNext,
+    ContextPickerPrev,
+    ContextPickerSelect,
+    ContextPickerCancel,
+    /// Reconnect the app to the named context. Handled in the run loop
+    /// (not plain dispatch) because it may suspend the TUI to run an
+    /// interactive exec/OIDC credential plugin on a normal terminal.
+    SwitchContext(String),
+
     // Shortcuts popup (overlays current view, scoped to a resource)
     OpenShortcutsPopup {
         namespace: String,

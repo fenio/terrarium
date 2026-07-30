@@ -96,6 +96,7 @@ pub enum InputMode {
     Confirm,
     Help,
     NamespacePicker,
+    ContextPicker,
     ShortcutsPopup,
 }
 
@@ -313,6 +314,11 @@ pub struct AppState {
     pub ns_picker_items: Vec<String>,
     pub ns_picker_selected: usize,
 
+    // Context picker (Ctrl-X) — switches the whole app to another
+    // kube-context from the switcher kubeconfig.
+    pub ctx_picker_items: Vec<String>,
+    pub ctx_picker_selected: usize,
+
     // Shortcuts popup (S key)
     /// (namespace, name) of the resource the popup was opened against.
     /// All shortcut URLs render with this resource's placeholders resolved.
@@ -526,6 +532,8 @@ impl AppState {
             connection_error: None,
             ns_picker_items: Vec::new(),
             ns_picker_selected: 0,
+            ctx_picker_items: Vec::new(),
+            ctx_picker_selected: 0,
             shortcuts_popup_resource: None,
             shortcuts_popup_selected: 0,
             shortcuts_popup_visible: Vec::new(),
@@ -781,6 +789,79 @@ impl AppState {
     pub fn is_recently_acted(&self, namespace: &str, name: &str) -> bool {
         self.recently_acted
             .contains_key(&(namespace.to_string(), name.to_string()))
+    }
+
+    /// Reset all cluster-derived state before (re)connecting to a context.
+    ///
+    /// Keeps user config, keybindings, compiled shortcut/var tables and the
+    /// active namespace filter; drops everything that described the
+    /// previously-connected cluster (stores, caches, sync/CRD flags, open
+    /// views) and aborts any live per-cluster background tasks. Fresh
+    /// reflector stores are swapped in so the watchers spawned for the new
+    /// connection write into handles the UI is actually reading.
+    pub fn reset_for_reconnect(
+        &mut self,
+        tf_store: TfStore,
+        ks_store: KsStore,
+        gr_store: GitRepoStore,
+    ) {
+        // Tear down per-cluster background work tied to the old client.
+        if let Some(h) = self.log_stream_handle.take() {
+            h.abort();
+        }
+        if let Some(h) = self.metrics_task.take() {
+            h.abort();
+        }
+        self.metrics_enabled = false;
+        self.metrics_snapshot = None;
+        self.metrics_prev = crate::k8s::metrics::PrevCounters::default();
+        self.metrics_last_error = None;
+
+        // Swap in the fresh reflector stores for the new connection.
+        self.tf_store = tf_store;
+        self.ks_store = ks_store;
+        self.gr_store = gr_store;
+
+        // Drop cluster-scoped caches.
+        self.runner_pods.clear();
+        self.runner_logs.clear();
+        self.controller_info = ControllerInfo::default();
+        self.cached_outputs = None;
+        self.cached_secrets.clear();
+        self.backlog_namespaces.clear();
+        self.bulk_selected.clear();
+        self.recently_acted.clear();
+        self.var_warned.clear();
+        self.last_data_update = None;
+
+        // Reset connection status flags.
+        self.tf_synced = false;
+        self.ks_synced = false;
+        self.gr_synced = false;
+        self.runners_synced = false;
+        self.tf_crd_missing = false;
+        self.ks_crd_missing = false;
+        self.gr_crd_missing = false;
+        self.connection_error = None;
+
+        // Open views point at resources that may not exist on the new
+        // cluster — return every tab to its root list.
+        let total_tabs = tab_count(&self.config);
+        self.view_stacks = (0..total_tabs)
+            .map(|i| {
+                let tab = tab_from_index(i, &self.config).unwrap_or(TabKind::Controller);
+                vec![ViewState::List(tab)]
+            })
+            .collect();
+        self.active_tab = TabKind::Controller;
+        self.tf_table_state = TableState::default();
+        self.ks_table_state = TableState::default();
+        self.runner_table_state = TableState::default();
+        self.backlog_table_state = TableState::default();
+        for st in &mut self.custom_tab_states {
+            *st = TableState::default();
+        }
+        self.input_mode = InputMode::Normal;
     }
 
     /// Collect unique namespaces from TF and KS stores for the namespace picker.

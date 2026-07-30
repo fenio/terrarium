@@ -67,6 +67,35 @@ pub struct Config {
     ///             linode_host  = "admin.linode.com" }
     #[serde(default)]
     pub context_vars: Vec<ContextVars>,
+
+    /// Optional in-app kube-context switcher. See [`Switcher`].
+    #[serde(default)]
+    pub switcher: Option<Switcher>,
+}
+
+/// Configures the in-app context switcher (opened with Ctrl-X).
+///
+/// The switcher lists the contexts of an in-memory kubeconfig and
+/// reconnects the whole app to the selected one without restarting.
+///
+/// By default terrarium switches between the contexts found in the
+/// kubeconfig it was started with (`$KUBECONFIG` / `~/.kube/config`).
+/// Setting `builder` overrides that source: the command is run once at
+/// startup via `sh -c`, and its stdout is parsed as a kubeconfig YAML.
+/// This lets an external tool assemble the set of switchable contexts —
+/// e.g. merging several per-cluster kubeconfigs into one — without
+/// terrarium needing to know anything about where they come from.
+///
+/// Example:
+///   [switcher]
+///   builder = "my-cluster-tool kubeconfig --merge '*'"
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct Switcher {
+    /// Shell command whose stdout is a merged kubeconfig YAML. Run once
+    /// at startup. If absent, the startup kubeconfig is used as-is.
+    #[serde(default)]
+    pub builder: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
