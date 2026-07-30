@@ -128,11 +128,8 @@ async fn main() -> anyhow::Result<()> {
     // A switcher-builder failure is the more actionable startup issue, so
     // let it take the flash slot if both fired.
     if let Some(w) = switcher_warning {
-        app_state.flash_message = Some((
-            w,
-            std::time::Instant::now(),
-            state::store::FlashKind::Error,
-        ));
+        app_state.flash_message =
+            Some((w, std::time::Instant::now(), state::store::FlashKind::Error));
     }
 
     // Pre-flight `exec`/OIDC credential plugins on the normal terminal,

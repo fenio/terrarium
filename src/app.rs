@@ -143,7 +143,8 @@ impl App {
                     let dbg = tf_debug_log.clone();
                     push(tokio::spawn(async move {
                         if let Err(e) =
-                            crate::k8s::watcher::run_tf_watcher(c, tf_writer, wtx.clone(), dbg).await
+                            crate::k8s::watcher::run_tf_watcher(c, tf_writer, wtx.clone(), dbg)
+                                .await
                         {
                             let _ = wtx.send(Action::ConnectionError(format!(
                                 "Terraform watcher failed: {e}"
@@ -167,7 +168,8 @@ impl App {
                     let c = client.clone();
                     push(tokio::spawn(async move {
                         if let Err(e) =
-                            crate::k8s::watcher::run_gitrepo_watcher(c, gr_writer, wtx.clone()).await
+                            crate::k8s::watcher::run_gitrepo_watcher(c, gr_writer, wtx.clone())
+                                .await
                         {
                             let _ = wtx.send(Action::ConnectionError(format!(
                                 "GitRepository watcher failed: {e}"
@@ -182,17 +184,21 @@ impl App {
                         if let Err(e) =
                             crate::k8s::runners::poll_runner_pods(c, wtx.clone(), ns_clone).await
                         {
-                            let _ = wtx
-                                .send(Action::ConnectionError(format!("Runner poller failed: {e}")));
+                            let _ = wtx.send(Action::ConnectionError(format!(
+                                "Runner poller failed: {e}"
+                            )));
                         }
                     }));
 
                     let wtx = tx.clone();
                     let c = client.clone();
                     push(tokio::spawn(async move {
-                        if let Err(e) =
-                            crate::k8s::controller::poll_controller_info(c, wtx.clone(), controller_ns)
-                                .await
+                        if let Err(e) = crate::k8s::controller::poll_controller_info(
+                            c,
+                            wtx.clone(),
+                            controller_ns,
+                        )
+                        .await
                         {
                             let _ = wtx.send(Action::ConnectionError(format!(
                                 "Controller poller failed: {e}"
@@ -253,7 +259,11 @@ impl App {
         self.connect(Some(context.clone()));
         self.state.flash_message = Some(match auth_error {
             Some(e) => (e, Instant::now(), FlashKind::Error),
-            None => (format!("Switched to {context}"), Instant::now(), FlashKind::Success),
+            None => (
+                format!("Switched to {context}"),
+                Instant::now(),
+                FlashKind::Success,
+            ),
         });
     }
 
@@ -1401,8 +1411,7 @@ impl App {
                 }
             }
             Action::ContextPickerPrev => {
-                self.state.ctx_picker_selected =
-                    self.state.ctx_picker_selected.saturating_sub(1);
+                self.state.ctx_picker_selected = self.state.ctx_picker_selected.saturating_sub(1);
             }
             Action::ContextPickerSelect => {
                 self.state.input_mode = InputMode::Normal;
