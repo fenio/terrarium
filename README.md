@@ -190,6 +190,43 @@ Terrarium is configurable via a TOML file. It looks for configuration in this or
 With no config file, Terrarium shows four built-in tabs (Controller, Terraform,
 Kustomizations, Runners) and no extra detail fields. All config sections are optional.
 
+### Config Sync
+
+When a team shares one `config.toml`, `terrarium sync-config` fetches the latest
+copy from a central URL and installs it — so nobody has to manually download and
+update the file.
+
+Point it at a `config.toml` served over HTTPS (an internal artifact store, a raw
+git URL, etc.):
+
+```toml
+[config_sync]
+url = "https://internal.example.com/terrarium/config.toml"
+```
+
+Then:
+
+```sh
+# First run (no local config yet): bootstrap with an explicit URL.
+terrarium sync-config https://internal.example.com/terrarium/config.toml
+
+# Afterwards: refresh from the [config_sync] url baked into your config.
+terrarium sync-config
+```
+
+How it works:
+
+- fetches with `curl`, so it transparently uses your proxy, VPN, `.netrc`, and
+  any SSO/mTLS your environment already provides;
+- **validates** the download parses as a Terrarium config *before* touching disk,
+  and writes atomically — a failed sync never leaves a broken config;
+- backs up the previous file to `config.toml.bak`;
+- writes to `$TERRARIUM_CONFIG` if set, otherwise `~/.config/terrarium/config.toml`.
+
+> **Security:** a synced config can define `[switcher] builder`, which runs a
+> shell command. Only sync from a URL you trust. Plaintext `http://` is refused;
+> use `https://` (or a local `file://` path).
+
 ### Detail Fields
 
 Show extra values from the Terraform outputs secret in the detail view Status panel.
