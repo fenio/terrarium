@@ -71,6 +71,10 @@ pub struct Config {
     /// Optional in-app kube-context switcher. See [`Switcher`].
     #[serde(default)]
     pub switcher: Option<Switcher>,
+
+    /// Optional config-sync source. See [`ConfigSync`].
+    #[serde(default)]
+    pub config_sync: Option<ConfigSync>,
 }
 
 /// Configures the in-app context switcher (opened with Ctrl-X).
@@ -96,6 +100,35 @@ pub struct Switcher {
     /// at startup. If absent, the startup kubeconfig is used as-is.
     #[serde(default)]
     pub builder: Option<String>,
+}
+
+/// Configures `terrarium sync-config`, which refreshes this config file
+/// from a central location so a team can distribute one shared config.
+///
+/// The URL points at a `config.toml` served over HTTPS (an internal
+/// artifact store, a raw git URL, etc.). `sync-config` fetches it with
+/// `curl`, validates that it parses as a Terrarium config, backs up the
+/// current file to `config.toml.bak`, then atomically replaces it.
+///
+/// Because the downloaded config carries its own `[config_sync] url`, a
+/// first-time user bootstraps with an explicit URL
+/// (`terrarium sync-config <URL>`) and thereafter just runs
+/// `terrarium sync-config`.
+///
+/// SECURITY: a synced config can set `[switcher] builder`, which runs a
+/// shell command. Only sync from a URL you trust. `http://` is rejected;
+/// use `https://` (or a local `file://` path).
+///
+/// Example:
+///   [config_sync]
+///   url = "https://internal.example.com/terrarium/config.toml"
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigSync {
+    /// HTTPS (or `file://`) URL of the shared `config.toml`. Used by
+    /// `terrarium sync-config` when no URL is passed on the command line.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -278,6 +311,83 @@ impl Config {
         }
         Config::default()
     }
+}
+
+/// Fetch a shared `config.toml` from a central URL and replace the local
+/// one. Called by `terrarium sync-config`.
+///
+/// URL resolution: `url_override` (from the command line) wins; otherwise
+/// the `[config_sync] url` of the currently-installed config is used.
+/// The download is fetched with `curl`, validated by parsing it as a
+/// [`Config`], and only then written — the previous file is copied to
+/// `config.toml.bak` and the new one is put in place via a temp + rename
+/// so a failed or interrupted sync never leaves a half-written config.
+pub fn sync_config(url_override: Option<String>) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    let target =
+        config_path().context("could not determine config path (set HOME or TERRARIUM_CONFIG)")?;
+
+    // Resolve the source URL: explicit argument first, else the URL baked
+    // into the config we already have.
+    let url = match url_override {
+        Some(u) => u,
+        None => Config::load().config_sync.and_then(|c| c.url).context(
+            "no URL given and no [config_sync] url in the current config.\n\
+             Bootstrap with: terrarium sync-config <URL>",
+        )?,
+    };
+
+    // Only fetch over a transport we trust; a synced config can run shell
+    // commands via [switcher] builder, so plaintext http is refused.
+    if !(url.starts_with("https://") || url.starts_with("file://")) {
+        anyhow::bail!("refusing to sync from `{url}` — use https:// (or file://)");
+    }
+
+    // -f: fail on HTTP errors; -sS: quiet but still show errors; -L: follow
+    // redirects. `--` guards against a URL that looks like a flag.
+    eprintln!("Fetching config from {url} …");
+    let output = std::process::Command::new("curl")
+        .args(["-fsSL", "--", &url])
+        .output()
+        .context("failed to run curl (is it installed and on PATH?)")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "curl failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let contents = String::from_utf8(output.stdout).context("downloaded config was not UTF-8")?;
+
+    // Validate before touching disk: it must parse as a Terrarium config.
+    let parsed: Config =
+        toml::from_str(&contents).context("downloaded file is not a valid Terrarium config")?;
+
+    // First-run bootstrap: create ~/.config/terrarium if needed.
+    if let Some(dir) = target.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+
+    // Back up any existing config, then write atomically (temp + rename).
+    if target.exists() {
+        let backup = target.with_extension("toml.bak");
+        std::fs::copy(&target, &backup)
+            .with_context(|| format!("backing up to {}", backup.display()))?;
+        eprintln!("Backed up existing config to {}", backup.display());
+    }
+    let tmp = target.with_extension("toml.tmp");
+    std::fs::write(&tmp, &contents).with_context(|| format!("writing {}", tmp.display()))?;
+    std::fs::rename(&tmp, &target).with_context(|| format!("replacing {}", target.display()))?;
+
+    eprintln!(
+        "Updated {} ({} shortcuts, {} custom tabs, {} context-var sets).",
+        target.display(),
+        parsed.shortcuts.len(),
+        parsed.custom_tabs.len(),
+        parsed.context_vars.len(),
+    );
+    Ok(())
 }
 
 fn config_path() -> Option<PathBuf> {

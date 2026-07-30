@@ -35,6 +35,21 @@ struct Cli {
     /// Enable mouse support (click, scroll; requires Shift for native copy)
     #[arg(long)]
     mouse: bool,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum Command {
+    /// Fetch the shared config.toml from a central URL and replace the
+    /// local one. Pass a URL to bootstrap; omit it to refresh from the
+    /// [config_sync] url already in your config.
+    SyncConfig {
+        /// Source URL (https:// or file://). Optional when [config_sync]
+        /// url is set in the current config.
+        url: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -47,6 +62,11 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    // Subcommands run and exit before any terminal/K8s setup.
+    if let Some(Command::SyncConfig { url }) = cli.command {
+        return config::sync_config(url);
+    }
 
     // Create action channel
     let (action_tx, action_rx) = mpsc::unbounded_channel::<action::Action>();
