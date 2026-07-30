@@ -59,6 +59,17 @@ pub fn handle_key(key: KeyEvent, view: &ViewState, input_mode: &InputMode) -> Ac
         };
     }
 
+    // Context picker
+    if matches!(input_mode, InputMode::ContextPicker) {
+        return match key.code {
+            KeyCode::Char('j') | KeyCode::Down => Action::ContextPickerNext,
+            KeyCode::Char('k') | KeyCode::Up => Action::ContextPickerPrev,
+            KeyCode::Enter => Action::ContextPickerSelect,
+            KeyCode::Esc => Action::ContextPickerCancel,
+            _ => Action::None,
+        };
+    }
+
     // Shortcuts popup. Esc/q closes; j/k+Enter selects the highlighted
     // entry. Any character key is forwarded as a `Char` so app.rs can
     // match it against the configured per-shortcut keys for direct
@@ -72,6 +83,13 @@ pub fn handle_key(key: KeyEvent, view: &ViewState, input_mode: &InputMode) -> Ac
             // Other chars resolved to direct shortcut activation in app.rs.
             _ => Action::None,
         };
+    }
+
+    // Ctrl-X opens the context switcher from any normal-mode view
+    // (list, detail, or viewer). Placed after the modal early-returns so
+    // it never fires while another overlay owns input.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('x') {
+        return Action::OpenContextPicker;
     }
 
     // Normal mode

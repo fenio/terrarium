@@ -1,3 +1,4 @@
+pub mod context_picker;
 pub mod controller_dashboard;
 pub mod custom_tab;
 pub mod detail;

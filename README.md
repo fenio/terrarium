@@ -176,6 +176,7 @@ These work in both the Terraform list and detail views:
 
 | Key | Action |
 |-----|--------|
+| `Ctrl-x` | Switch kube-context (see [Context Switcher](#context-switcher)) |
 | `m` | Toggle mouse support on/off |
 | `?` | Toggle help overlay |
 
@@ -422,6 +423,39 @@ once per `(context, key)` so a misconfigured table is visible in
 
 See [examples/shortcuts.toml](examples/shortcuts.toml) for examples including
 Grafana, Vault, and cloud console links.
+
+### Context Switcher
+
+Press `Ctrl-x` at any time to open the context switcher and reconnect the whole
+app to another kube-context — no restart. All watchers, pollers, and caches are
+torn down and re-established against the new cluster.
+
+By default the switcher lists the contexts of the kubeconfig Terrarium started
+with (`$KUBECONFIG` or `~/.kube/config`). To source the switchable contexts from
+somewhere else, set a `builder`:
+
+```toml
+[switcher]
+builder = "your-tool print-merged-kubeconfig"
+```
+
+The `builder`:
+
+- runs **once at startup** via `sh -c`, so it must invoke a real binary — not a
+  shell function or alias;
+- must print a **merged kubeconfig YAML on stdout** and nothing else (send any
+  progress or logging to stderr);
+- is optional — a missing or failing builder is non-fatal; Terrarium falls back
+  to the on-disk kubeconfig and shows a flash message.
+
+**Interactive auth (OIDC / exec plugins).** If a context authenticates via a
+client-go `exec` credential plugin (`kubectl oidc-login`, `aws eks get-token`,
+`gke-gcloud-auth-plugin`, Azure, …), Terrarium pre-authenticates it on the
+normal terminal — at startup before the TUI opens, and again by briefly
+suspending the TUI on a `Ctrl-x` switch — so any browser login or prompt appears
+on a clean screen instead of garbling the interface. This is provider-agnostic:
+Terrarium only runs whatever the kubeconfig declares. Token- and
+certificate-based contexts need no pre-flight and switch instantly.
 
 ## Controller Metrics Panel
 

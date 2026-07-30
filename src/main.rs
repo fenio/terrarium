@@ -51,15 +51,43 @@ async fn main() -> anyhow::Result<()> {
     // Create action channel
     let (action_tx, action_rx) = mpsc::unbounded_channel::<action::Action>();
 
-    // Set up reflectors (stores are immediately available, just empty)
-    let (tf_store, tf_writer) = k8s::watcher::create_tf_store();
-    let (ks_store, ks_writer) = k8s::watcher::create_ks_store();
-    let (gr_store, gr_writer) = k8s::watcher::create_gitrepo_store();
+    // Seed AppState with empty reflector stores so the UI can render
+    // before any client exists. The matching writers are unused here —
+    // connect() creates its own store/writer pairs for each connection.
+    let (tf_store, _) = k8s::watcher::create_tf_store();
+    let (ks_store, _) = k8s::watcher::create_ks_store();
+    let (gr_store, _) = k8s::watcher::create_gitrepo_store();
 
-    // Build app state immediately with empty stores
+    let config = config::Config::load();
+
+    // Optional [switcher] builder: run once at startup and parse its
+    // stdout as the kubeconfig the in-app context switcher works over.
+    // A failure here is non-fatal — we fall back to the on-disk
+    // kubeconfig and surface a flash so the switcher just uses whatever
+    // contexts $KUBECONFIG already provides.
+    let mut switcher_warning: Option<String> = None;
+    let switcher_kubeconfig = match config.switcher.as_ref().and_then(|s| s.builder.as_deref()) {
+        Some(cmd) => match run_switcher_builder(cmd) {
+            Ok(kc) => Some(kc),
+            Err(e) => {
+                switcher_warning = Some(format!("switcher builder failed: {e}"));
+                None
+            }
+        },
+        None => None,
+    };
+
+    // Build app state immediately with empty stores. Prefer an explicit
+    // --context, then the switcher kubeconfig's current-context, then the
+    // on-disk kubeconfig's.
     let context_label = cli
         .context
         .clone()
+        .or_else(|| {
+            switcher_kubeconfig
+                .as_ref()
+                .and_then(|kc| kc.current_context.clone())
+        })
         .or_else(|| {
             kube::config::Kubeconfig::read()
                 .ok()
@@ -67,9 +95,8 @@ async fn main() -> anyhow::Result<()> {
         })
         .unwrap_or_else(|| "connecting...".to_string());
 
-    let config = config::Config::load();
     let mut app_state =
-        state::store::AppState::new(tf_store, ks_store, gr_store, context_label, config);
+        state::store::AppState::new(tf_store, ks_store, gr_store, context_label.clone(), config);
     if let Some(ns) = cli.namespace.clone() {
         app_state.namespace_filter = Some(ns);
     }
@@ -98,97 +125,59 @@ async fn main() -> anyhow::Result<()> {
             state::store::FlashKind::Error,
         ));
     }
+    // A switcher-builder failure is the more actionable startup issue, so
+    // let it take the flash slot if both fired.
+    if let Some(w) = switcher_warning {
+        app_state.flash_message = Some((
+            w,
+            std::time::Instant::now(),
+            state::store::FlashKind::Error,
+        ));
+    }
+
+    // Pre-flight `exec`/OIDC credential plugins on the normal terminal,
+    // before entering the alternate screen. If the initial context uses an
+    // exec plugin (OIDC browser login, aws/gke/azure token, …) this lets it
+    // run any interactive step and cache its token cleanly, so the client
+    // connect below never garbles the TUI. No-op for token/cert contexts.
+    {
+        let effective_kc = switcher_kubeconfig
+            .clone()
+            .or_else(|| kube::config::Kubeconfig::read().ok());
+        if let Some(exec) = effective_kc
+            .as_ref()
+            .and_then(|kc| k8s::exec_auth::exec_for_context(kc, cli.context.as_deref()))
+        {
+            eprintln!("Authenticating to {context_label} … (a browser may open)");
+            if let Err(e) = k8s::exec_auth::prewarm(&exec) {
+                eprintln!("Warning: pre-authentication failed: {e}");
+            }
+        }
+    }
 
     // Init terminal and start the app event loop immediately
     let mut terminal = tui::init(mouse_enabled)?;
 
-    // Build app (no K8s client yet — will receive it via action channel)
-    let mut app = app::App::new_deferred(app_state, action_tx.clone(), action_rx);
-
-    // Spawn background K8s initialization
-    let tx = action_tx.clone();
-    let context = cli.context.clone();
-    let namespace = cli.namespace.clone();
-    let controller_ns = cli.controller_ns.clone();
     // Optional per-event TF condition trace, enabled by setting
     // TERRARIUM_DEBUG_LOG=/path/to/file. Used to diagnose transient
     // Ready=False flickers when the user can't press `c` fast enough.
     let tf_debug_log = std::env::var_os("TERRARIUM_DEBUG_LOG").map(std::path::PathBuf::from);
-    tokio::spawn(async move {
-        match k8s::client::create_client(context.as_deref()).await {
-            Ok((client, cluster_info)) => {
-                // Send the client and context name back to the app
-                let _ = tx.send(action::Action::K8sClientReady {
-                    client: action::K8sClient(client.clone()),
-                    context_name: cluster_info.context_name,
-                });
 
-                // Now spawn all watchers
-                let wtx = tx.clone();
-                let c = client.clone();
-                let dbg = tf_debug_log.clone();
-                tokio::spawn(async move {
-                    if let Err(e) =
-                        k8s::watcher::run_tf_watcher(c, tf_writer, wtx.clone(), dbg).await
-                    {
-                        let _ = wtx.send(action::Action::ConnectionError(format!(
-                            "Terraform watcher failed: {e}"
-                        )));
-                    }
-                });
+    // Build app (no K8s client yet — established by connect()). The
+    // initial stores passed to AppState::new above are immediately
+    // replaced by the first connect().
+    let mut app = app::App::new_deferred(
+        app_state,
+        action_tx.clone(),
+        action_rx,
+        switcher_kubeconfig,
+        cli.namespace.clone(),
+        cli.controller_ns.clone(),
+        tf_debug_log,
+    );
 
-                let wtx = tx.clone();
-                let c = client.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = k8s::watcher::run_ks_watcher(c, ks_writer, wtx.clone()).await {
-                        let _ = wtx.send(action::Action::ConnectionError(format!(
-                            "Kustomization watcher failed: {e}"
-                        )));
-                    }
-                });
-
-                let wtx = tx.clone();
-                let c = client.clone();
-                tokio::spawn(async move {
-                    if let Err(e) =
-                        k8s::watcher::run_gitrepo_watcher(c, gr_writer, wtx.clone()).await
-                    {
-                        let _ = wtx.send(action::Action::ConnectionError(format!(
-                            "GitRepository watcher failed: {e}"
-                        )));
-                    }
-                });
-
-                let wtx = tx.clone();
-                let c = client.clone();
-                let ns_clone = namespace.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = k8s::runners::poll_runner_pods(c, wtx.clone(), ns_clone).await {
-                        let _ = wtx.send(action::Action::ConnectionError(format!(
-                            "Runner poller failed: {e}"
-                        )));
-                    }
-                });
-
-                let wtx = tx.clone();
-                let c = client.clone();
-                tokio::spawn(async move {
-                    if let Err(e) =
-                        k8s::controller::poll_controller_info(c, wtx.clone(), controller_ns).await
-                    {
-                        let _ = wtx.send(action::Action::ConnectionError(format!(
-                            "Controller poller failed: {e}"
-                        )));
-                    }
-                });
-            }
-            Err(e) => {
-                let _ = tx.send(action::Action::ConnectionError(format!(
-                    "Failed to connect to cluster: {e}"
-                )));
-            }
-        }
-    });
+    // Kick off the initial connection (spawns client init + watchers).
+    app.connect(cli.context.clone());
 
     // Run the app (renders immediately, data fills in as watchers connect)
     let result = app.run(&mut terminal).await;
@@ -197,4 +186,25 @@ async fn main() -> anyhow::Result<()> {
     tui::restore()?;
 
     result
+}
+
+/// Run the `[switcher] builder` command via `sh -c` and parse its stdout
+/// as a kubeconfig YAML. Errors (non-zero exit, non-UTF-8, or unparseable
+/// YAML) are returned to the caller, which treats them as non-fatal.
+fn run_switcher_builder(cmd: &str) -> anyhow::Result<kube::config::Kubeconfig> {
+    use anyhow::Context;
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .output()
+        .with_context(|| format!("spawning `{cmd}`"))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "`{cmd}` exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let yaml = String::from_utf8(output.stdout).context("builder stdout was not UTF-8")?;
+    kube::config::Kubeconfig::from_yaml(&yaml).context("parsing builder output as kubeconfig")
 }

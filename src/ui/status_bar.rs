@@ -107,7 +107,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
             ]);
             f.render_widget(Paragraph::new(line), rows[0]);
         }
-        InputMode::NamespacePicker | InputMode::ShortcutsPopup => {
+        InputMode::NamespacePicker | InputMode::ContextPicker | InputMode::ShortcutsPopup => {
             let line = Line::from(vec![
                 Span::styled(" j/k", theme::STATUS_BAR_KEY),
                 Span::styled(":nav ", theme::STATUS_BAR_TEXT),
