@@ -309,10 +309,10 @@ impl App {
             // Drain any remaining queued events before rendering.
             // This collapses rapid input (e.g. paste) into a single frame.
             while event::poll(std::time::Duration::ZERO)? {
-                if let Ok(evt) = event::read() {
-                    if let Some(action) = self.handle_crossterm_event(evt) {
-                        self.run_action(action, terminal).await;
-                    }
+                if let Ok(evt) = event::read()
+                    && let Some(action) = self.handle_crossterm_event(evt)
+                {
+                    self.run_action(action, terminal).await;
                 }
             }
 
@@ -497,10 +497,9 @@ impl App {
         // case and detail views (where bulk doesn't apply anyway).
         if matches!(self.state.current_view(), ViewState::List(_))
             && !self.state.bulk_selected.is_empty()
+            && let Some(action) = self.resolve_bulk_tf_action(code)
         {
-            if let Some(action) = self.resolve_bulk_tf_action(code) {
-                return Some(action);
-            }
+            return Some(action);
         }
 
         let (ns, name) = match (ns, name) {
@@ -622,10 +621,9 @@ impl App {
         // Bulk-aware: see resolve_tf_action for the rationale.
         if matches!(self.state.current_view(), ViewState::List(_))
             && !self.state.bulk_selected.is_empty()
+            && let Some(action) = self.resolve_bulk_ks_action(code)
         {
-            if let Some(action) = self.resolve_bulk_ks_action(code) {
-                return Some(action);
-            }
+            return Some(action);
         }
 
         let (ns, name) = match (ns, name) {
@@ -1216,21 +1214,21 @@ impl App {
             }
             Action::Enter => match self.state.active_tab {
                 TabKind::Controller => {
-                    if let Some(idx) = self.state.backlog_table_state.selected() {
-                        if let Some((ns, _, _, _)) = self.state.backlog_namespaces.get(idx) {
-                            self.state.namespace_filter = Some(ns.clone());
-                            self.state.show_failures_only = true;
-                            self.state.show_progressing_only = false;
-                            self.state.show_waiting_only = false;
-                            self.state.show_deleting_only = false;
-                            self.state.active_tab = TabKind::Terraform;
-                            // Reset the TF tab back to its list root so the user
-                            // sees the filtered Terraforms first, not whatever
-                            // they had open before.
-                            *self.state.current_view_stack_mut() =
-                                vec![ViewState::List(TabKind::Terraform)];
-                            self.state.tf_table_state.select(None);
-                        }
+                    if let Some(idx) = self.state.backlog_table_state.selected()
+                        && let Some((ns, _, _, _)) = self.state.backlog_namespaces.get(idx)
+                    {
+                        self.state.namespace_filter = Some(ns.clone());
+                        self.state.show_failures_only = true;
+                        self.state.show_progressing_only = false;
+                        self.state.show_waiting_only = false;
+                        self.state.show_deleting_only = false;
+                        self.state.active_tab = TabKind::Terraform;
+                        // Reset the TF tab back to its list root so the user
+                        // sees the filtered Terraforms first, not whatever
+                        // they had open before.
+                        *self.state.current_view_stack_mut() =
+                            vec![ViewState::List(TabKind::Terraform)];
+                        self.state.tf_table_state.select(None);
                     }
                 }
                 TabKind::Terraform => {
@@ -2421,10 +2419,8 @@ impl App {
             }
         }
 
-        if needs_outputs {
-            if let Some((_, outputs)) = &self.state.cached_outputs {
-                url = resolve_output_placeholders(&url, outputs);
-            }
+        if needs_outputs && let Some((_, outputs)) = &self.state.cached_outputs {
+            url = resolve_output_placeholders(&url, outputs);
         }
         if url.contains("{secret.") {
             url = resolve_secret_placeholders(&url, namespace, &self.state.cached_secrets);

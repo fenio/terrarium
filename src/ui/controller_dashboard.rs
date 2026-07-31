@@ -397,14 +397,14 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
 
         let elapsed = ready_condition.map(|c| util::secs_since(c.last_transition_time.0));
 
-        if let Some(elapsed) = elapsed {
-            if elapsed > interval_secs + 300 {
-                let is_ready = ready_condition.map(|c| c.status == "True").unwrap_or(false);
-                if is_ready {
-                    entry.0 += 1; // waiting — healthy but behind schedule
-                } else {
-                    entry.1 += 1; // failing — broken
-                }
+        if let Some(elapsed) = elapsed
+            && elapsed > interval_secs + 300
+        {
+            let is_ready = ready_condition.map(|c| c.status == "True").unwrap_or(false);
+            if is_ready {
+                entry.0 += 1; // waiting — healthy but behind schedule
+            } else {
+                entry.1 += 1; // failing — broken
             }
         }
     }
@@ -655,14 +655,14 @@ fn render_metrics_footer(f: &mut Frame, area: Rect, state: &AppState) {
             format!("  err: {err}"),
             Style::default().fg(Color::Rgb(220, 90, 90)),
         ));
-    } else if let Some(snap) = &state.metrics_snapshot {
-        if let Some(t) = snap.fetched_at {
-            let ago = t.elapsed().as_secs();
-            spans.push(Span::styled(
-                format!("  fetched {}s ago ({} ms)", ago, snap.fetch_ms),
-                Style::default().fg(Color::Rgb(110, 115, 135)),
-            ));
-        }
+    } else if let Some(snap) = &state.metrics_snapshot
+        && let Some(t) = snap.fetched_at
+    {
+        let ago = t.elapsed().as_secs();
+        spans.push(Span::styled(
+            format!("  fetched {}s ago ({} ms)", ago, snap.fetch_ms),
+            Style::default().fg(Color::Rgb(110, 115, 135)),
+        ));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }

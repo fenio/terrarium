@@ -294,18 +294,18 @@ pub enum CustomColumnSource {
 
 impl Config {
     pub fn load() -> Self {
-        if let Some(path) = config_path() {
-            if path.exists() {
-                match std::fs::read_to_string(&path) {
-                    Ok(contents) => match toml::from_str(&contents) {
-                        Ok(config) => return config,
-                        Err(e) => {
-                            eprintln!("Warning: failed to parse {}: {}", path.display(), e);
-                        }
-                    },
+        if let Some(path) = config_path()
+            && path.exists()
+        {
+            match std::fs::read_to_string(&path) {
+                Ok(contents) => match toml::from_str(&contents) {
+                    Ok(config) => return config,
                     Err(e) => {
-                        eprintln!("Warning: failed to read {}: {}", path.display(), e);
+                        eprintln!("Warning: failed to parse {}: {}", path.display(), e);
                     }
+                },
+                Err(e) => {
+                    eprintln!("Warning: failed to read {}: {}", path.display(), e);
                 }
             }
         }

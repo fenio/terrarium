@@ -126,14 +126,12 @@ pub async fn fetch(
         };
         buf.extend_from_slice(&chunk[..n]);
 
-        if !headers_done {
-            if let Some(idx) = find_subseq(&buf, b"\r\n\r\n") {
-                headers_done = true;
-                let head = std::str::from_utf8(&buf[..idx]).unwrap_or("");
-                chunked = head
-                    .lines()
-                    .any(|l| l.eq_ignore_ascii_case("transfer-encoding: chunked"));
-            }
+        if !headers_done && let Some(idx) = find_subseq(&buf, b"\r\n\r\n") {
+            headers_done = true;
+            let head = std::str::from_utf8(&buf[..idx]).unwrap_or("");
+            chunked = head
+                .lines()
+                .any(|l| l.eq_ignore_ascii_case("transfer-encoding: chunked"));
         }
 
         if headers_done && chunked && ends_with_final_chunk(&buf) {
@@ -249,11 +247,11 @@ fn parse_snapshot(body: &str) -> MetricsSnapshot {
             if !starts_with_metric(line, name) {
                 continue;
             }
-            if must.iter().all(|(k, v)| has_label(line, k, v)) {
-                if let Some(v) = parse_value(line) {
-                    total += v;
-                    found = true;
-                }
+            if must.iter().all(|(k, v)| has_label(line, k, v))
+                && let Some(v) = parse_value(line)
+            {
+                total += v;
+                found = true;
             }
         }
         if found { Some(total) } else { None }
@@ -280,11 +278,11 @@ fn parse_snapshot(body: &str) -> MetricsSnapshot {
                 Some(x) => x,
                 None => continue,
             };
-            if pred(lv) {
-                if let Some(v) = parse_value(line) {
-                    total += v;
-                    found = true;
-                }
+            if pred(lv)
+                && let Some(v) = parse_value(line)
+            {
+                total += v;
+                found = true;
             }
         }
         if found { Some(total) } else { None }

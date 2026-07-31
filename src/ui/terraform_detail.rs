@@ -244,16 +244,16 @@ fn render_status(
             }
             lines.push(Line::from(spans));
         }
-    } else if let Some(outputs) = cached_outputs {
-        if !outputs.is_empty() {
-            let mut keys: Vec<&str> = outputs.keys().map(|s| s.as_str()).collect();
-            keys.sort();
-            let keys_text = keys.join(", ");
-            lines.push(Line::from(vec![
-                Span::styled("Outputs:   ", theme::LABEL),
-                Span::styled(keys_text, Style::default().fg(Color::Rgb(100, 105, 120))),
-            ]));
-        }
+    } else if let Some(outputs) = cached_outputs
+        && !outputs.is_empty()
+    {
+        let mut keys: Vec<&str> = outputs.keys().map(|s| s.as_str()).collect();
+        keys.sort();
+        let keys_text = keys.join(", ");
+        lines.push(Line::from(vec![
+            Span::styled("Outputs:   ", theme::LABEL),
+            Span::styled(keys_text, Style::default().fg(Color::Rgb(100, 105, 120))),
+        ]));
     }
 
     f.render_widget(Paragraph::new(lines).block(detail::block("Status")), area);
