@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use anyhow::Result;
-use futures::TryStreamExt;
+use futures::StreamExt;
 use kube::{
     api::Api,
     runtime::{
@@ -56,31 +56,46 @@ pub async fn run_tf_watcher(
             }
         }
     });
-    let result = watcher(api, watcher::Config::default())
+    let mut stream = watcher(api, watcher::Config::default())
         .default_backoff()
         .reflect(writer)
         .applied_objects()
-        .try_for_each(|obj| {
-            if let Some(w) = debug_writer.as_ref() {
-                log_tf_condition_snapshot(w, &obj);
-            }
-            let _ = tx.send(Action::TerraformStoreUpdated);
-            futures::future::ready(Ok(()))
-        })
-        .await;
+        .boxed();
 
-    if let Err(e) = &result {
-        let msg = format!("{e}");
-        if msg.contains("404")
-            || msg.contains("not found")
-            || msg.contains("the server could not find the requested resource")
-        {
-            let _ = tx.send(Action::TerraformCrdMissing);
-            return Ok(());
+    // kube's watcher is self-healing: when the watch stream drops — an idle
+    // or route timeout on a proxy (Envoy's default route timeout is 15s),
+    // an apiserver rollout, etc. — it emits an Err and then transparently
+    // re-lists and re-watches. Consume it forever, logging transient errors
+    // and continuing. Terminating on the first Err (as try_for_each did)
+    // turned every routine watch drop into a fatal "connection lost".
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(obj) => {
+                if let Some(w) = debug_writer.as_ref() {
+                    log_tf_condition_snapshot(w, &obj);
+                }
+                let _ = tx.send(Action::TerraformStoreUpdated);
+            }
+            Err(e) => {
+                if is_crd_missing(&e) {
+                    let _ = tx.send(Action::TerraformCrdMissing);
+                    return Ok(());
+                }
+                tracing::debug!("Terraform watch error (will retry): {e}");
+            }
         }
     }
-    result?;
     Ok(())
+}
+
+/// True when a watcher error means the CRD itself is absent (vs. a transient
+/// stream drop), so the caller shows the "CRD missing" hint instead of
+/// retrying forever against a type that doesn't exist on this cluster.
+fn is_crd_missing(e: &watcher::Error) -> bool {
+    let msg = e.to_string();
+    msg.contains("404")
+        || msg.contains("not found")
+        || msg.contains("the server could not find the requested resource")
 }
 
 /// Append one line per Terraform watcher event capturing Ready + Reconciling
@@ -115,27 +130,26 @@ pub async fn run_ks_watcher(
     tx: UnboundedSender<Action>,
 ) -> Result<()> {
     let api: Api<Kustomization> = Api::all(client);
-    let result = watcher(api, watcher::Config::default())
+    let mut stream = watcher(api, watcher::Config::default())
         .default_backoff()
         .reflect(writer)
         .applied_objects()
-        .try_for_each(|_obj| {
-            let _ = tx.send(Action::KustomizationStoreUpdated);
-            futures::future::ready(Ok(()))
-        })
-        .await;
+        .boxed();
 
-    if let Err(e) = &result {
-        let msg = format!("{e}");
-        if msg.contains("404")
-            || msg.contains("not found")
-            || msg.contains("the server could not find the requested resource")
-        {
-            let _ = tx.send(Action::KustomizationCrdMissing);
-            return Ok(());
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(_obj) => {
+                let _ = tx.send(Action::KustomizationStoreUpdated);
+            }
+            Err(e) => {
+                if is_crd_missing(&e) {
+                    let _ = tx.send(Action::KustomizationCrdMissing);
+                    return Ok(());
+                }
+                tracing::debug!("Kustomization watch error (will retry): {e}");
+            }
         }
     }
-    result?;
     Ok(())
 }
 
@@ -145,26 +159,25 @@ pub async fn run_gitrepo_watcher(
     tx: UnboundedSender<Action>,
 ) -> Result<()> {
     let api: Api<GitRepository> = Api::all(client);
-    let result = watcher(api, watcher::Config::default())
+    let mut stream = watcher(api, watcher::Config::default())
         .default_backoff()
         .reflect(writer)
         .applied_objects()
-        .try_for_each(|_obj| {
-            let _ = tx.send(Action::GitRepoStoreUpdated);
-            futures::future::ready(Ok(()))
-        })
-        .await;
+        .boxed();
 
-    if let Err(e) = &result {
-        let msg = format!("{e}");
-        if msg.contains("404")
-            || msg.contains("not found")
-            || msg.contains("the server could not find the requested resource")
-        {
-            let _ = tx.send(Action::GitRepoCrdMissing);
-            return Ok(());
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(_obj) => {
+                let _ = tx.send(Action::GitRepoStoreUpdated);
+            }
+            Err(e) => {
+                if is_crd_missing(&e) {
+                    let _ = tx.send(Action::GitRepoCrdMissing);
+                    return Ok(());
+                }
+                tracing::debug!("GitRepository watch error (will retry): {e}");
+            }
         }
     }
-    result?;
     Ok(())
 }
