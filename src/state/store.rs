@@ -310,6 +310,10 @@ pub struct AppState {
     /// Persistent connection error (shown on dashboard until resolved)
     pub connection_error: Option<String>,
 
+    /// Non-modal background-poller error (e.g. runner listing failed).
+    /// Shown as a status-bar ⚠ indicator; cleared when the poller recovers.
+    pub background_error: Option<String>,
+
     // Namespace picker
     pub ns_picker_items: Vec<String>,
     pub ns_picker_selected: usize,
@@ -530,6 +534,7 @@ impl AppState {
             ks_crd_missing: false,
             gr_crd_missing: false,
             connection_error: None,
+            background_error: None,
             ns_picker_items: Vec::new(),
             ns_picker_selected: 0,
             ctx_picker_items: Vec::new(),
@@ -843,6 +848,7 @@ impl AppState {
         self.ks_crd_missing = false;
         self.gr_crd_missing = false;
         self.connection_error = None;
+        self.background_error = None;
 
         // Open views point at resources that may not exist on the new
         // cluster — return every tab to its root list.

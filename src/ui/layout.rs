@@ -79,6 +79,16 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
 }
 
 fn render_error_overlay(f: &mut Frame, message: &str) {
+    // Point the user at the log file for the full (verbose) detail.
+    let owned;
+    let message: &str = match crate::logging::log_path() {
+        Some(p) => {
+            owned = format!("{message}\n\nFull details logged to: {}", p.display());
+            &owned
+        }
+        None => message,
+    };
+
     let area = f.area();
     let width = 65u16.min(area.width.saturating_sub(4));
     // Border eats 2 columns on each side

@@ -29,9 +29,16 @@ pub async fn poll_runner_pods(
                 let logs = fetch_active_runner_logs(&client, &pods).await;
                 let _ = tx.send(Action::RunnerLogsUpdated(logs));
                 let _ = tx.send(Action::RunnerPodsUpdated(pods));
+                // Recovered — clear any prior status-bar indicator.
+                let _ = tx.send(Action::BackgroundError(None));
             }
             Err(e) => {
+                // Full detail to the log; a concise, non-modal hint to the UI
+                // so the failure is visible without garbling the screen.
                 tracing::warn!("Failed to list runner pods: {}", e);
+                let _ = tx.send(Action::BackgroundError(Some(format!(
+                    "Runner pods unavailable: {e}"
+                ))));
             }
         }
     }

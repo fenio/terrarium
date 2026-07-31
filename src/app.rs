@@ -2035,7 +2035,10 @@ impl App {
                 self.state.connection_error = None;
             }
             Action::ConnectionError(msg) => {
-                self.state.connection_error = Some(msg);
+                self.state.connection_error = Some(crate::util::humanize_cluster_error(&msg));
+            }
+            Action::BackgroundError(err) => {
+                self.state.background_error = err.map(|m| crate::util::humanize_cluster_error(&m));
             }
             Action::DismissError => {
                 self.state.connection_error = None;

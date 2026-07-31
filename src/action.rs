@@ -241,6 +241,10 @@ pub enum Action {
     },
     ConnectionError(String),
     DismissError,
+    /// A recurring background poller (e.g. runner pods) succeeded (`None`) or
+    /// failed (`Some(msg)`). Drives a non-modal status-bar indicator so such
+    /// failures are never silent, without stealing focus like the overlay.
+    BackgroundError(Option<String>),
 
     // Async K8s action results
     K8sActionSuccess(String),

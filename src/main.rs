@@ -4,6 +4,7 @@ mod config;
 mod error;
 mod k8s;
 mod keys;
+mod logging;
 mod state;
 mod tui;
 mod ui;
@@ -11,7 +12,6 @@ mod util;
 
 use clap::Parser;
 use tokio::sync::mpsc;
-use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -54,12 +54,10 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("warn,kube_client=off,hyper_util=off,tower=off"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .init();
+    // Logs go to a file, never the terminal — writing to stdout/stderr would
+    // corrupt the TUI's alternate screen. Surfaced errors (overlay/status bar)
+    // keep the user informed; the file holds the verbose detail.
+    logging::init();
 
     let cli = Cli::parse();
 
