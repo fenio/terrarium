@@ -247,11 +247,10 @@ impl App {
                     // hold a usable cached token. Surface it back in the TUI.
                     auth_error = Some(format!("Pre-auth failed: {e}"));
                 }
-                if crate::tui::init_raw(self.state.mouse_enabled).is_err() {
+                if crate::tui::resume(terminal, self.state.mouse_enabled).is_err() {
                     self.should_quit = true;
                     return;
                 }
-                terminal.clear().ok();
             }
         }
 
@@ -2486,12 +2485,11 @@ impl App {
             .status();
 
         // Restore TUI
-        if let Err(e) = crate::tui::init_raw(self.state.mouse_enabled) {
+        if let Err(e) = crate::tui::resume(terminal, self.state.mouse_enabled) {
             eprintln!("Failed to restore TUI: {e}");
             self.should_quit = true;
             return;
         }
-        terminal.clear().ok();
 
         match status {
             Ok(s) if s.success() => {
