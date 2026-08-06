@@ -23,6 +23,14 @@ pub async fn poll_controller_info(
         interval.tick().await;
 
         let info = fetch_controller_info(&client, &controller_ns).await;
+        // If the OIDC/exec credential plugin is failing, stop polling so
+        // kube-rs stops re-invoking it (each call opens a browser login tab).
+        if let Some(err) = &info.error
+            && crate::util::is_auth_error(err)
+        {
+            let _ = tx.send(Action::AuthExpired);
+            return Ok(());
+        }
         let _ = tx.send(Action::ControllerInfoUpdated(info));
     }
 }
@@ -36,31 +44,43 @@ async fn fetch_controller_info(client: &kube::Client, ns: &str) -> ControllerInf
     // Try to find the deployment
     let deploy_api: Api<Deployment> = Api::namespaced(client.clone(), ns);
     let mut found_deploy = false;
+    let mut last_err: Option<String> = None;
     for name in DEPLOY_NAMES {
-        if let Ok(deploy) = deploy_api.get(name).await {
-            info.deploy_name = name.to_string();
-            populate_from_deploy(&mut info, &deploy);
-            found_deploy = true;
-            break;
+        match deploy_api.get(name).await {
+            Ok(deploy) => {
+                info.deploy_name = name.to_string();
+                populate_from_deploy(&mut info, &deploy);
+                found_deploy = true;
+                break;
+            }
+            Err(e) => last_err = Some(crate::util::error_chain(&e)),
         }
     }
 
     if !found_deploy {
         // Try label-based search
         let lp = ListParams::default().labels(CONTROLLER_LABEL);
-        if let Ok(deploys) = deploy_api.list(&lp).await
-            && let Some(deploy) = deploys.items.first()
-        {
-            info.deploy_name = deploy.metadata.name.clone().unwrap_or_default();
-            populate_from_deploy(&mut info, deploy);
-            found_deploy = true;
+        match deploy_api.list(&lp).await {
+            Ok(deploys) => {
+                if let Some(deploy) = deploys.items.first() {
+                    info.deploy_name = deploy.metadata.name.clone().unwrap_or_default();
+                    populate_from_deploy(&mut info, deploy);
+                    found_deploy = true;
+                }
+            }
+            Err(e) => last_err = Some(crate::util::error_chain(&e)),
         }
     }
 
     if !found_deploy {
-        info.error = Some(format!(
-            "Controller deployment not found in namespace '{ns}'"
-        ));
+        // Surface a real auth failure so the poller can stop; otherwise the
+        // deployment genuinely isn't here.
+        info.error = match last_err {
+            Some(e) if crate::util::is_auth_error(&e) => Some(e),
+            _ => Some(format!(
+                "Controller deployment not found in namespace '{ns}'"
+            )),
+        };
         return info;
     }
 

@@ -2040,6 +2040,26 @@ impl App {
             Action::DismissError => {
                 self.state.connection_error = None;
             }
+            Action::AuthExpired => {
+                // Idempotent: the first failing task tears things down; later
+                // AuthExpired sends from sibling tasks are ignored.
+                if !self.state.needs_reauth {
+                    self.state.needs_reauth = true;
+                    // Stop every background task so kube-rs stops re-running
+                    // the OIDC plugin (which keeps opening browser tabs).
+                    if let Ok(mut tasks) = self.conn_tasks.lock() {
+                        for h in tasks.drain(..) {
+                            h.abort();
+                        }
+                    }
+                    self.client = None;
+                    self.state.connection_error = Some(
+                        "Cluster authentication expired — no browser logins will be opened. \
+                         Press Ctrl-X to re-authenticate."
+                            .to_string(),
+                    );
+                }
+            }
 
             // CRD missing indicators
             Action::TerraformCrdMissing => {

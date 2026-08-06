@@ -310,6 +310,11 @@ pub struct AppState {
     /// Persistent connection error (shown on dashboard until resolved)
     pub connection_error: Option<String>,
 
+    /// Set when the OIDC/exec credential plugin failed and we stopped the
+    /// background tasks. Stays until a re-auth (Ctrl-X) reconnects, so we
+    /// don't keep re-invoking the plugin and spawning browser login tabs.
+    pub needs_reauth: bool,
+
     /// Non-modal background-poller error (e.g. runner listing failed).
     /// Shown as a status-bar ⚠ indicator; cleared when the poller recovers.
     pub background_error: Option<String>,
@@ -534,6 +539,7 @@ impl AppState {
             ks_crd_missing: false,
             gr_crd_missing: false,
             connection_error: None,
+            needs_reauth: false,
             background_error: None,
             ns_picker_items: Vec::new(),
             ns_picker_selected: 0,
@@ -848,6 +854,7 @@ impl AppState {
         self.ks_crd_missing = false;
         self.gr_crd_missing = false;
         self.connection_error = None;
+        self.needs_reauth = false;
         self.background_error = None;
 
         // Open views point at resources that may not exist on the new
