@@ -34,6 +34,23 @@ pub fn secs_since(ts: jiff::Timestamp) -> i64 {
 pub fn humanize_cluster_error(raw: &str) -> String {
     let lower = raw.to_lowercase();
 
+    // A failing `exec`/OIDC credential plugin (the plugin couldn't mint a
+    // token — browser login timed out, network down, etc.). Distinct from a
+    // 401 where the API rejected an otherwise-obtained token.
+    if lower.contains("auth exec command")
+        || lower.contains("exec credential")
+        || lower.contains("credential plugin")
+        || lower.contains("get-token")
+        || lower.contains("authcode")
+        || lower.contains("oauth2")
+        || lower.contains("authentication error")
+        || lower.contains("authorization error")
+    {
+        return "Cluster authentication failed (OIDC/exec credential plugin). \
+                Re-authenticate — press Ctrl-X to reconnect — and check your network/VPN."
+            .to_string();
+    }
+
     if lower.contains("401") || lower.contains("unauthorized") {
         return "Unauthorized (401): your credentials are invalid or expired. \
                 Re-authenticate — press Ctrl-X to reconnect the context."
@@ -288,6 +305,15 @@ pub fn parse_k8s_duration(s: &str) -> Option<i64> {
 mod tests {
     use super::*;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
+
+    #[test]
+    fn humanize_maps_exec_auth_to_reauth_hint() {
+        let raw = r#"Runner pods unavailable: ServiceError: auth exec command 'KUBERNETES_EXEC_INFO="{\"kind\":\"ExecCredential\"}"' "kubectl" "oidc-login" failed: error: get-token: oauth2 error: authorization error: context deadline exceeded"#;
+        let out = humanize_cluster_error(raw);
+        assert!(out.contains("authentication failed"), "got: {out}");
+        assert!(out.contains("Ctrl-X"), "got: {out}");
+        assert!(!out.contains("KUBERNETES_EXEC_INFO"), "raw leaked: {out}");
+    }
 
     #[test]
     fn humanize_maps_401_to_reauth_hint() {

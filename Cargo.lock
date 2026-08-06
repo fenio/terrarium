@@ -2663,7 +2663,7 @@ dependencies = [
 
 [[package]]
 name = "terrarium"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -2672,6 +2672,7 @@ dependencies = [
  "jiff",
  "k8s-openapi",
  "kube",
+ "libc",
  "ratatui",
  "regex",
  "schemars",

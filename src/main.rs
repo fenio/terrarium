@@ -173,6 +173,12 @@ async fn main() -> anyhow::Result<()> {
     // Init terminal and start the app event loop immediately
     let mut terminal = tui::init(mouse_enabled)?;
 
+    // Now that we're on the alternate screen, send stderr to the log file so
+    // a failing kube exec/OIDC credential plugin (run lazily by kube-rs with
+    // inherited stderr) can't garble the TUI. The pre-flight auth above ran
+    // before this, so its prompts reached the real terminal.
+    logging::capture_stderr();
+
     // Optional per-event TF condition trace, enabled by setting
     // TERRARIUM_DEBUG_LOG=/path/to/file. Used to diagnose transient
     // Ready=False flickers when the user can't press `c` fast enough.

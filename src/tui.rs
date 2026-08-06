@@ -22,6 +22,9 @@ pub fn init(mouse: bool) -> io::Result<Tui> {
 }
 
 pub fn restore() -> io::Result<()> {
+    // Hand stderr back to the real terminal so an intentional subprocess
+    // (OIDC browser login, tfctl) can print to the screen.
+    crate::logging::stderr_to_terminal();
     terminal::disable_raw_mode()?;
     execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
     Ok(())
@@ -50,6 +53,9 @@ pub fn resume(terminal: &mut Tui, mouse: bool) -> io::Result<()> {
     // Terminal whose empty back buffer forces a complete repaint next draw.
     execute!(stdout(), Clear(ClearType::All))?;
     *terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+    // Re-capture child-process stderr into the log now that we're back on the
+    // alternate screen.
+    crate::logging::stderr_to_log();
     Ok(())
 }
 
