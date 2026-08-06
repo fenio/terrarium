@@ -77,6 +77,7 @@ fn build_left_column() -> Vec<Line<'static>> {
         help_line("Esc", "Clear selection"),
         Line::from(""),
         section_header("General"),
+        help_line("Ctrl-x", "Switch kube-context"),
         help_line("m", "Toggle mouse support"),
         help_line("?", "Toggle this help"),
         help_line("Ctrl+C", "Quit immediately"),

@@ -431,13 +431,15 @@ fn build_meta_line(state: &AppState) -> Vec<Span<'static>> {
         spans.push(Span::styled(":shortcuts", t));
     }
 
-    // Help is always available outside viewers.
+    // Context switcher + help are always available outside viewers.
     if !is_viewer(state.current_view()) {
         if spans.is_empty() {
             spans.push(Span::styled(" ", t));
         } else {
             spans.push(Span::styled(" │ ", s));
         }
+        spans.push(Span::styled("Ctrl-x", k));
+        spans.push(Span::styled(":ctx ", t));
         spans.push(Span::styled("?", k));
         spans.push(Span::styled(":help", t));
     }
