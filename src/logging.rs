@@ -68,6 +68,73 @@ pub fn log_path() -> Option<PathBuf> {
     LOG_PATH.get().cloned().flatten()
 }
 
+use std::os::fd::{AsRawFd, RawFd};
+
+/// The process's original stderr, saved when we first redirect it, so it can
+/// be handed back to the real terminal during intentional suspends.
+static ORIG_STDERR: OnceLock<RawFd> = OnceLock::new();
+
+/// Point the process's stderr (fd 2) at the log file.
+///
+/// Child processes we spawn inherit our stderr — most importantly kube's
+/// `exec` credential plugins (OIDC `get-token`, `aws`, `gke`, …), which
+/// kube-rs runs lazily to refresh a token. When one of those fails it writes
+/// a wall of text to stderr; with stderr on the terminal that garbles the
+/// TUI's alternate screen. Redirecting fd 2 to the log file keeps that noise
+/// off the screen while preserving it for diagnosis.
+///
+/// Call once, right after entering the alternate screen. No-op when logs are
+/// being discarded (no file to point at).
+pub fn capture_stderr() {
+    let Some(path) = log_path() else { return };
+    // Save the real stderr once so suspends can restore it.
+    if ORIG_STDERR.get().is_none()
+        && let Some(dup) = dup_fd(libc::STDERR_FILENO)
+    {
+        let _ = ORIG_STDERR.set(dup);
+    }
+    redirect_stderr_to_file(&path);
+}
+
+/// Restore the real terminal on stderr, so an intentional subprocess (an OIDC
+/// browser login, `tfctl` break-glass, …) can print to the screen. Paired
+/// with [`stderr_to_log`] after the subprocess finishes.
+pub fn stderr_to_terminal() {
+    if let Some(orig) = ORIG_STDERR.get() {
+        unsafe {
+            libc::dup2(*orig, libc::STDERR_FILENO);
+        }
+    }
+}
+
+/// Re-point stderr at the log file after a suspend (see [`stderr_to_terminal`]).
+pub fn stderr_to_log() {
+    if ORIG_STDERR.get().is_some()
+        && let Some(path) = log_path()
+    {
+        redirect_stderr_to_file(&path);
+    }
+}
+
+fn redirect_stderr_to_file(path: &Path) {
+    if let Ok(f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        // dup2 duplicates the open file description onto fd 2; dropping `f`
+        // afterwards only closes its own descriptor, not fd 2.
+        unsafe {
+            libc::dup2(f.as_raw_fd(), libc::STDERR_FILENO);
+        }
+    }
+}
+
+fn dup_fd(fd: RawFd) -> Option<RawFd> {
+    let dup = unsafe { libc::dup(fd) };
+    (dup >= 0).then_some(dup)
+}
+
 /// `$TERRARIUM_LOG` if set, else `$XDG_STATE_HOME`/`~/.local/state` +
 /// `terrarium/terrarium.log`.
 fn resolve_path() -> Option<PathBuf> {
@@ -89,4 +156,54 @@ fn open(path: &Path) -> Option<File> {
         .append(true)
         .open(path)
         .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+
+    /// Proves the core mechanism: with stderr (fd 2) redirected to a file, a
+    /// child process spawned with inherited stderr writes into that file — so
+    /// a failing kube exec plugin can't reach the terminal.
+    #[test]
+    fn redirected_stderr_captures_child_output() {
+        let path = std::env::temp_dir().join(format!("terr-stderr-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let saved = unsafe { libc::dup(libc::STDERR_FILENO) };
+        assert!(saved >= 0, "dup(stderr) failed");
+
+        {
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .unwrap();
+            unsafe {
+                libc::dup2(f.as_raw_fd(), libc::STDERR_FILENO);
+            }
+        }
+
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("printf CHILDBOOM 1>&2")
+            .stderr(std::process::Stdio::inherit())
+            .status();
+
+        // Restore real stderr before asserting so failures print normally.
+        unsafe {
+            libc::dup2(saved, libc::STDERR_FILENO);
+            libc::close(saved);
+        }
+
+        assert!(status.unwrap().success());
+        let mut s = String::new();
+        std::fs::File::open(&path)
+            .unwrap()
+            .read_to_string(&mut s)
+            .unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(s.contains("CHILDBOOM"), "child stderr not captured: {s:?}");
+    }
 }

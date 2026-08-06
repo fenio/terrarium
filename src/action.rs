@@ -241,6 +241,11 @@ pub enum Action {
     },
     ConnectionError(String),
     DismissError,
+    /// The `exec`/OIDC credential plugin failed to produce a token. Tears the
+    /// connection down and stops the background tasks so kube-rs stops
+    /// re-invoking the plugin (which would keep opening browser login tabs);
+    /// the user re-authenticates deliberately with Ctrl-X.
+    AuthExpired,
     /// A recurring background poller (e.g. runner pods) succeeded (`None`) or
     /// failed (`Some(msg)`). Drives a non-modal status-bar indicator so such
     /// failures are never silent, without stealing focus like the overlay.

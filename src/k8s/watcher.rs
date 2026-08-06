@@ -77,6 +77,10 @@ pub async fn run_tf_watcher(
                 let _ = tx.send(Action::TerraformStoreUpdated);
             }
             Err(e) => {
+                if crate::util::is_auth_error(&crate::util::error_chain(&e)) {
+                    let _ = tx.send(Action::AuthExpired);
+                    return Ok(());
+                }
                 if is_crd_missing(&e) {
                     let _ = tx.send(Action::TerraformCrdMissing);
                     return Ok(());
@@ -142,6 +146,10 @@ pub async fn run_ks_watcher(
                 let _ = tx.send(Action::KustomizationStoreUpdated);
             }
             Err(e) => {
+                if crate::util::is_auth_error(&crate::util::error_chain(&e)) {
+                    let _ = tx.send(Action::AuthExpired);
+                    return Ok(());
+                }
                 if is_crd_missing(&e) {
                     let _ = tx.send(Action::KustomizationCrdMissing);
                     return Ok(());
@@ -171,6 +179,10 @@ pub async fn run_gitrepo_watcher(
                 let _ = tx.send(Action::GitRepoStoreUpdated);
             }
             Err(e) => {
+                if crate::util::is_auth_error(&crate::util::error_chain(&e)) {
+                    let _ = tx.send(Action::AuthExpired);
+                    return Ok(());
+                }
                 if is_crd_missing(&e) {
                     let _ = tx.send(Action::GitRepoCrdMissing);
                     return Ok(());

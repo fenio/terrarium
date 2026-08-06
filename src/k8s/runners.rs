@@ -33,6 +33,13 @@ pub async fn poll_runner_pods(
                 let _ = tx.send(Action::BackgroundError(None));
             }
             Err(e) => {
+                // A failing OIDC/exec credential plugin: stop polling so
+                // kube-rs stops re-invoking it (each call opens a browser
+                // login tab). The app requires a deliberate Ctrl-X re-auth.
+                if crate::util::is_auth_error(&format!("{e:#}")) {
+                    let _ = tx.send(Action::AuthExpired);
+                    return Ok(());
+                }
                 // Full detail to the log; a concise, non-modal hint to the UI
                 // so the failure is visible without garbling the screen.
                 tracing::warn!("Failed to list runner pods: {}", e);

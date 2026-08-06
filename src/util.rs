@@ -34,6 +34,15 @@ pub fn secs_since(ts: jiff::Timestamp) -> i64 {
 pub fn humanize_cluster_error(raw: &str) -> String {
     let lower = raw.to_lowercase();
 
+    // A failing `exec`/OIDC credential plugin (the plugin couldn't mint a
+    // token — browser login timed out, network down, etc.). Distinct from a
+    // 401 where the API rejected an otherwise-obtained token.
+    if is_auth_error(raw) {
+        return "Cluster authentication failed (OIDC/exec credential plugin). \
+                Re-authenticate — press Ctrl-X to reconnect — and check your network/VPN."
+            .to_string();
+    }
+
     if lower.contains("401") || lower.contains("unauthorized") {
         return "Unauthorized (401): your credentials are invalid or expired. \
                 Re-authenticate — press Ctrl-X to reconnect the context."
@@ -59,6 +68,42 @@ pub fn humanize_cluster_error(raw: &str) -> String {
     // Otherwise strip the noisy `Status { … }` Debug framing and collapse
     // whitespace so a single readable line remains.
     strip_status_debug(raw)
+}
+
+/// Flatten an error and its `source()` chain into one string, so pattern
+/// checks (e.g. [`is_auth_error`]) see the underlying cause and not just the
+/// wrapper's top-level message.
+pub fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut s = e.to_string();
+    let mut src = e.source();
+    while let Some(inner) = src {
+        s.push_str(": ");
+        s.push_str(&inner.to_string());
+        src = inner.source();
+    }
+    s
+}
+
+/// Whether an error comes from a failing `exec`/OIDC credential plugin —
+/// i.e. the interactive login couldn't produce a token (browser flow timed
+/// out, refresh token expired, network down).
+///
+/// This is the trigger to *stop* retrying: kube-rs re-runs the plugin on
+/// every API call, and an interactive plugin (`oidc-login --grant-type=
+/// authcode-browser`) opens a browser tab each time. Left to retry across
+/// several watchers/pollers overnight, that piles up hundreds of tabs — so
+/// on this error we tear the connection down and wait for a deliberate
+/// re-auth (Ctrl-X) instead.
+pub fn is_auth_error(raw: &str) -> bool {
+    let lower = raw.to_lowercase();
+    lower.contains("auth exec command")
+        || lower.contains("exec credential")
+        || lower.contains("credential plugin")
+        || lower.contains("get-token")
+        || lower.contains("authcode")
+        || lower.contains("oauth2")
+        || lower.contains("authentication error")
+        || lower.contains("authorization error")
 }
 
 /// Drop the `(Status { … })` / `Status { … }` Debug tail that `kube` appends,
@@ -288,6 +333,61 @@ pub fn parse_k8s_duration(s: &str) -> Option<i64> {
 mod tests {
     use super::*;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
+
+    #[test]
+    fn is_auth_error_matches_oidc_plugin_failures_only() {
+        assert!(is_auth_error(
+            "ServiceError: auth exec command \"kubectl\" \"oidc-login\" failed: oauth2 error"
+        ));
+        assert!(is_auth_error("get-token: authentication error"));
+        // Ordinary failures must NOT be treated as auth (they should retry,
+        // not tear the connection down and demand a re-login).
+        assert!(!is_auth_error(
+            "watch stream failed: connection reset by peer"
+        ));
+        assert!(!is_auth_error(
+            "the server could not find the requested resource"
+        ));
+    }
+
+    #[test]
+    fn error_chain_flattens_sources_for_auth_detection() {
+        use std::fmt;
+        #[derive(Debug)]
+        struct Inner;
+        impl fmt::Display for Inner {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "oauth2 error: authorization error")
+            }
+        }
+        impl std::error::Error for Inner {}
+        #[derive(Debug)]
+        struct Outer(Inner);
+        impl fmt::Display for Outer {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "watch stream failed")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let s = error_chain(&Outer(Inner));
+        assert_eq!(s, "watch stream failed: oauth2 error: authorization error");
+        // The top-level message alone wouldn't match, but the chain does.
+        assert!(!is_auth_error("watch stream failed"));
+        assert!(is_auth_error(&s));
+    }
+
+    #[test]
+    fn humanize_maps_exec_auth_to_reauth_hint() {
+        let raw = r#"Runner pods unavailable: ServiceError: auth exec command 'KUBERNETES_EXEC_INFO="{\"kind\":\"ExecCredential\"}"' "kubectl" "oidc-login" failed: error: get-token: oauth2 error: authorization error: context deadline exceeded"#;
+        let out = humanize_cluster_error(raw);
+        assert!(out.contains("authentication failed"), "got: {out}");
+        assert!(out.contains("Ctrl-X"), "got: {out}");
+        assert!(!out.contains("KUBERNETES_EXEC_INFO"), "raw leaked: {out}");
+    }
 
     #[test]
     fn humanize_maps_401_to_reauth_hint() {
