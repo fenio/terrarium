@@ -29,6 +29,10 @@ pub struct App {
     /// (e.g. assembled by a `[switcher] builder` command), clients are
     /// built from it; `None` falls back to on-disk kubeconfig resolution.
     switcher_kubeconfig: Option<kube::config::Kubeconfig>,
+    /// On-disk copy of `switcher_kubeconfig`, so subprocesses (tfctl) can
+    /// see the same contexts. Passed as `KUBECONFIG` to those children.
+    /// Removed on drop. `None` when there's no builder.
+    switcher_kubeconfig_path: Option<std::path::PathBuf>,
     /// CLI-derived settings replayed on every (re)connect.
     namespace: Option<String>,
     controller_ns: String,
@@ -38,6 +42,15 @@ pub struct App {
     /// so a context switch never leaves watchers pointed at the old
     /// cluster writing into orphaned stores.
     conn_tasks: std::sync::Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        // Best-effort cleanup of the on-disk switcher kubeconfig.
+        if let Some(path) = &self.switcher_kubeconfig_path {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 impl App {
@@ -55,6 +68,7 @@ impl App {
             client: Some(client),
             should_quit: false,
             switcher_kubeconfig: None,
+            switcher_kubeconfig_path: None,
             namespace: None,
             controller_ns: "flux-system".to_string(),
             tf_debug_log: None,
@@ -62,11 +76,13 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_deferred(
         state: AppState,
         action_tx: mpsc::UnboundedSender<Action>,
         action_rx: mpsc::UnboundedReceiver<Action>,
         switcher_kubeconfig: Option<kube::config::Kubeconfig>,
+        switcher_kubeconfig_path: Option<std::path::PathBuf>,
         namespace: Option<String>,
         controller_ns: String,
         tf_debug_log: Option<std::path::PathBuf>,
@@ -78,6 +94,7 @@ impl App {
             client: None,
             should_quit: false,
             switcher_kubeconfig,
+            switcher_kubeconfig_path,
             namespace,
             controller_ns,
             tf_debug_log,
@@ -2143,9 +2160,12 @@ impl App {
         let tx = self.action_tx.clone();
         let success_msg = format_success_message(&action);
         let context = self.state.context_name.clone();
+        // tfctl-backed actions (replan) need to see terrarium's kubeconfig.
+        let kubeconfig = self.switcher_kubeconfig_path.clone();
 
         tokio::spawn(async move {
-            let result = execute_k8s_action(&client, &action, Some(&context)).await;
+            let result =
+                execute_k8s_action(&client, &action, Some(&context), kubeconfig.as_deref()).await;
             match result {
                 Ok(()) => {
                     let _ = tx.send(Action::K8sActionSuccess(success_msg));
@@ -2496,8 +2516,20 @@ impl App {
             return;
         }
 
-        // Run tfctl break-glass — it handles: annotation, wait, exec, cleanup
-        let status = std::process::Command::new("tfctl")
+        // Run tfctl break-glass — it handles: annotation, wait, exec, cleanup.
+        let mut cmd = std::process::Command::new("tfctl");
+        // Point tfctl at terrarium's kubeconfig (in-memory switcher config is
+        // materialised to a temp file) and the active context, so BTG targets
+        // the cluster the TUI is showing rather than the kubeconfig's default
+        // current-context.
+        if let Some(kc) = &self.switcher_kubeconfig_path {
+            cmd.env("KUBECONFIG", kc);
+        }
+        let ctx = self.state.context_name.clone();
+        if !ctx.is_empty() && ctx != "connecting..." {
+            cmd.args(["--context", &ctx]);
+        }
+        let status = cmd
             .args(["break-glass", name, "-n", namespace])
             .stdin(std::process::Stdio::inherit())
             .stdout(std::process::Stdio::inherit())
@@ -2673,6 +2705,7 @@ async fn execute_k8s_action(
     client: &kube::Client,
     action: &Action,
     context: Option<&str>,
+    kubeconfig: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
     match action {
         Action::ApprovePlan { namespace, name } => {
@@ -2690,7 +2723,7 @@ async fn execute_k8s_action(
             ResourceKind::Pod => Ok(()),
         },
         Action::Replan { namespace, name } => {
-            k8s_actions::replan(client, namespace, name, context).await
+            k8s_actions::replan(client, namespace, name, context, kubeconfig).await
         }
         Action::Suspend {
             kind,
