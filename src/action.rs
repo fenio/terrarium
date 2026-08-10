@@ -28,6 +28,8 @@ pub enum Action {
     SelectPrev,
     PageDown,
     PageUp,
+    ScreenDown,
+    ScreenUp,
     ScrollTop,
     ScrollBottom,
     ScrollLeft,

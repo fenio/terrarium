@@ -1178,6 +1178,50 @@ impl App {
                         .select(Some(current.saturating_sub(half)));
                 }
             }
+            Action::ScreenDown => {
+                let page = (self.state.body_height as usize).max(1);
+                if matches!(
+                    self.state.current_view(),
+                    ViewState::PlanViewer { .. }
+                        | ViewState::JsonViewer { .. }
+                        | ViewState::EventsViewer { .. }
+                        | ViewState::OutputsViewer { .. }
+                        | ViewState::ConditionsViewer { .. }
+                        | ViewState::LogViewer { .. }
+                ) {
+                    self.state.plan_scroll = self.state.plan_scroll.saturating_add(page);
+                } else {
+                    let current = self.state.current_table_state().selected().unwrap_or(0);
+                    let count = self.current_list_count();
+                    if count > 0 {
+                        self.state
+                            .current_table_state()
+                            .select(Some((current + page).min(count - 1)));
+                    }
+                }
+            }
+            Action::ScreenUp => {
+                let page = (self.state.body_height as usize).max(1);
+                if matches!(
+                    self.state.current_view(),
+                    ViewState::PlanViewer { .. }
+                        | ViewState::JsonViewer { .. }
+                        | ViewState::EventsViewer { .. }
+                        | ViewState::OutputsViewer { .. }
+                        | ViewState::ConditionsViewer { .. }
+                        | ViewState::LogViewer { .. }
+                ) {
+                    self.state.plan_scroll = self.state.plan_scroll.saturating_sub(page);
+                    if matches!(self.state.current_view(), ViewState::LogViewer { .. }) {
+                        self.state.log_auto_follow = false;
+                    }
+                } else {
+                    let current = self.state.current_table_state().selected().unwrap_or(0);
+                    self.state
+                        .current_table_state()
+                        .select(Some(current.saturating_sub(page)));
+                }
+            }
             Action::SelectNext => {
                 if matches!(
                     self.state.current_view(),

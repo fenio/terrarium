@@ -108,11 +108,14 @@ pub fn handle_key(key: KeyEvent, view: &ViewState, input_mode: &InputMode) -> Ac
 }
 
 fn handle_list_key(key: KeyEvent) -> Action {
-    // Ctrl-d / Ctrl-u for page scroll in lists
+    // Ctrl-d / Ctrl-u for half-page scroll; Ctrl-f / Ctrl-b for a full
+    // viewport.
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return match key.code {
             KeyCode::Char('d') => Action::PageDown,
             KeyCode::Char('u') => Action::PageUp,
+            KeyCode::Char('f') => Action::ScreenDown,
+            KeyCode::Char('b') => Action::ScreenUp,
             _ => Action::None,
         };
     }
@@ -205,11 +208,14 @@ fn handle_detail_key(key: KeyEvent) -> Action {
 }
 
 fn handle_viewer_key(key: KeyEvent) -> Action {
-    // Ctrl-d / Ctrl-u for half-page scroll
+    // Ctrl-d / Ctrl-u for half-page scroll; Ctrl-f / Ctrl-b for a full
+    // viewport, matching less and other terminal tools.
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return match key.code {
             KeyCode::Char('d') => Action::PageDown,
             KeyCode::Char('u') => Action::PageUp,
+            KeyCode::Char('f') => Action::ScreenDown,
+            KeyCode::Char('b') => Action::ScreenUp,
             _ => Action::None,
         };
     }
@@ -313,6 +319,33 @@ mod tests {
         assert!(matches!(
             handle_viewer_key(key(KeyCode::BackTab)),
             Action::PrevContainer
+        ));
+    }
+
+    #[test]
+    fn list_and_viewer_key_map_ctrl_f_b_to_full_screen_scroll() {
+        let ctrl = |code| KeyEvent {
+            code,
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+
+        assert!(matches!(
+            handle_list_key(ctrl(KeyCode::Char('f'))),
+            Action::ScreenDown
+        ));
+        assert!(matches!(
+            handle_list_key(ctrl(KeyCode::Char('b'))),
+            Action::ScreenUp
+        ));
+        assert!(matches!(
+            handle_viewer_key(ctrl(KeyCode::Char('f'))),
+            Action::ScreenDown
+        ));
+        assert!(matches!(
+            handle_viewer_key(ctrl(KeyCode::Char('b'))),
+            Action::ScreenUp
         ));
     }
 }
