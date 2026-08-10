@@ -95,6 +95,14 @@ async fn main() -> anyhow::Result<()> {
         None => None,
     };
 
+    // Materialise the switcher kubeconfig to a private temp file so tfctl
+    // subprocesses (replan / break-glass) can resolve the same contexts
+    // terrarium built in memory. `None` when there's no builder or the write
+    // failed — subprocesses then fall back to the on-disk kubeconfig.
+    let switcher_kubeconfig_path = switcher_kubeconfig
+        .as_ref()
+        .and_then(write_switcher_kubeconfig);
+
     // Build app state immediately with empty stores. Prefer an explicit
     // --context, then the switcher kubeconfig's current-context, then the
     // on-disk kubeconfig's.
@@ -192,6 +200,7 @@ async fn main() -> anyhow::Result<()> {
         action_tx.clone(),
         action_rx,
         switcher_kubeconfig,
+        switcher_kubeconfig_path,
         cli.namespace.clone(),
         cli.controller_ns.clone(),
         tf_debug_log,
@@ -228,4 +237,112 @@ fn run_switcher_builder(cmd: &str) -> anyhow::Result<kube::config::Kubeconfig> {
     }
     let yaml = String::from_utf8(output.stdout).context("builder stdout was not UTF-8")?;
     kube::config::Kubeconfig::from_yaml(&yaml).context("parsing builder output as kubeconfig")
+}
+
+/// Directory for terrarium's transient state (switcher kubeconfig temp files):
+/// `$XDG_STATE_HOME/terrarium` or `~/.local/state/terrarium`.
+fn state_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))
+        })
+        .map(|d| d.join("terrarium"))
+}
+
+/// Serialise the switcher kubeconfig to a private (0600) temp file so tfctl
+/// subprocesses can see the same contexts. Returns the path, or `None` if it
+/// couldn't be written (callers then leave `KUBECONFIG` alone and tfctl falls
+/// back to the on-disk kubeconfig). Named by PID so leftovers can be swept.
+fn write_switcher_kubeconfig(kc: &kube::config::Kubeconfig) -> Option<std::path::PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let dir = state_dir()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    sweep_stale_switcher_kubeconfigs(&dir);
+
+    let yaml = serde_yaml::to_string(kc).ok()?;
+    let path = dir.join(format!("switcher-kubeconfig-{}.yaml", std::process::id()));
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&path)
+        .ok()?;
+    f.write_all(yaml.as_bytes()).ok()?;
+    Some(path)
+}
+
+/// Remove `switcher-kubeconfig-<pid>.yaml` files left by terrarium processes
+/// that are no longer running (e.g. after a crash, where Drop didn't run).
+/// Best-effort; only deletes when the PID is provably gone (ESRCH).
+fn sweep_stale_switcher_kubeconfigs(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let self_pid = std::process::id() as i32;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(pid) = name
+            .strip_prefix("switcher-kubeconfig-")
+            .and_then(|s| s.strip_suffix(".yaml"))
+            .and_then(|s| s.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if pid == self_pid {
+            continue;
+        }
+        // kill(pid, 0) probes existence without signalling: Ok => alive;
+        // EPERM => alive but not ours; ESRCH => gone (safe to remove).
+        let gone = unsafe { libc::kill(pid, 0) } != 0
+            && std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM);
+        if gone {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The switcher kubeconfig we write for tfctl must serialize back to YAML
+    /// that still parses as a kubeconfig with the same contexts — otherwise
+    /// `tfctl --context <name>` can't resolve anything.
+    #[test]
+    fn switcher_kubeconfig_serializes_back_to_parseable_yaml() {
+        let yaml = r#"
+apiVersion: v1
+kind: Config
+current-context: us-ord-flux-internal-02
+clusters:
+- name: us-ord-flux-internal-02
+  cluster:
+    server: https://api-us-ord-flux-internal-02.example.net:443
+contexts:
+- name: us-ord-flux-internal-02
+  context:
+    cluster: us-ord-flux-internal-02
+    user: oidc-admin
+users:
+- name: oidc-admin
+  user: {}
+"#;
+        let kc = kube::config::Kubeconfig::from_yaml(yaml).expect("parse input");
+        let serialized = serde_yaml::to_string(&kc).expect("serialize");
+        let reparsed = kube::config::Kubeconfig::from_yaml(&serialized).expect("reparse");
+        assert!(
+            reparsed
+                .contexts
+                .iter()
+                .any(|c| c.name == "us-ord-flux-internal-02"),
+            "context must survive the round-trip"
+        );
+        assert_eq!(
+            reparsed.current_context.as_deref(),
+            Some("us-ord-flux-internal-02")
+        );
+    }
 }

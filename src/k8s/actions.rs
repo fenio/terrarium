@@ -55,6 +55,7 @@ pub async fn replan(
     ns: &str,
     name: &str,
     context: Option<&str>,
+    kubeconfig: Option<&std::path::Path>,
 ) -> Result<()> {
     // Delegate to tfctl rather than reimplementing the K8s patch logic —
     // both prior attempts (annotation, spec.approvePlan) failed to trigger
@@ -68,6 +69,12 @@ pub async fn replan(
     // doesn't fall back to the kubeconfig's default current-context (a
     // different cluster than what the TUI is showing).
     let mut cmd = tokio::process::Command::new("tfctl");
+    // Point tfctl at the same kubeconfig terrarium is using. With a
+    // `[switcher] builder` the merged kubeconfig lives only in memory + this
+    // temp file, so without it tfctl can't resolve `--context` at all.
+    if let Some(kc) = kubeconfig {
+        cmd.env("KUBECONFIG", kc);
+    }
     if let Some(ctx) = context.filter(|c| !c.is_empty() && *c != "connecting...") {
         cmd.args(["--context", ctx]);
     }
