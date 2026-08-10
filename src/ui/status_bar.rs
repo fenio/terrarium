@@ -284,7 +284,12 @@ fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>
             render_groups(
                 &[
                     Group(&[("Esc", "back")]),
-                    Group(&[("j/k", "scroll"), ("h/l", "hscroll"), ("g/G", "top/bottom")]),
+                    Group(&[
+                        ("j/k", "scroll"),
+                        ("Ctrl-f/b", "screen"),
+                        ("h/l", "hscroll"),
+                        ("g/G", "top/bottom"),
+                    ]),
                     Group(&[("/", "search"), ("n/N", "next/prev")]),
                     Group(&[("w", wrap_label), ("S", "save")]),
                 ],
@@ -296,7 +301,7 @@ fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>
             render_groups(
                 &[
                     Group(&[("Esc", "back")]),
-                    Group(&[("j/k", "scroll"), ("G", "follow")]),
+                    Group(&[("j/k", "scroll"), ("Ctrl-f/b", "screen"), ("G", "follow")]),
                     Group(&[("/", "search"), ("n/N", "next/prev")]),
                     Group(&[("w", wrap_label), ("S", "save"), ("Tab", "container")]),
                 ],

@@ -50,6 +50,8 @@ fn build_left_column() -> Vec<Line<'static>> {
         help_line("j/k ↑/↓", "Move selection"),
         help_line("Ctrl-d / PgDn", "Half page down"),
         help_line("Ctrl-u / PgUp", "Half page up"),
+        help_line("Ctrl-f", "Full screen down"),
+        help_line("Ctrl-b", "Full screen up"),
         help_line("Enter / l", "Open detail / logs"),
         help_line("Esc", "Back / clear filter"),
         help_line("q", "Quit"),
