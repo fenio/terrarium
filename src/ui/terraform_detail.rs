@@ -122,6 +122,7 @@ fn render_spec(
     let workspace = tf.spec.workspace.as_deref().unwrap_or("default");
     let plan_only = tf.spec.plan_only.unwrap_or(false);
     let destroy = tf.spec.destroy.unwrap_or(false);
+    let break_the_glass = crate::k8s::actions::break_the_glass_active(tf);
     let approve_plan = tf.spec.approve_plan.as_deref().unwrap_or("-");
 
     let lines = vec![
@@ -150,6 +151,10 @@ fn render_spec(
             Span::styled(SEP, theme::INLINE_SEP),
             Span::styled("Destroy: ", theme::LABEL),
             detail::styled_bool(destroy),
+        ]),
+        Line::from(vec![
+            Span::styled("BreakGlass: ", theme::LABEL),
+            detail::styled_bool(break_the_glass),
         ]),
         detail::kv("Approve:   ", approve_plan),
     ];

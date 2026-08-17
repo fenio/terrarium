@@ -137,8 +137,14 @@ These work in both the Terraform list and detail views:
 | `s` / `u` | Suspend / Resume |
 | `F` | Force unlock state (with confirmation) |
 | `x` | Break the glass — drop into `tfctl` shell |
+| `C` | Clear BTG mode (flag and session annotation, with confirmation) |
 | `L` | Stream runner logs |
 | `d` | Delete the resource (with confirmation) |
+
+`x` starts the one-time `tfctl break-glass` troubleshooting session. `C` is
+the recovery action for a stuck BTG state; it clears both
+`spec.breakTheGlass` and the `break-the-glass.tf-controller/requestedAt`
+annotation without changing any other spec fields.
 
 ### Kustomization Actions
 

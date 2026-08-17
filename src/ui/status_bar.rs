@@ -235,7 +235,7 @@ fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>
                     Group(&[("j/k", "nav"), ("Enter", "detail")]),
                     Group(&[("a", "approve"), ("r", "reconcile"), ("R", "replan")]),
                     Group(&[("s/u", "suspend/resume"), ("p", "plan"), ("F", "unlock")]),
-                    Group(&[("d", "delete"), ("x", "btg")]),
+                    Group(&[("d", "delete"), ("x", "btg"), ("C", "unbtg")]),
                 ],
                 tfctl_disabled,
             )
@@ -264,7 +264,7 @@ fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>
                     ("s/u", "suspend/resume"),
                 ]),
                 Group(&[("a", "approve"), ("p", "plan"), ("F", "unlock")]),
-                Group(&[("x", "btg"), ("d", "delete")]),
+                Group(&[("x", "btg"), ("C", "unbtg"), ("d", "delete")]),
             ],
             tfctl_disabled,
         ),

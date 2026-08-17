@@ -117,6 +117,12 @@ pub enum Action {
         namespace: String,
         name: String,
     },
+    /// Clear `spec.breakTheGlass` after a persistent break-the-glass mode
+    /// was left behind by a stuck or interrupted session.
+    ResetBreakTheGlass {
+        namespace: String,
+        name: String,
+    },
     DeleteResource {
         namespace: String,
         name: String,

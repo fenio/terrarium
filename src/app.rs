@@ -523,6 +523,12 @@ impl App {
             _ => self.get_selected_terraform()?,
         };
 
+        let break_the_glass = self
+            .state
+            .tf_store
+            .get(&kube::runtime::reflector::ObjectRef::new(&name).within(&ns))
+            .is_some_and(|tf| k8s_actions::break_the_glass_active(&tf));
+
         match code {
             KeyCode::Char('a') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::ApprovePlan {
@@ -564,6 +570,13 @@ impl App {
                     name: name.clone(),
                 }),
                 format!("Force unlock state for {ns}/{name}?"),
+            )),
+            KeyCode::Char('C') if break_the_glass => Some(Action::ShowConfirmDialog(
+                Box::new(Action::ResetBreakTheGlass {
+                    namespace: ns.clone(),
+                    name: name.clone(),
+                }),
+                format!("Disable persistent break-the-glass mode for {ns}/{name}?"),
             )),
             KeyCode::Char('d') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::DeleteResource {
@@ -2794,6 +2807,9 @@ async fn execute_k8s_action(
         Action::ForceUnlock { namespace, name } => {
             k8s_actions::force_unlock(client, namespace, name).await
         }
+        Action::ResetBreakTheGlass { namespace, name } => {
+            k8s_actions::reset_break_the_glass(client, namespace, name).await
+        }
         Action::DeleteResource { namespace, name } => {
             k8s_actions::delete_terraform(client, namespace, name).await
         }
@@ -2813,6 +2829,7 @@ fn action_resource_target(action: &Action) -> Option<(&str, &str)> {
         Action::ApprovePlan { namespace, name }
         | Action::Replan { namespace, name }
         | Action::ForceUnlock { namespace, name }
+        | Action::ResetBreakTheGlass { namespace, name }
         | Action::DeleteResource { namespace, name }
         | Action::KillRunner { namespace, name } => Some((namespace, name)),
         Action::Reconcile {
@@ -2849,6 +2866,9 @@ fn format_success_message(action: &Action) -> String {
         } => format!("Resumed {namespace}/{name}"),
         Action::ForceUnlock { namespace, name } => {
             format!("Force unlocked {namespace}/{name}")
+        }
+        Action::ResetBreakTheGlass { namespace, name } => {
+            format!("Disabled persistent break-the-glass mode for {namespace}/{name}")
         }
         Action::DeleteResource { namespace, name } => {
             format!("Deleted {namespace}/{name}")
