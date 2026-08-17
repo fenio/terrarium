@@ -59,7 +59,6 @@ pub async fn run_tf_watcher(
     let mut stream = watcher(api, watcher::Config::default())
         .default_backoff()
         .reflect(writer)
-        .applied_objects()
         .boxed();
 
     // kube's watcher is self-healing: when the watch stream drops — an idle
@@ -70,12 +69,19 @@ pub async fn run_tf_watcher(
     // turned every routine watch drop into a fatal "connection lost".
     while let Some(item) = stream.next().await {
         match item {
-            Ok(obj) => {
+            Ok(watcher::Event::Apply(obj) | watcher::Event::InitApply(obj)) => {
                 if let Some(w) = debug_writer.as_ref() {
                     log_tf_condition_snapshot(w, &obj);
                 }
                 let _ = tx.send(Action::TerraformStoreUpdated);
             }
+            Ok(watcher::Event::InitDone) => {
+                // InitDone is the only initial-sync signal for an empty
+                // cluster: applied_objects() filters this marker out, so an
+                // empty initial list otherwise leaves the UI on "syncing".
+                let _ = tx.send(Action::TerraformStoreUpdated);
+            }
+            Ok(watcher::Event::Delete(_) | watcher::Event::Init) => {}
             Err(e) => {
                 if crate::util::is_auth_error(&crate::util::error_chain(&e)) {
                     let _ = tx.send(Action::AuthExpired);
@@ -100,6 +106,16 @@ fn is_crd_missing(e: &watcher::Error) -> bool {
     msg.contains("404")
         || msg.contains("not found")
         || msg.contains("the server could not find the requested resource")
+}
+
+/// Events that prove the reflector has completed an initial sync. In
+/// particular, `InitDone` is emitted even when the initial list is empty;
+/// object-only stream adapters filter it out.
+fn is_store_sync_event<K>(event: &watcher::Event<K>) -> bool {
+    matches!(
+        event,
+        watcher::Event::Apply(_) | watcher::Event::InitApply(_) | watcher::Event::InitDone
+    )
 }
 
 /// Append one line per Terraform watcher event capturing Ready + Reconciling
@@ -137,13 +153,14 @@ pub async fn run_ks_watcher(
     let mut stream = watcher(api, watcher::Config::default())
         .default_backoff()
         .reflect(writer)
-        .applied_objects()
         .boxed();
 
     while let Some(item) = stream.next().await {
         match item {
-            Ok(_obj) => {
-                let _ = tx.send(Action::KustomizationStoreUpdated);
+            Ok(event) => {
+                if is_store_sync_event(&event) {
+                    let _ = tx.send(Action::KustomizationStoreUpdated);
+                }
             }
             Err(e) => {
                 if crate::util::is_auth_error(&crate::util::error_chain(&e)) {
@@ -170,13 +187,14 @@ pub async fn run_gitrepo_watcher(
     let mut stream = watcher(api, watcher::Config::default())
         .default_backoff()
         .reflect(writer)
-        .applied_objects()
         .boxed();
 
     while let Some(item) = stream.next().await {
         match item {
-            Ok(_obj) => {
-                let _ = tx.send(Action::GitRepoStoreUpdated);
+            Ok(event) => {
+                if is_store_sync_event(&event) {
+                    let _ = tx.send(Action::GitRepoStoreUpdated);
+                }
             }
             Err(e) => {
                 if crate::util::is_auth_error(&crate::util::error_chain(&e)) {
@@ -192,4 +210,16 @@ pub async fn run_gitrepo_watcher(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_store_sync_event;
+    use kube::runtime::watcher::Event;
+
+    #[test]
+    fn empty_initial_list_init_done_marks_store_synced() {
+        assert!(is_store_sync_event::<()>(&Event::InitDone));
+        assert!(!is_store_sync_event::<()>(&Event::Init));
+    }
 }
