@@ -134,6 +134,27 @@ pub async fn force_unlock(client: &kube::Client, ns: &str, name: &str) -> Result
     Ok(())
 }
 
+/// Disable persistent break-the-glass mode on a Terraform resource.
+///
+/// This clears `spec.breakTheGlass`, which is distinct from the one-time
+/// `tfctl break-glass` session. It is intentionally a merge patch so it
+/// changes only this safety flag and leaves the rest of the spec untouched.
+pub async fn reset_break_the_glass(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
+    let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
+    let patch = reset_break_the_glass_patch();
+    api.patch(
+        name,
+        &PatchParams::apply("terrarium"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
+    Ok(())
+}
+
+fn reset_break_the_glass_patch() -> serde_json::Value {
+    json!({ "spec": { "breakTheGlass": false } })
+}
+
 // BTG is handled entirely by `tfctl break-glass` — see app.rs exec_break_the_glass
 
 /// Fetch output secret key-value pairs for the detail view status panel.
@@ -572,4 +593,15 @@ fn safe_label_value(value: &str) -> String {
     let hash = hasher.finish();
     let prefix = &value[..54]; // 54 + 1 dash + 8 hex = 63
     format!("{}-{:08x}", prefix, hash as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reset_break_the_glass_patch;
+
+    #[test]
+    fn break_glass_reset_patch_disables_the_spec_flag() {
+        let patch = reset_break_the_glass_patch();
+        assert_eq!(patch["spec"]["breakTheGlass"], false);
+    }
 }

@@ -137,8 +137,14 @@ These work in both the Terraform list and detail views:
 | `s` / `u` | Suspend / Resume |
 | `F` | Force unlock state (with confirmation) |
 | `x` | Break the glass — drop into `tfctl` shell |
+| `X` | Disable persistent break-the-glass mode (`spec.breakTheGlass: false`, with confirmation) |
 | `L` | Stream runner logs |
 | `d` | Delete the resource (with confirmation) |
+
+`x` starts the one-time `tfctl break-glass` troubleshooting session. `X` is
+the recovery action for persistent break-the-glass mode left enabled on the
+Terraform object; it clears `spec.breakTheGlass` without changing any other
+spec fields.
 
 ### Kustomization Actions
 
