@@ -118,7 +118,7 @@ fn build_right_column(state: &AppState) -> Vec<Line<'static>> {
             },
             tfctl_missing,
         ),
-        help_line("C", "Clear persistent break-the-glass"),
+        help_line("C", "Unbreak the glass (clear BTG)"),
         help_line("d", "Delete resource"),
         Line::from(""),
         section_header("Kustomization Actions"),
