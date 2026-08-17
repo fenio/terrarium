@@ -527,8 +527,7 @@ impl App {
             .state
             .tf_store
             .get(&kube::runtime::reflector::ObjectRef::new(&name).within(&ns))
-            .and_then(|tf| tf.spec.break_the_glass)
-            .unwrap_or(false);
+            .is_some_and(|tf| k8s_actions::break_the_glass_active(&tf));
 
         match code {
             KeyCode::Char('a') => Some(Action::ShowConfirmDialog(

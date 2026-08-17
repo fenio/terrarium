@@ -122,7 +122,7 @@ fn render_spec(
     let workspace = tf.spec.workspace.as_deref().unwrap_or("default");
     let plan_only = tf.spec.plan_only.unwrap_or(false);
     let destroy = tf.spec.destroy.unwrap_or(false);
-    let break_the_glass = tf.spec.break_the_glass.unwrap_or(false);
+    let break_the_glass = crate::k8s::actions::break_the_glass_active(tf);
     let approve_plan = tf.spec.approve_plan.as_deref().unwrap_or("-");
 
     let lines = vec![

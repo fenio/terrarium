@@ -9,6 +9,20 @@ use crate::action::{Action, ResourceKind};
 use crate::k8s::kustomization::Kustomization;
 use crate::k8s::terraform::Terraform;
 
+/// Annotation used by `tfctl break-glass` for a one-time BTG session.
+pub const BREAK_THE_GLASS_ANNOTATION: &str = "break-the-glass.tf-controller/requestedAt";
+
+/// Whether the controller will treat this Terraform as being in BTG mode.
+/// Both the persistent spec flag and the one-time tfctl annotation activate it.
+pub fn break_the_glass_active(terraform: &Terraform) -> bool {
+    terraform.spec.break_the_glass.unwrap_or(false)
+        || terraform
+            .metadata
+            .annotations
+            .as_ref()
+            .is_some_and(|annotations| annotations.contains_key(BREAK_THE_GLASS_ANNOTATION))
+}
+
 // -- Terraform actions --
 
 pub async fn approve_plan(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
@@ -136,9 +150,11 @@ pub async fn force_unlock(client: &kube::Client, ns: &str, name: &str) -> Result
 
 /// Disable persistent break-the-glass mode on a Terraform resource.
 ///
-/// This clears `spec.breakTheGlass`, which is distinct from the one-time
-/// `tfctl break-glass` session. It is intentionally a merge patch so it
-/// changes only this safety flag and leaves the rest of the spec untouched.
+/// This clears both persistent `spec.breakTheGlass` mode and the annotation
+/// used by a one-time `tfctl break-glass` session. The latter is normally
+/// removed by tfctl's deferred cleanup, but can remain after an interrupted
+/// or stuck process. It is intentionally a merge patch so it changes only
+/// these BTG markers and leaves the rest of the object untouched.
 pub async fn reset_break_the_glass(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
     let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
     let patch = reset_break_the_glass_patch();
@@ -152,7 +168,14 @@ pub async fn reset_break_the_glass(client: &kube::Client, ns: &str, name: &str) 
 }
 
 fn reset_break_the_glass_patch() -> serde_json::Value {
-    json!({ "spec": { "breakTheGlass": false } })
+    json!({
+        "spec": { "breakTheGlass": false },
+        "metadata": {
+            "annotations": {
+                BREAK_THE_GLASS_ANNOTATION: null
+            }
+        }
+    })
 }
 
 // BTG is handled entirely by `tfctl break-glass` — see app.rs exec_break_the_glass
@@ -597,11 +620,36 @@ fn safe_label_value(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::reset_break_the_glass_patch;
+    use super::{BREAK_THE_GLASS_ANNOTATION, break_the_glass_active, reset_break_the_glass_patch};
+    use crate::k8s::terraform::Terraform;
 
     #[test]
     fn break_glass_reset_patch_disables_the_spec_flag() {
         let patch = reset_break_the_glass_patch();
         assert_eq!(patch["spec"]["breakTheGlass"], false);
+        assert_eq!(
+            patch["metadata"]["annotations"][BREAK_THE_GLASS_ANNOTATION],
+            serde_json::Value::Null
+        );
+    }
+
+    #[test]
+    fn annotation_alone_marks_break_glass_active() {
+        let mut terraform: Terraform = serde_json::from_value(serde_json::json!({
+            "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
+            "kind": "Terraform",
+            "metadata": {"name": "demo", "namespace": "ns"},
+            "spec": {
+                "interval": "1m",
+                "sourceRef": {"kind": "GitRepository", "name": "source"}
+            }
+        }))
+        .expect("minimal Terraform should deserialize");
+        terraform.metadata.annotations = Some(
+            [(BREAK_THE_GLASS_ANNOTATION.to_string(), "now".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        assert!(break_the_glass_active(&terraform));
     }
 }
