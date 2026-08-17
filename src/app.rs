@@ -572,7 +572,7 @@ impl App {
                 }),
                 format!("Force unlock state for {ns}/{name}?"),
             )),
-            KeyCode::Char('X') if break_the_glass => Some(Action::ShowConfirmDialog(
+            KeyCode::Char('C') if break_the_glass => Some(Action::ShowConfirmDialog(
                 Box::new(Action::ResetBreakTheGlass {
                     namespace: ns.clone(),
                     name: name.clone(),
