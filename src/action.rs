@@ -279,6 +279,14 @@ pub enum Action {
     Resize(u16, u16),
     ShowConfirmDialog(Box<Action>, String),
     ConfirmDialog(bool),
+    /// Type-to-confirm dialog: (wrapped action, message, expected text the user
+    /// must type to proceed). Used for destructive actions like deleting a
+    /// Terraform object, which makes tofu-controller destroy managed infra.
+    ShowTypedConfirmDialog(Box<Action>, String, String),
+    ConfirmTypePush(char),
+    ConfirmTypePop,
+    ConfirmTypeSubmit,
+    ConfirmTypeCancel,
 
     None,
 }

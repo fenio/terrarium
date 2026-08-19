@@ -48,6 +48,19 @@ pub fn handle_key(key: KeyEvent, view: &ViewState, input_mode: &InputMode) -> Ac
         };
     }
 
+    // Type-to-confirm dialog (destructive actions): the user must type the
+    // expected text. Enter submits, Esc cancels; no single-key shortcut can
+    // fire the action, defeating muscle-memory "d, y" accidents.
+    if matches!(input_mode, InputMode::ConfirmType) {
+        return match key.code {
+            KeyCode::Esc => Action::ConfirmTypeCancel,
+            KeyCode::Enter => Action::ConfirmTypeSubmit,
+            KeyCode::Backspace => Action::ConfirmTypePop,
+            KeyCode::Char(c) => Action::ConfirmTypePush(c),
+            _ => Action::None,
+        };
+    }
+
     // Namespace picker
     if matches!(input_mode, InputMode::NamespacePicker) {
         return match key.code {

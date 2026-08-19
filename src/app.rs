@@ -523,11 +523,20 @@ impl App {
             _ => self.get_selected_terraform()?,
         };
 
-        let break_the_glass = self
+        let tf = self
             .state
             .tf_store
-            .get(&kube::runtime::reflector::ObjectRef::new(&name).within(&ns))
-            .is_some_and(|tf| k8s_actions::break_the_glass_active(&tf));
+            .get(&kube::runtime::reflector::ObjectRef::new(&name).within(&ns));
+        let break_the_glass = tf
+            .as_ref()
+            .is_some_and(|tf| k8s_actions::break_the_glass_active(tf));
+        // When destroyResourcesOnDeletion is set, deleting the Terraform object
+        // makes tofu-controller run a destroy plan against the real managed
+        // infrastructure -- the failure mode that wiped customer databases.
+        let destroy_on_deletion = tf
+            .as_ref()
+            .and_then(|tf| tf.spec.destroy_resources_on_deletion)
+            .unwrap_or(false);
 
         match code {
             KeyCode::Char('a') => Some(Action::ShowConfirmDialog(
@@ -578,13 +587,33 @@ impl App {
                 }),
                 format!("Disable persistent break-the-glass mode for {ns}/{name}?"),
             )),
-            KeyCode::Char('d') => Some(Action::ShowConfirmDialog(
-                Box::new(Action::DeleteResource {
-                    namespace: ns.clone(),
-                    name: name.clone(),
-                }),
-                format!("DELETE {ns}/{name}? This cannot be undone!"),
-            )),
+            KeyCode::Char('d') => {
+                // Deleting a Terraform object is not like killing a runner pod:
+                // tofu-controller reacts to the deletion and (when
+                // destroyResourcesOnDeletion is set) destroys the real managed
+                // infrastructure. Require the operator to type the resource name
+                // so this can't happen by muscle-memory "d, y".
+                let message = if destroy_on_deletion {
+                    format!(
+                        "DANGER: {ns}/{name} has destroyResourcesOnDeletion=true. \
+                         Deleting it will DESTROY the managed infrastructure (this cannot be undone). \
+                         Type the resource name to confirm:"
+                    )
+                } else {
+                    format!(
+                        "DELETE Terraform object {ns}/{name}? tofu-controller may destroy its managed \
+                         resources (this cannot be undone). Type the resource name to confirm:"
+                    )
+                };
+                Some(Action::ShowTypedConfirmDialog(
+                    Box::new(Action::DeleteResource {
+                        namespace: ns.clone(),
+                        name: name.clone(),
+                    }),
+                    message,
+                    name.clone(),
+                ))
+            }
             KeyCode::Char('y') => Some(Action::FetchJson {
                 kind: ResourceKind::Terraform,
                 namespace: ns.clone(),
@@ -1650,8 +1679,54 @@ impl App {
                 self.state.pending_dialog = Some(DialogState {
                     wrapped_action: *wrapped,
                     message,
+                    expected_input: None,
+                    typed_input: String::new(),
                 });
                 self.state.input_mode = InputMode::Confirm;
+            }
+            Action::ShowTypedConfirmDialog(wrapped, message, expected) => {
+                self.state.pending_dialog = Some(DialogState {
+                    wrapped_action: *wrapped,
+                    message,
+                    expected_input: Some(expected),
+                    typed_input: String::new(),
+                });
+                self.state.input_mode = InputMode::ConfirmType;
+            }
+            Action::ConfirmTypePush(c) => {
+                if let Some(dialog) = &mut self.state.pending_dialog {
+                    dialog.typed_input.push(c);
+                }
+            }
+            Action::ConfirmTypePop => {
+                if let Some(dialog) = &mut self.state.pending_dialog {
+                    dialog.typed_input.pop();
+                }
+            }
+            Action::ConfirmTypeCancel => {
+                self.state.input_mode = InputMode::Normal;
+                self.state.pending_dialog = None;
+            }
+            Action::ConfirmTypeSubmit => {
+                let matched = self
+                    .state
+                    .pending_dialog
+                    .as_ref()
+                    .and_then(|d| d.expected_input.as_ref().map(|e| *e == d.typed_input))
+                    .unwrap_or(false);
+                if matched {
+                    self.state.input_mode = InputMode::Normal;
+                    if let Some(dialog) = self.state.pending_dialog.take() {
+                        self.spawn_k8s_action(dialog.wrapped_action);
+                    }
+                } else {
+                    // Wrong text -- keep the dialog open and nudge the operator.
+                    self.state.flash_message = Some((
+                        "Typed text does not match the resource name".to_string(),
+                        Instant::now(),
+                        FlashKind::Error,
+                    ));
+                }
             }
             Action::ConfirmDialog(confirmed) => {
                 self.state.input_mode = InputMode::Normal;
