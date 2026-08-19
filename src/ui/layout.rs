@@ -39,6 +39,17 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
         dialog::render_confirm(f, &dialog_state.message);
     }
 
+    if state.input_mode == InputMode::ConfirmType
+        && let Some(dialog_state) = &state.pending_dialog
+    {
+        dialog::render_typed_confirm(
+            f,
+            &dialog_state.message,
+            dialog_state.expected_input.as_deref().unwrap_or(""),
+            &dialog_state.typed_input,
+        );
+    }
+
     if state.input_mode == InputMode::Help {
         help::render_help(f, state);
     }

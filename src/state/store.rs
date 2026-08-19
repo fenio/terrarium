@@ -94,6 +94,9 @@ pub enum InputMode {
     Search,
     ViewerSearch,
     Confirm,
+    /// Type-to-confirm dialog for destructive actions: the user must type an
+    /// expected string (e.g. the resource name) before the action fires.
+    ConfirmType,
     Help,
     NamespacePicker,
     ContextPicker,
@@ -103,6 +106,12 @@ pub enum InputMode {
 pub struct DialogState {
     pub wrapped_action: Action,
     pub message: String,
+    /// When `Some`, this is a type-to-confirm dialog: the wrapped action only
+    /// fires once `typed_input` matches this string exactly. `None` for a plain
+    /// y/n confirmation.
+    pub expected_input: Option<String>,
+    /// What the user has typed so far in a type-to-confirm dialog.
+    pub typed_input: String,
 }
 
 #[derive(Debug, Clone, Default)]

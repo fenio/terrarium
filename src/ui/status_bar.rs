@@ -63,6 +63,21 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
                 f.render_widget(Paragraph::new(line), rows[0]);
             }
         }
+        InputMode::ConfirmType => {
+            if let Some(dialog) = &state.pending_dialog {
+                let line = Line::from(vec![
+                    Span::styled(
+                        format!(" {} ", &dialog.message),
+                        Style::default()
+                            .fg(Color::Rgb(240, 120, 60))
+                            .bg(theme::STATUS_BAR_BG),
+                    ),
+                    Span::styled(dialog.typed_input.clone(), theme::STATUS_BAR_KEY),
+                    Span::styled(" [Enter] confirm  [Esc] cancel ", theme::STATUS_BAR_KEY),
+                ]);
+                f.render_widget(Paragraph::new(line), rows[0]);
+            }
+        }
         InputMode::Help => {
             let line = Line::from(vec![
                 Span::styled(" ? ", theme::STATUS_BAR_KEY),
