@@ -64,7 +64,11 @@ pub fn render_typed_confirm(f: &mut Frame, message: &str, expected: &str, input:
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(2), Constraint::Length(1)])
+        .constraints([
+            Constraint::Min(3),
+            Constraint::Length(2),
+            Constraint::Length(1),
+        ])
         .margin(1)
         .split(inner);
 
@@ -73,7 +77,9 @@ pub fn render_typed_confirm(f: &mut Frame, message: &str, expected: &str, input:
 
     let matches = input == expected;
     let input_style = if matches {
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
@@ -92,7 +98,9 @@ pub fn render_typed_confirm(f: &mut Frame, message: &str, expected: &str, input:
     let hint = if matches {
         Line::from(Span::styled(
             " [Enter] confirm   [Esc] cancel ",
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         ))
     } else {
         Line::from(Span::styled(
