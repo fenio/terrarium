@@ -382,6 +382,10 @@ pub struct AppState {
     pub stable_tf_failures: (usize, usize, std::time::Instant),
     pub stable_ks_failures: (usize, usize, std::time::Instant),
 
+    /// Screen geometry of the main body, used for mouse hit-testing.
+    pub body_x: u16,
+    pub body_y: u16,
+    pub body_width: u16,
     pub body_height: u16,
     pub mouse_enabled: bool,
     pub tick_count: usize,
@@ -567,6 +571,9 @@ impl AppState {
             last_data_update: None,
             stable_tf_failures: (0, 0, std::time::Instant::now()),
             stable_ks_failures: (0, 0, std::time::Instant::now()),
+            body_x: 0,
+            body_y: 6,
+            body_width: 80,
             body_height: 20,
             mouse_enabled: false,
             tick_count: 0,

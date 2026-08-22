@@ -420,20 +420,24 @@ impl App {
     fn handle_mouse_event(&self, mouse: crossterm::event::MouseEvent) -> Option<Action> {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Tab bar is row 1 (0-indexed)
-                if mouse.row == 1 {
+                // Tab bar's middle row is row 4 (0-indexed): the header
+                // renders three rows of logo/info followed by three rows of
+                // tab borders and labels.
+                if mouse.row == 4 {
                     // Approximate tab positions — each tab is roughly area.width / 4
                     let tab_idx =
-                        (mouse.column as usize * 4) / self.state.body_height.max(1) as usize;
+                        (mouse.column as usize * 4) / self.state.body_width.max(1) as usize;
                     // Simpler: just map column to tab quadrants
                     // Tab bar width is the terminal width, tabs are roughly evenly spaced
                     return Some(Action::GoToTab(tab_idx.min(3)));
                 }
-                // Body area starts at row 3 (header=0, tabs=1, then header margin)
-                // Table rows start after the header row + margin
-                let body_start = 3_u16; // header(1) + tabs(1) + column_header(1)
-                if mouse.row > body_start {
-                    let row_idx = (mouse.row - body_start - 1) as usize; // -1 for column header margin
+                // List tables start after their border, column header, and
+                // one-row header bottom margin.
+                let first_data_row = self.state.body_y.saturating_add(3);
+                if matches!(self.state.current_view(), ViewState::List(_))
+                    && mouse.row >= first_data_row
+                {
+                    let row_idx = (mouse.row - first_data_row) as usize;
                     return Some(Action::MouseSelect(row_idx));
                 }
                 None
