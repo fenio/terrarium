@@ -25,7 +25,10 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
         ])
         .split(f.area());
 
-    // Track body height for page scrolling
+    // Track body geometry for page scrolling and mouse hit-testing.
+    state.body_x = chunks[1].x;
+    state.body_y = chunks[1].y;
+    state.body_width = chunks[1].width;
     state.body_height = chunks[1].height;
 
     render_header_block(f, chunks[0], state);
