@@ -423,13 +423,15 @@ impl App {
                 // Tab bar's middle row is row 4 (0-indexed): the header
                 // renders three rows of logo/info followed by three rows of
                 // tab borders and labels.
-                if mouse.row == 4 {
-                    // Approximate tab positions — each tab is roughly area.width / 4
-                    let tab_idx =
-                        (mouse.column as usize * 4) / self.state.body_width.max(1) as usize;
-                    // Simpler: just map column to tab quadrants
-                    // Tab bar width is the terminal width, tabs are roughly evenly spaced
-                    return Some(Action::GoToTab(tab_idx.min(3)));
+                if mouse.row == 4
+                    && let Some((tab_idx, _)) = self
+                        .state
+                        .tab_hit_ranges
+                        .iter()
+                        .enumerate()
+                        .find(|(_, (start, end))| mouse.column >= *start && mouse.column < *end)
+                {
+                    return Some(Action::GoToTab(tab_idx));
                 }
                 // List tables start after their border, column header, and
                 // one-row header bottom margin.
@@ -437,7 +439,8 @@ impl App {
                 if matches!(self.state.current_view(), ViewState::List(_))
                     && mouse.row >= first_data_row
                 {
-                    let row_idx = (mouse.row - first_data_row) as usize;
+                    let row_idx =
+                        self.current_table_offset() + (mouse.row - first_data_row) as usize;
                     return Some(Action::MouseSelect(row_idx));
                 }
                 None
@@ -445,6 +448,20 @@ impl App {
             MouseEventKind::ScrollDown => Some(Action::SelectNext),
             MouseEventKind::ScrollUp => Some(Action::SelectPrev),
             _ => None,
+        }
+    }
+
+    fn current_table_offset(&self) -> usize {
+        match &self.state.active_tab {
+            TabKind::Controller => self.state.backlog_table_state.offset(),
+            TabKind::Terraform => self.state.tf_table_state.offset(),
+            TabKind::Kustomizations => self.state.ks_table_state.offset(),
+            TabKind::Runners => self.state.runner_table_state.offset(),
+            TabKind::CustomTab(i) => self
+                .state
+                .custom_tab_states
+                .get(*i)
+                .map_or(0, ratatui::widgets::TableState::offset),
         }
     }
 

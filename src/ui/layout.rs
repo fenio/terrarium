@@ -26,9 +26,7 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
         .split(f.area());
 
     // Track body geometry for page scrolling and mouse hit-testing.
-    state.body_x = chunks[1].x;
     state.body_y = chunks[1].y;
-    state.body_width = chunks[1].width;
     state.body_height = chunks[1].height;
 
     render_header_block(f, chunks[0], state);
@@ -377,6 +375,8 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
     let mut top_spans: Vec<Span> = vec![Span::styled(nav_pad.clone(), hdr_bg)];
     let mut body_spans: Vec<Span> = vec![Span::styled(nav_pad.clone(), hdr_bg)];
     let mut bot_spans: Vec<Span> = vec![Span::styled(nav_pad.clone(), hdr_bg)];
+    state.tab_hit_ranges.clear();
+    let mut tab_x = area.x.saturating_add(logo_width);
     let total_tabs = state.tab_count();
     for (i, (num, label, count, failures, crd_missing)) in nav_items.iter().enumerate() {
         let is_active = state.active_tab.index(total_tabs) == *num - 1;
@@ -450,6 +450,10 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         // Total visible width of the inner content (assumes ASCII / single-
         // width chars, which matches every label/digit/glyph used here).
         let inner_width: usize = inner.iter().map(|s| s.content.chars().count()).sum();
+        let tab_width = inner_width.saturating_add(2) as u16;
+        state
+            .tab_hit_ranges
+            .push((tab_x, tab_x.saturating_add(tab_width)));
 
         // Row 3: ╭───╮  Row 4: │ inner │  Row 5: ╰───╯
         top_spans.push(Span::styled("╭", border_style));
@@ -469,6 +473,9 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
             top_spans.push(Span::styled(" ", hdr_bg));
             body_spans.push(Span::styled(" ", hdr_bg));
             bot_spans.push(Span::styled(" ", hdr_bg));
+            tab_x = tab_x.saturating_add(tab_width).saturating_add(1);
+        } else {
+            tab_x = tab_x.saturating_add(tab_width);
         }
     }
 
