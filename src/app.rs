@@ -423,16 +423,15 @@ impl App {
                 // Tab bar's middle row is row 4 (0-indexed): the header
                 // renders three rows of logo/info followed by three rows of
                 // tab borders and labels.
-                if mouse.row == 4 {
-                    if let Some((tab_idx, _)) = self
+                if mouse.row == 4
+                    && let Some((tab_idx, _)) = self
                         .state
                         .tab_hit_ranges
                         .iter()
                         .enumerate()
                         .find(|(_, (start, end))| mouse.column >= *start && mouse.column < *end)
-                    {
-                        return Some(Action::GoToTab(tab_idx));
-                    }
+                {
+                    return Some(Action::GoToTab(tab_idx));
                 }
                 // List tables start after their border, column header, and
                 // one-row header bottom margin.
