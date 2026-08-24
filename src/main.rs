@@ -5,6 +5,7 @@ mod error;
 mod k8s;
 mod keys;
 mod logging;
+mod ornament;
 mod state;
 mod tui;
 mod ui;
@@ -36,6 +37,9 @@ struct Cli {
     #[arg(long)]
     mouse: bool,
 
+    #[arg(long, hide = true)]
+    gp: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -60,6 +64,11 @@ async fn main() -> anyhow::Result<()> {
     logging::init();
 
     let cli = Cli::parse();
+
+    // Hidden ornament: intentionally absent from README and --help.
+    if cli.gp {
+        return ornament::run();
+    }
 
     // Subcommands run and exit before any terminal/K8s setup.
     if let Some(Command::SyncConfig { url }) = cli.command {
