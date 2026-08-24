@@ -191,10 +191,30 @@ annotation without changing any other spec fields.
 Terrarium is configurable via a TOML file. It looks for configuration in this order:
 
 1. `TERRARIUM_CONFIG` environment variable (path to config file)
-2. `~/.config/terrarium/config.toml`
+2. `~/.config/terrarium/config.toml` (or `configdev.toml` when invoked as `terrariumdev`)
 
 With no config file, Terrarium shows four built-in tabs (Controller, Terraform,
 Kustomizations, Runners) and no extra detail fields. All config sections are optional.
+
+### Development Configuration
+
+To run a separate development setup with the same binary, create a symlink whose
+name is `terrariumdev`:
+
+```sh
+ln -s "$(command -v terrarium)" ~/.local/bin/terrariumdev
+```
+
+When launched as `terrariumdev`, Terrarium reads:
+
+```text
+~/.config/terrarium/configdev.toml
+```
+
+All other invocations read `config.toml` as usual. `TERRARIUM_CONFIG` always
+takes precedence over this name-based selection. The same rule applies to
+`terrariumdev sync-config`, so bootstrap it with an explicit URL if no
+`configdev.toml` exists yet.
 
 ### Config Sync
 
