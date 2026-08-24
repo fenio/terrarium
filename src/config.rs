@@ -1,5 +1,6 @@
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -395,8 +396,22 @@ fn config_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("TERRARIUM_CONFIG") {
         return Some(PathBuf::from(path));
     }
-    // Then ~/.config/terrarium/config.toml
-    dirs_or_home().map(|d| d.join("terrarium").join("config.toml"))
+    // Then select the default config by the name used to invoke the binary.
+    // This lets a symlink named `terrariumdev` use a separate development
+    // config while sharing the same installed binary.
+    let invoked = std::env::args_os().next();
+    let basename = invoked
+        .as_deref()
+        .and_then(|arg| Path::new(arg).file_name());
+    dirs_or_home().map(|d| d.join("terrarium").join(config_filename(basename)))
+}
+
+fn config_filename(invoked_basename: Option<&OsStr>) -> &'static str {
+    if invoked_basename == Some(OsStr::new("terrariumdev")) {
+        "configdev.toml"
+    } else {
+        "config.toml"
+    }
 }
 
 fn dirs_or_home() -> Option<PathBuf> {
@@ -408,4 +423,29 @@ fn dirs_or_home() -> Option<PathBuf> {
                 .ok()
                 .map(|h| PathBuf::from(h).join(".config"))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::config_filename;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn dev_invocation_uses_development_config() {
+        assert_eq!(
+            config_filename(Some(OsStr::new("terrariumdev"))),
+            "configdev.toml"
+        );
+    }
+
+    #[test]
+    fn normal_invocations_use_default_config() {
+        for name in [
+            None,
+            Some(OsStr::new("terrarium")),
+            Some(OsStr::new("other")),
+        ] {
+            assert_eq!(config_filename(name), "config.toml");
+        }
+    }
 }
