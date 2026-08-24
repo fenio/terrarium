@@ -48,6 +48,17 @@ const DOLPHIN_ART: [&str; 6] = [
     r"                         ;_\",
 ];
 
+// The two final lines alternate while the dolphin swims. Keeping the body
+// identical makes the caudal fin the only moving part of the sprite.
+const DOLPHIN_ART_FIN_UP: [&str; 6] = [
+    DOLPHIN_ART[0],
+    DOLPHIN_ART[1],
+    DOLPHIN_ART[2],
+    DOLPHIN_ART[3],
+    r"                   `     /;",
+    r"                         ;/",
+];
+
 const ART_CREDITS: [&str; 3] = [
     "ASCII art courtesy of:",
     "  gecko   - jrei",
@@ -64,8 +75,10 @@ struct AnimationFrame {
     dolphin_y: u16,
     /// Number of dolphin rows still visible. `None` means it has been eaten.
     dolphin_rows: Option<usize>,
-    /// Left screen-space boundary of the gecko's mouth while eating.
+    /// Left boundary used to hide the portion already inside the gecko.
     dolphin_clip_left: Option<i16>,
+    /// Whether the dolphin's caudal fin is raised.
+    dolphin_fin_up: bool,
 }
 
 const DOLPHIN_START_OFFSET: i16 = 42;
@@ -144,20 +157,21 @@ fn animation_frame(index: usize) -> AnimationFrame {
             dolphin_y: DOLPHIN_Y,
             dolphin_rows: Some(dolphin_rows),
             dolphin_clip_left: None,
+            dolphin_fin_up: phase % 2 == 1,
         },
         16 => AnimationFrame {
             dolphin_x: near_mouth_x,
             dolphin_y: DOLPHIN_Y,
             dolphin_rows: Some(dolphin_rows),
             dolphin_clip_left: None,
+            dolphin_fin_up: false,
         },
         17 => AnimationFrame {
             dolphin_x: contact_x,
             dolphin_y: DOLPHIN_Y,
             dolphin_rows: Some(dolphin_rows),
-            // Once contact is made, only the part beyond the gecko's right
-            // silhouette may remain visible.
             dolphin_clip_left: Some(gecko_width),
+            dolphin_fin_up: false,
         },
         18..=25 => AnimationFrame {
             // Move the dolphin into the mouth one column per frame. Clip the
@@ -167,6 +181,7 @@ fn animation_frame(index: usize) -> AnimationFrame {
             dolphin_y: DOLPHIN_Y,
             dolphin_rows: Some(dolphin_rows),
             dolphin_clip_left: Some(gecko_width),
+            dolphin_fin_up: false,
         },
         // Hold the empty mouth briefly before the next dolphin arrives.
         26..=31 => AnimationFrame {
@@ -174,6 +189,7 @@ fn animation_frame(index: usize) -> AnimationFrame {
             dolphin_y: DOLPHIN_Y,
             dolphin_rows: None,
             dolphin_clip_left: None,
+            dolphin_fin_up: false,
         },
         _ => unreachable!(),
     }
@@ -182,9 +198,15 @@ fn animation_frame(index: usize) -> AnimationFrame {
 fn render_frame(stdout: &mut io::Stdout, frame: AnimationFrame) -> anyhow::Result<()> {
     let (width, height) = terminal::size()?;
     let gecko_lines: Vec<&str> = GECKO_ART.lines().collect();
-    let dolphin_lines = &DOLPHIN_ART;
+    let dolphin_lines = if frame.dolphin_fin_up {
+        &DOLPHIN_ART_FIN_UP
+    } else {
+        &DOLPHIN_ART
+    };
     let gecko_width = art_width(GECKO_ART) as i16;
-    let dolphin_width = sprite_width(dolphin_lines) as i16;
+    // Center against the widest fin pose, not the currently selected sprite;
+    // otherwise the gecko shifts sideways every time the fin changes.
+    let dolphin_width = dolphin_scene_width();
     // Keep the gecko fixed while the dolphin approaches. The scene width is
     // based on the first (furthest-away) pose rather than the current pose,
     // otherwise the whole composition shifts as the dolphin moves.
@@ -301,11 +323,16 @@ fn sprite_width(lines: &[&str]) -> usize {
         .unwrap_or(0)
 }
 
+fn dolphin_scene_width() -> i16 {
+    sprite_width(&DOLPHIN_ART).max(sprite_width(&DOLPHIN_ART_FIN_UP)) as i16
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ART_CREDITS, AnimationFrame, CYCLE_FRAMES, DEDICATION, DOLPHIN_ART, DOLPHIN_NOSE_OFFSET,
-        GECKO_ART, animation_frame, art_width, sprite_width,
+        ART_CREDITS, AnimationFrame, CYCLE_FRAMES, DEDICATION, DOLPHIN_ART, DOLPHIN_ART_FIN_UP,
+        DOLPHIN_NOSE_OFFSET, GECKO_ART, animation_frame, art_width, dolphin_scene_width,
+        sprite_width,
     };
 
     #[test]
@@ -318,7 +345,25 @@ mod tests {
             animation_frame(18).dolphin_clip_left,
             Some(art_width(GECKO_ART) as i16)
         );
+        assert!(!animation_frame(16).dolphin_fin_up);
+        assert!(!animation_frame(17).dolphin_fin_up);
         assert_eq!(animation_frame(26).dolphin_rows, None);
+    }
+
+    #[test]
+    fn dolphin_caudal_fin_alternates_during_approach_only() {
+        assert!(!animation_frame(0).dolphin_fin_up);
+        assert!(animation_frame(1).dolphin_fin_up);
+        assert!(!animation_frame(16).dolphin_fin_up);
+        assert!(!animation_frame(17).dolphin_fin_up);
+        assert!(!animation_frame(26).dolphin_fin_up);
+    }
+
+    #[test]
+    fn fin_poses_use_one_stable_scene_width() {
+        let down_width = sprite_width(&DOLPHIN_ART) as i16;
+        let up_width = sprite_width(&DOLPHIN_ART_FIN_UP) as i16;
+        assert_eq!(dolphin_scene_width(), down_width.max(up_width));
     }
 
     #[test]
@@ -357,6 +402,7 @@ mod tests {
             dolphin_y: 2,
             dolphin_rows: None,
             dolphin_clip_left: None,
+            dolphin_fin_up: false,
         };
         assert_eq!(frame, frame);
     }
