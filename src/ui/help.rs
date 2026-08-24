@@ -67,6 +67,7 @@ fn build_left_column() -> Vec<Line<'static>> {
         help_line("f", "Toggle failures only"),
         help_line("w", "Toggle waiting only"),
         help_line("P", "Toggle progressing only"),
+        help_line("t", "Toggle drifting only (Terraform)"),
         help_line("D", "Toggle deleting only"),
         help_line("n", "Namespace picker"),
         help_line("o", "Cycle sort column"),

@@ -531,10 +531,9 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         }
     }
 
-    // Right-side indicators on the tab body row: FAILURES ONLY /
-    // WAITING ONLY / PROGRESSING ONLY pills (loud, so the user doesn't
-    // forget the filter is on) and the active search query (otherwise
-    // it's invisible once the search box closes).
+    // Right-side indicators on the tab body row: state-filter pills (loud,
+    // so the user doesn't forget the filter is on) and the active search
+    // query (otherwise it's invisible once the search box closes).
     let mut pill_spans: Vec<Span> = Vec::new();
     if state.show_failures_only {
         pill_spans.push(Span::styled(
@@ -566,6 +565,18 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
             Style::default()
                 .fg(Color::Rgb(30, 30, 40))
                 .bg(Color::Rgb(120, 200, 230))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    if state.show_drifting_only && matches!(state.active_tab, TabKind::Terraform) {
+        if !pill_spans.is_empty() {
+            pill_spans.push(Span::styled(" ", hdr_bg));
+        }
+        pill_spans.push(Span::styled(
+            " DRIFTING ONLY ",
+            Style::default()
+                .fg(Color::Rgb(30, 30, 40))
+                .bg(Color::Rgb(200, 140, 255))
                 .add_modifier(Modifier::BOLD),
         ));
     }

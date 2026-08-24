@@ -42,6 +42,7 @@ pub enum Action {
     ToggleFailuresOnly,
     ToggleWaitingOnly,
     ToggleProgressingOnly,
+    ToggleDriftingOnly,
     ToggleDeletingOnly,
     ToggleWrap,
     CycleSort,

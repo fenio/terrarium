@@ -20,6 +20,7 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
         state.show_failures_only,
         state.show_waiting_only,
         state.show_progressing_only,
+        state.show_drifting_only,
         state.show_deleting_only,
         &state.recently_acted,
         state.sort_column,
@@ -108,6 +109,7 @@ pub fn get_filtered_terraforms(
     failures_only: bool,
     waiting_only: bool,
     progressing_only: bool,
+    drifting_only: bool,
     deleting_only: bool,
     recently_acted: &std::collections::HashMap<(String, String), std::time::Instant>,
     sort_column: SortColumn,
@@ -159,6 +161,9 @@ pub fn get_filtered_terraforms(
             }
             if waiting_only {
                 return in_grace || is_waiting(tf);
+            }
+            if drifting_only {
+                return in_grace || is_drifting_now(tf);
             }
             if deleting_only {
                 return in_grace || tf.metadata.deletion_timestamp.is_some();
@@ -370,4 +375,160 @@ fn is_waiting(tf: &Terraform) -> bool {
     };
     let elapsed = ready_condition.map(|c| util::secs_since(c.last_transition_time.0));
     elapsed.map(|e| e > interval_secs + 300).unwrap_or(false)
+}
+
+pub(crate) fn is_drifting_now(tf: &Terraform) -> bool {
+    let Some(status) = tf.status.as_ref() else {
+        return false;
+    };
+
+    let drift_condition = status.conditions.as_ref().is_some_and(|conditions| {
+        conditions.iter().any(|condition| {
+            condition.type_ == "Ready"
+                && condition.status == "False"
+                && condition.reason == "DriftDetected"
+        })
+    });
+    let drift_plan_pending = status.plan.as_ref().is_some_and(|plan| {
+        plan.is_drift_detection_plan.unwrap_or(false) && plan.pending.is_some()
+    });
+
+    drift_condition || drift_plan_pending
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn terraform_with_name_and_status(name: &str, status: serde_json::Value) -> Terraform {
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
+            "kind": "Terraform",
+            "metadata": {"name": name, "namespace": "ns"},
+            "spec": {
+                "interval": "1m",
+                "sourceRef": {"kind": "GitRepository", "name": "source"}
+            },
+            "status": status
+        }))
+        .expect("minimal Terraform should deserialize")
+    }
+
+    fn terraform_with_status(status: serde_json::Value) -> Terraform {
+        terraform_with_name_and_status("demo", status)
+    }
+
+    #[test]
+    fn drifting_now_detects_drift_condition() {
+        let tf = terraform_with_status(serde_json::json!({
+            "conditions": [{
+                "type": "Ready",
+                "status": "False",
+                "reason": "DriftDetected",
+                "message": "drift detected",
+                "lastTransitionTime": "2026-08-24T12:00:00Z"
+            }]
+        }));
+
+        assert!(is_drifting_now(&tf));
+    }
+
+    #[test]
+    fn drifting_now_detects_pending_drift_plan_only() {
+        let tf = terraform_with_status(serde_json::json!({
+            "plan": {
+                "isDriftDetectionPlan": true,
+                "pending": "plan-secret"
+            }
+        }));
+
+        assert!(is_drifting_now(&tf));
+    }
+
+    #[test]
+    fn ordinary_pending_plan_is_not_current_drift() {
+        let tf = terraform_with_status(serde_json::json!({
+            "plan": {
+                "isDriftDetectionPlan": false,
+                "pending": "plan-secret"
+            }
+        }));
+
+        assert!(!is_drifting_now(&tf));
+    }
+
+    #[test]
+    fn unrelated_ready_failure_is_not_current_drift() {
+        let tf = terraform_with_status(serde_json::json!({
+            "conditions": [{
+                "type": "Ready",
+                "status": "False",
+                "reason": "TerraformPlanFailed",
+                "message": "plan failed",
+                "lastTransitionTime": "2026-08-24T12:00:00Z"
+            }]
+        }));
+
+        assert!(!is_drifting_now(&tf));
+    }
+
+    #[test]
+    fn drifting_filter_returns_only_currently_drifting_terraforms() {
+        let drifting = terraform_with_name_and_status(
+            "drifting",
+            serde_json::json!({
+                "conditions": [{
+                    "type": "Ready",
+                    "status": "False",
+                    "reason": "DriftDetected",
+                    "message": "drift detected",
+                    "lastTransitionTime": "2026-08-24T12:00:00Z"
+                }]
+            }),
+        );
+        let drift_seen = terraform_with_name_and_status(
+            "drift-seen",
+            serde_json::json!({
+                "lastDriftDetectedAt": "2026-08-24T12:00:00Z"
+            }),
+        );
+        let ordinary = terraform_with_name_and_status(
+            "ordinary",
+            serde_json::json!({
+                "conditions": [{
+                    "type": "Ready",
+                    "status": "True",
+                    "reason": "ReconciliationSucceeded",
+                    "message": "ready",
+                    "lastTransitionTime": "2026-08-24T12:00:00Z"
+                }]
+            }),
+        );
+        let (store, mut writer) = crate::k8s::watcher::create_tf_store();
+        for tf in [drifting, drift_seen, ordinary] {
+            writer.apply_watcher_event(&kube::runtime::watcher::Event::Apply(tf));
+        }
+
+        let filtered = get_filtered_terraforms(
+            &store,
+            &None,
+            "",
+            false,
+            false,
+            false,
+            true,
+            false,
+            &std::collections::HashMap::new(),
+            SortColumn::Name,
+            false,
+        );
+
+        assert_eq!(
+            filtered
+                .iter()
+                .map(|tf| tf.metadata.name.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("drifting")]
+        );
+    }
 }

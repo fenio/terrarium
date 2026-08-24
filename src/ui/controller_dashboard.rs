@@ -9,7 +9,9 @@ use ratatui::{
 };
 
 use crate::k8s::metrics::MetricsSnapshot;
+use crate::k8s::terraform::Terraform;
 use crate::state::store::AppState;
+use crate::ui::resource_list::is_drifting_now;
 use crate::ui::theme;
 use crate::util;
 
@@ -30,7 +32,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &mut AppState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(9),  // Controller info
-            Constraint::Length(10), // Terraform stats
+            Constraint::Length(11), // Terraform stats
             Constraint::Length(6),  // Kustomization stats
             Constraint::Min(3),     // Backlog / stale
         ])
@@ -221,15 +223,8 @@ fn render_tf_stats(f: &mut Frame, area: Rect, state: &AppState) {
                 .is_some()
         })
         .count();
-    let drift_detected = all_tfs
-        .iter()
-        .filter(|tf| {
-            tf.status
-                .as_ref()
-                .and_then(|s| s.last_drift_detected_at.as_ref())
-                .is_some()
-        })
-        .count();
+    let drift_seen_count = all_tfs.iter().filter(|tf| has_drift_been_seen(tf)).count();
+    let drifting_now_count = all_tfs.iter().filter(|tf| is_drifting_now(tf)).count();
     let total_failures: i64 = all_tfs
         .iter()
         .filter_map(|tf| tf.status.as_ref().and_then(|s| s.reconciliation_failures))
@@ -259,9 +254,14 @@ fn render_tf_stats(f: &mut Frame, area: Rect, state: &AppState) {
         stat_line("  Suspended:    ", suspended, theme::STATUS_PENDING),
         stat_line("  Pending Plans:", pending_plans, theme::STATUS_PENDING),
         stat_line(
-            "  Drift Detect: ",
-            drift_detected,
+            "  Drift Seen:   ",
+            drift_seen_count,
             Style::default().fg(Color::Rgb(200, 140, 255)),
+        ),
+        stat_line(
+            "  Drifting Now: ",
+            drifting_now_count,
+            theme::STATUS_NOT_READY,
         ),
         Line::from(vec![
             Span::styled("  Recon Fails:  ", theme::LABEL),
@@ -528,6 +528,42 @@ fn is_condition_true(
         .and_then(|cs| cs.iter().find(|c| c.type_ == type_name))
         .map(|c| c.status == "True")
         .unwrap_or(false)
+}
+
+fn has_drift_been_seen(tf: &Terraform) -> bool {
+    tf.status
+        .as_ref()
+        .and_then(|status| status.last_drift_detected_at.as_ref())
+        .is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn terraform_with_status(status: serde_json::Value) -> Terraform {
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
+            "kind": "Terraform",
+            "metadata": {"name": "demo", "namespace": "ns"},
+            "spec": {
+                "interval": "1m",
+                "sourceRef": {"kind": "GitRepository", "name": "source"}
+            },
+            "status": status
+        }))
+        .expect("minimal Terraform should deserialize")
+    }
+
+    #[test]
+    fn drift_seen_is_historical() {
+        let tf = terraform_with_status(serde_json::json!({
+            "lastDriftDetectedAt": "2026-08-24T12:00:00Z"
+        }));
+
+        assert!(has_drift_been_seen(&tf));
+        assert!(!is_drifting_now(&tf));
+    }
 }
 
 // ----- Metrics panel -----
