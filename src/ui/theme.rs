@@ -20,6 +20,10 @@ pub const HEADER_NS: Style = Style::new()
     .fg(Color::Rgb(30, 30, 40))
     .bg(Color::Rgb(140, 180, 220))
     .add_modifier(Modifier::BOLD);
+pub const HEADER_GECKO: Style = Style::new()
+    .fg(Color::Rgb(100, 220, 140))
+    .bg(Color::Rgb(18, 18, 28))
+    .add_modifier(Modifier::BOLD);
 
 // Column headers
 pub const COLUMN_HEADER: Style = Style::new()

@@ -24,6 +24,10 @@ A terminal dashboard for managing [tofu-controller](https://github.com/flux-iac/
 - **Custom keyboard shortcuts** — open URLs in the browser with template variables
 - **Vim-style navigation** throughout — press `?` for the full help screen
 - **Mouse support** — optional, toggle with `m` or start with `--mouse`
+- **Header gecko** — a two-pose animated ASCII resident for wide terminals (no water required)
+
+The header gecko artwork is credited to `kat/dew`, posted by `Phydeaux` in
+the 31 March 2002 `alt.ascii-art` thread ["Re: Gecko please"](https://www.asciiart.eu/archives/usenet/message/mcb37280b71).
 
 ## Prerequisites
 

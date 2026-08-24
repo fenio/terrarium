@@ -420,9 +420,7 @@ impl App {
     fn handle_mouse_event(&self, mouse: crossterm::event::MouseEvent) -> Option<Action> {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Tab bar's middle row is row 4 (0-indexed): the header
-                // renders three rows of logo/info followed by three rows of
-                // tab borders and labels.
+                // Tab bar's middle row is row 4 (0-indexed).
                 if mouse.row == 4
                     && let Some((tab_idx, _)) = self
                         .state

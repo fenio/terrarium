@@ -185,6 +185,18 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         .add_modifier(Modifier::BOLD);
     let info_label = theme::HEADER_CONTEXT_LABEL;
 
+    // The gecko occupies the unused right side of the logo/info header on
+    // wide terminals. Keep it out of the info area so long context names and
+    // the version never get painted underneath it.
+    const GECKO_WIDTH: u16 = 31;
+    const GECKO_MIN_HEADER_WIDTH: u16 = 100;
+    let gecko_x = if area.width >= GECKO_MIN_HEADER_WIDTH {
+        Some(area.x + area.width - GECKO_WIDTH)
+    } else {
+        None
+    };
+    let info_right = gecko_x.unwrap_or(area.x + area.width);
+
     // -- Rows 0-2: ASCII logo (left) + info pills (right) --
     let logo_lines = [
         "▄▖          ▘     ",
@@ -217,7 +229,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         if i == logo_lines.len() - 1 {
             let version = env!("CARGO_PKG_VERSION");
             let ver_x = area.x + logo_width;
-            let ver_width = area.width.saturating_sub(logo_width);
+            let ver_width = info_right.saturating_sub(ver_x);
             if ver_width > 6 {
                 let ver_area = Rect {
                     x: ver_x,
@@ -239,7 +251,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
 
     // Info to the right of the logo
     let info_x = area.x + logo_width + 1;
-    let info_width = area.width.saturating_sub(logo_width + 1);
+    let info_width = info_right.saturating_sub(info_x + 1);
     if info_width > 10 {
         let ns_text = match &state.namespace_filter {
             Some(ns) => ns.clone(),
@@ -318,7 +330,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         );
     }
 
-    // -- Rows 3-4: Browser-tab-style navigation --
+    // -- Rows 3-5: Browser-tab-style navigation --
     // (number, label, count_or_none, failures, crd_missing)
     type NavItem = (usize, String, Option<usize>, Option<usize>, bool);
     let tf_count_opt = if state.tf_synced {
@@ -479,6 +491,8 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         }
     }
 
+    // The fourth gecko line shares the otherwise-unused right side of the
+    // first tab-strip row, so the existing six-row layout stays unchanged.
     let r3_area = Rect {
         y: area.y + 3,
         height: 1,
@@ -497,6 +511,25 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         ..area
     };
     f.render_widget(Paragraph::new(Line::from(bot_spans)), r5_area);
+
+    if let Some(x) = gecko_x {
+        let gecko_lines = gecko_frame(state.tick_count);
+        // Render each line separately after the tab strip. The fourth line
+        // shares the otherwise-unused right side of the strip's top-border
+        // row; painting it afterward keeps the complete silhouette visible
+        // without adding another global header row.
+        for (row, line) in gecko_lines.iter().enumerate() {
+            f.render_widget(
+                Paragraph::new(Span::styled(*line, theme::HEADER_GECKO)),
+                Rect {
+                    x,
+                    y: area.y + 1 + row as u16,
+                    width: GECKO_WIDTH,
+                    height: 1,
+                },
+            );
+        }
+    }
 
     // Right-side indicators on the tab body row: FAILURES ONLY /
     // WAITING ONLY / PROGRESSING ONLY pills (loud, so the user doesn't
@@ -581,6 +614,34 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
             height: 1,
         };
         f.render_widget(Paragraph::new(Line::from(pill_spans)), pill_area);
+    }
+}
+
+/// Return the current gecko frame. The app ticks every 250 ms, so changing
+/// every 40 ticks gives the lizard a relaxed ten-second pose interval.
+///
+/// Artwork attribution: `kat/dew`, posted by `Phydeaux` in the
+/// `alt.ascii-art` thread "Re: Gecko please" (31 Mar 2002). Keep this credit
+/// with the artwork if the frames are copied or adapted:
+/// https://www.asciiart.eu/archives/usenet/message/mcb37280b71
+fn gecko_frame(ticks: usize) -> [&'static str; 4] {
+    const POSE_TICKS: usize = 40;
+    const FRAME_A: [&str; 4] = [
+        r"        .)/     )/,",
+        r"         /`-._,-'`._,@`-,",
+        r"  ,  _,-=\,-.__,-.-.__@/",
+        r" (_,'    )\`    '(`",
+    ];
+    const FRAME_B: [&str; 4] = [
+        r"         .,     )/_  ,@`-,",
+        r"        '\\_____)\_.'__@/",
+        r"   (_,-==( ______  .'",
+        r"        '/,      7(,",
+    ];
+    if (ticks / POSE_TICKS) % 2 == 0 {
+        FRAME_A
+    } else {
+        FRAME_B
     }
 }
 
@@ -1402,4 +1463,23 @@ fn render_json_viewer(f: &mut Frame, area: Rect, content: &str, vp: &ViewerParam
         para = para.wrap(Wrap { trim: false });
     }
     f.render_widget(para, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gecko_frame;
+
+    #[test]
+    fn gecko_holds_each_pose_for_ten_seconds() {
+        assert_eq!(gecko_frame(0), gecko_frame(39));
+        assert_ne!(gecko_frame(0), gecko_frame(40));
+        assert_eq!(gecko_frame(40), gecko_frame(79));
+        assert_eq!(gecko_frame(0), gecko_frame(80));
+    }
+
+    #[test]
+    fn gecko_frames_have_four_lines() {
+        assert_eq!(gecko_frame(0).len(), 4);
+        assert_eq!(gecko_frame(40).len(), 4);
+    }
 }
