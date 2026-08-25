@@ -29,7 +29,9 @@ pub fn render(f: &mut Frame, area: Rect, tf: &Terraform, ctx: &RenderCtx<'_>) {
 
     // Fixed heights — Conditions stays at 5 inner rows; the dedicated
     // viewer (`c`) handles full multi-screen error blobs.
-    let spec_status_height = 9_u16;
+    // The spec panel now has five content rows, plus its top and bottom
+    // borders.
+    let spec_status_height = 7_u16;
     let conditions_height = 7_u16;
 
     if ctx.runner_logs.is_some() {
@@ -156,12 +158,13 @@ fn render_spec(
         Line::from(vec![
             Span::styled("DestroyOnDel: ", theme::LABEL),
             detail::styled_bool(destroy_on_deletion),
-        ]),
-        Line::from(vec![
+            Span::styled(SEP, theme::INLINE_SEP),
             Span::styled("BreakGlass: ", theme::LABEL),
             detail::styled_bool(break_the_glass),
+            Span::styled(SEP, theme::INLINE_SEP),
+            Span::styled("Approve: ", theme::LABEL),
+            Span::raw(approve_plan),
         ]),
-        detail::kv("Approve:   ", approve_plan),
     ];
 
     f.render_widget(Paragraph::new(lines).block(detail::block("Spec")), area);
