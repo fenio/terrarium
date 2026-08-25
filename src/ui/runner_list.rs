@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Cell, Row, Table},
 };
 
-use crate::state::store::{AppState, RunnerSortColumn};
+use crate::state::store::{AppState, RunnerSortColumn, SelectionIdentity, TabKind};
 use crate::ui::resource_list::sort_cell;
 use crate::ui::theme;
 use crate::util;
@@ -20,7 +20,17 @@ pub fn render_runner_list(f: &mut Frame, area: Rect, state: &mut AppState) {
         state.runner_sort_column,
         state.sort_descending,
     );
-
+    let identities: Vec<SelectionIdentity> = items
+        .iter()
+        .map(|pod| {
+            SelectionIdentity::new(
+                pod.metadata.namespace.clone().unwrap_or_default(),
+                pod.metadata.name.clone().unwrap_or_default(),
+                pod.metadata.uid.clone(),
+            )
+        })
+        .collect();
+    state.reconcile_selection_for(&TabKind::Runners, &identities);
     let active = state.runner_sort_column;
     let desc = state.sort_descending;
     let header = Row::new(vec![
@@ -76,14 +86,14 @@ pub fn render_runner_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     f.render_stateful_widget(table, area, &mut state.runner_table_state);
 }
 
-pub fn get_filtered_runners<'a>(
-    pods: &'a [Pod],
+pub fn get_filtered_runners(
+    pods: &[Pod],
     namespace_filter: &Option<String>,
     search_query: &str,
     sort_column: RunnerSortColumn,
     descending: bool,
-) -> Vec<&'a Pod> {
-    let mut filtered: Vec<&'a Pod> = pods
+) -> Vec<Pod> {
+    let mut filtered: Vec<Pod> = pods
         .iter()
         .filter(|pod| {
             if let Some(ns) = namespace_filter {
@@ -110,6 +120,7 @@ pub fn get_filtered_runners<'a>(
                     || tf.contains(search_query)
             }
         })
+        .cloned()
         .collect();
 
     match sort_column {

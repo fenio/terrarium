@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::k8s::terraform::Terraform;
 use crate::k8s::watcher::TfStore;
-use crate::state::store::{AppState, SortColumn};
+use crate::state::store::{AppState, SelectionIdentity, SortColumn, TabKind};
 use crate::ui::theme;
 use crate::util;
 
@@ -26,6 +26,18 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
         state.sort_column,
         state.sort_descending,
     );
+    let identities: Vec<SelectionIdentity> = items
+        .iter()
+        .map(|tf| {
+            SelectionIdentity::new(
+                tf.metadata.namespace.clone().unwrap_or_default(),
+                tf.metadata.name.clone().unwrap_or_default(),
+                tf.metadata.uid.clone(),
+            )
+        })
+        .collect();
+    state.reconcile_selection_for(&TabKind::Terraform, &identities);
+    state.reconcile_bulk_selection_for(&TabKind::Terraform, &identities);
 
     let active = state.sort_column;
     let desc = state.sort_descending;
@@ -51,7 +63,7 @@ pub fn render_terraform_list(f: &mut Frame, area: Rect, state: &mut AppState) {
 
             let (ready_text, ready_style) = get_ready_status(tf);
             let deleting = tf.metadata.deletion_timestamp.is_some();
-            let bulk_cell = bulk_marker_cell(state, ns, name, deleting);
+            let bulk_cell = bulk_marker_cell(state, ns, name, tf.metadata.uid.as_deref(), deleting);
             let suspended_cell = if tf.spec.suspend.unwrap_or(false) {
                 Cell::from(Span::styled("S", theme::SUSPENDED))
             } else {
@@ -237,10 +249,15 @@ pub(crate) fn bulk_marker_cell(
     state: &AppState,
     namespace: &str,
     name: &str,
+    uid: Option<&str>,
     deleting: bool,
 ) -> Cell<'static> {
     let key = (namespace.to_string(), name.to_string());
-    if state.bulk_selected.contains_key(&key) {
+    if state
+        .bulk_selected
+        .get(&key)
+        .is_some_and(|target| uid == Some(target.uid.as_str()))
+    {
         Cell::from(Span::styled("●", theme::BULK_SELECTED))
     } else if state.is_recently_acted(namespace, name) {
         Cell::from(Span::styled("↻", theme::RECENTLY_ACTED))

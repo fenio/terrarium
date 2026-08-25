@@ -2,9 +2,9 @@ use std::io::Write;
 use std::time::Instant;
 
 use crossterm::event::{
-    self, Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+    Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use tokio::sync::mpsc;
 
 use crate::action::{
@@ -13,7 +13,9 @@ use crate::action::{
 use crate::k8s::actions as k8s_actions;
 use crate::k8s::metrics;
 use crate::keys::handle_key;
-use crate::state::store::{AppState, DialogState, FlashKind, InputMode, TabKind, ViewState};
+use crate::state::store::{
+    AppState, DialogState, FlashKind, InputMode, SelectionIdentity, TabKind, ViewState,
+};
 use crate::ui::custom_tab::get_filtered_entries;
 use crate::ui::kustomization_list::get_filtered_kustomizations;
 use crate::ui::layout;
@@ -310,10 +312,13 @@ impl App {
             // Wait for the first event (blocking).
             tokio::select! {
                 event = event_stream.next() => {
-                    if let Some(Ok(evt)) = event
-                        && let Some(action) = self.handle_crossterm_event(evt) {
-                            self.run_action(action, terminal).await;
+                    match event {
+                        Some(Ok(evt)) => {
+                            self.run_terminal_event(evt, &mut event_stream, terminal).await?;
                         }
+                        Some(Err(err)) => return Err(err.into()),
+                        None => return Ok(()),
+                    }
                 }
                 action = self.action_rx.recv() => {
                     if let Some(action) = action {
@@ -327,22 +332,110 @@ impl App {
                 }
             }
 
-            // Drain any remaining queued events before rendering.
-            // This collapses rapid input (e.g. paste) into a single frame.
-            while event::poll(std::time::Duration::ZERO)? {
-                if let Ok(evt) = event::read()
-                    && let Some(action) = self.handle_crossterm_event(evt)
-                {
-                    self.run_action(action, terminal).await;
-                }
-            }
-
             if self.should_quit {
                 break;
             }
         }
 
         Ok(())
+    }
+
+    /// Process terminal input while coalescing a bounded run of list cursor
+    /// events. Key repeat can otherwise fill the input queue faster than a
+    /// full render completes, leaving the UI visibly behind after key release.
+    async fn run_terminal_event(
+        &mut self,
+        first_event: Event,
+        event_stream: &mut EventStream,
+        terminal: &mut crate::tui::Tui,
+    ) -> anyhow::Result<()> {
+        if let Some(first_delta) = self.list_navigation_delta(&first_event) {
+            let mut deltas = vec![first_delta];
+            let mut deferred_event = None;
+            let mut idle_polls = 0;
+
+            for _ in 0..256 {
+                let Some(next) = event_stream.next().now_or_never() else {
+                    if idle_polls >= 2 {
+                        break;
+                    }
+                    idle_polls += 1;
+                    tokio::task::yield_now().await;
+                    continue;
+                };
+                let Some(next) = next else {
+                    break;
+                };
+                let next = next?;
+                idle_polls = 0;
+
+                if let Some(delta) = self.list_navigation_delta(&next) {
+                    deltas.push(delta);
+                } else if matches!(
+                    next,
+                    Event::FocusGained
+                        | Event::FocusLost
+                        | Event::Key(crossterm::event::KeyEvent {
+                            kind: KeyEventKind::Release,
+                            ..
+                        })
+                ) {
+                    // Release/focus notifications do not produce actions in
+                    // the normal dispatcher and can be discarded while
+                    // draining a repeat burst.
+                    continue;
+                } else {
+                    deferred_event = Some(next);
+                    break;
+                }
+            }
+
+            self.apply_list_navigation(&deltas);
+            if let Some(event) = deferred_event
+                && let Some(action) = self.handle_crossterm_event(event)
+            {
+                self.run_action(action, terminal).await;
+            }
+        } else if let Some(action) = self.handle_crossterm_event(first_event) {
+            self.run_action(action, terminal).await;
+        }
+
+        Ok(())
+    }
+
+    fn list_navigation_delta(&self, event: &Event) -> Option<isize> {
+        if self.state.connection_error.is_some()
+            || self.state.input_mode != InputMode::Normal
+            || !matches!(self.state.current_view(), ViewState::List(_))
+        {
+            return None;
+        }
+
+        let Event::Key(key) = event else {
+            return None;
+        };
+        if matches!(key.kind, KeyEventKind::Release) {
+            return None;
+        }
+
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => Some(1),
+            KeyCode::Char('k') | KeyCode::Up => Some(-1),
+            _ => None,
+        }
+    }
+
+    fn apply_list_navigation(&mut self, deltas: &[isize]) {
+        if deltas.is_empty() {
+            return;
+        }
+
+        self.state.bump_view_revision();
+        let tab = self.state.active_tab.clone();
+        let identities = self.visible_selection_identities(&tab);
+        for delta in deltas {
+            self.state.move_selection(*delta, &identities);
+        }
     }
 
     /// Route an action, intercepting the few that must run with access to
@@ -484,25 +577,37 @@ impl App {
     /// letting the per-row resolver handle them as a fallback.
     fn resolve_bulk_tf_action(&self, code: KeyCode) -> Option<Action> {
         let n = self.state.bulk_selected.len();
+        let targets = self.bulk_target_names();
         match code {
             KeyCode::Char('r') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::BulkReconcile),
-                format!("Reconcile {n} selected Terraform resource(s)?"),
+                format!("Reconcile {n} selected Terraform resource(s)?\n{targets}"),
             )),
             KeyCode::Char('s') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::BulkSuspend),
-                format!("Suspend {n} selected Terraform resource(s)?"),
+                format!("Suspend {n} selected Terraform resource(s)?\n{targets}"),
             )),
             KeyCode::Char('u') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::BulkResume),
-                format!("Resume {n} selected Terraform resource(s)?"),
+                format!("Resume {n} selected Terraform resource(s)?\n{targets}"),
             )),
             KeyCode::Char('a') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::BulkApprovePlan),
-                format!("Approve plans for {n} selected Terraform resource(s)?"),
+                format!("Approve plans for {n} selected Terraform resource(s)?\n{targets}"),
             )),
             _ => None,
         }
+    }
+
+    fn bulk_target_names(&self) -> String {
+        let mut names: Vec<String> = self
+            .state
+            .bulk_selected
+            .values()
+            .map(|target| format!("{}/{}", target.namespace, target.name))
+            .collect();
+        names.sort();
+        names.join(", ")
     }
 
     fn mutation_target_for_terraform(&self, namespace: &str, name: &str) -> Option<MutationTarget> {
@@ -558,18 +663,19 @@ impl App {
     /// Map a keypress to the right bulk action for the Kustomization tab.
     fn resolve_bulk_ks_action(&self, code: KeyCode) -> Option<Action> {
         let n = self.state.bulk_selected.len();
+        let targets = self.bulk_target_names();
         match code {
             KeyCode::Char('r') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::BulkReconcile),
-                format!("Reconcile {n} selected Kustomization(s)?"),
+                format!("Reconcile {n} selected Kustomization(s)?\n{targets}"),
             )),
             KeyCode::Char('s') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::BulkSuspend),
-                format!("Suspend {n} selected Kustomization(s)?"),
+                format!("Suspend {n} selected Kustomization(s)?\n{targets}"),
             )),
             KeyCode::Char('u') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::BulkResume),
-                format!("Resume {n} selected Kustomization(s)?"),
+                format!("Resume {n} selected Kustomization(s)?\n{targets}"),
             )),
             _ => None,
         }
@@ -863,7 +969,6 @@ impl App {
     }
 
     fn get_selected_terraform(&self) -> Option<(String, String)> {
-        let selected_idx = self.state.tf_table_state.selected()?;
         let items = get_filtered_terraforms(
             &self.state.tf_store,
             &self.state.namespace_filter,
@@ -877,6 +982,19 @@ impl App {
             self.state.sort_column,
             self.state.sort_descending,
         );
+        let identities: Vec<SelectionIdentity> = items
+            .iter()
+            .map(|tf| {
+                SelectionIdentity::new(
+                    tf.metadata.namespace.clone().unwrap_or_default(),
+                    tf.metadata.name.clone().unwrap_or_default(),
+                    tf.metadata.uid.clone(),
+                )
+            })
+            .collect();
+        let selected_idx = self
+            .state
+            .selected_index_for(&TabKind::Terraform, &identities)?;
         let tf = items.get(selected_idx)?;
         Some((
             tf.metadata.namespace.clone().unwrap_or_default(),
@@ -885,7 +1003,6 @@ impl App {
     }
 
     fn get_selected_kustomization(&self) -> Option<(String, String)> {
-        let selected_idx = self.state.ks_table_state.selected()?;
         let items = get_filtered_kustomizations(
             &self.state.ks_store,
             &self.state.namespace_filter,
@@ -898,6 +1015,19 @@ impl App {
             self.state.sort_column,
             self.state.sort_descending,
         );
+        let identities: Vec<SelectionIdentity> = items
+            .iter()
+            .map(|ks| {
+                SelectionIdentity::new(
+                    ks.metadata.namespace.clone().unwrap_or_default(),
+                    ks.metadata.name.clone().unwrap_or_default(),
+                    ks.metadata.uid.clone(),
+                )
+            })
+            .collect();
+        let selected_idx = self
+            .state
+            .selected_index_for(&TabKind::Kustomizations, &identities)?;
         let ks = items.get(selected_idx)?;
         Some((
             ks.metadata.namespace.clone().unwrap_or_default(),
@@ -906,7 +1036,6 @@ impl App {
     }
 
     fn get_selected_custom_tab(&self, tab_idx: usize) -> Option<(String, String)> {
-        let selected_idx = self.state.custom_tab_states.get(tab_idx)?.selected()?;
         let tab_config = self.state.config.custom_tabs.get(tab_idx)?;
         let items = get_filtered_entries(
             &self.state.tf_store,
@@ -914,12 +1043,25 @@ impl App {
             self.state.effective_search_query(),
             tab_config,
         );
+        let identities: Vec<SelectionIdentity> = items
+            .iter()
+            .map(|entry| {
+                SelectionIdentity::new(
+                    entry.namespace.clone(),
+                    entry.name.clone(),
+                    entry.uid.clone(),
+                )
+                .with_optional_row_key(entry.row_key.clone())
+            })
+            .collect();
+        let selected_idx = self
+            .state
+            .selected_index_for(&TabKind::CustomTab(tab_idx), &identities)?;
         let entry = items.get(selected_idx)?;
         Some((entry.namespace.clone(), entry.name.clone()))
     }
 
     fn get_selected_runner(&self) -> Option<(String, String)> {
-        let selected_idx = self.state.runner_table_state.selected()?;
         let items = get_filtered_runners(
             &self.state.runner_pods,
             &self.state.namespace_filter,
@@ -927,6 +1069,19 @@ impl App {
             self.state.runner_sort_column,
             self.state.sort_descending,
         );
+        let identities: Vec<SelectionIdentity> = items
+            .iter()
+            .map(|pod| {
+                SelectionIdentity::new(
+                    pod.metadata.namespace.clone().unwrap_or_default(),
+                    pod.metadata.name.clone().unwrap_or_default(),
+                    pod.metadata.uid.clone(),
+                )
+            })
+            .collect();
+        let selected_idx = self
+            .state
+            .selected_index_for(&TabKind::Runners, &identities)?;
         let pod = items.get(selected_idx)?;
         Some((
             pod.metadata.namespace.clone().unwrap_or_default(),
@@ -986,6 +1141,122 @@ impl App {
                 }
             }
         }
+    }
+
+    fn visible_selection_identities(&self, tab: &TabKind) -> Vec<SelectionIdentity> {
+        match tab {
+            TabKind::Controller => self
+                .state
+                .backlog_namespaces
+                .iter()
+                .map(|(namespace, _, _, _)| {
+                    SelectionIdentity::new(namespace.clone(), String::new(), None)
+                })
+                .collect(),
+            TabKind::Terraform => get_filtered_terraforms(
+                &self.state.tf_store,
+                &self.state.namespace_filter,
+                self.state.effective_search_query(),
+                self.state.show_failures_only,
+                self.state.show_waiting_only,
+                self.state.show_progressing_only,
+                self.state.show_drifting_only,
+                self.state.show_deleting_only,
+                &self.state.recently_acted,
+                self.state.sort_column,
+                self.state.sort_descending,
+            )
+            .into_iter()
+            .map(|tf| {
+                SelectionIdentity::new(
+                    tf.metadata.namespace.unwrap_or_default(),
+                    tf.metadata.name.unwrap_or_default(),
+                    tf.metadata.uid,
+                )
+            })
+            .collect(),
+            TabKind::Kustomizations => get_filtered_kustomizations(
+                &self.state.ks_store,
+                &self.state.namespace_filter,
+                self.state.effective_search_query(),
+                self.state.show_failures_only,
+                self.state.show_waiting_only,
+                self.state.show_progressing_only,
+                self.state.show_deleting_only,
+                &self.state.recently_acted,
+                self.state.sort_column,
+                self.state.sort_descending,
+            )
+            .into_iter()
+            .map(|ks| {
+                SelectionIdentity::new(
+                    ks.metadata.namespace.unwrap_or_default(),
+                    ks.metadata.name.unwrap_or_default(),
+                    ks.metadata.uid,
+                )
+            })
+            .collect(),
+            TabKind::Runners => get_filtered_runners(
+                &self.state.runner_pods,
+                &self.state.namespace_filter,
+                self.state.effective_search_query(),
+                self.state.runner_sort_column,
+                self.state.sort_descending,
+            )
+            .into_iter()
+            .map(|pod| {
+                SelectionIdentity::new(
+                    pod.metadata.namespace.unwrap_or_default(),
+                    pod.metadata.name.unwrap_or_default(),
+                    pod.metadata.uid,
+                )
+            })
+            .collect(),
+            TabKind::CustomTab(index) => self
+                .state
+                .config
+                .custom_tabs
+                .get(*index)
+                .map(|tab| {
+                    get_filtered_entries(
+                        &self.state.tf_store,
+                        &self.state.namespace_filter,
+                        self.state.effective_search_query(),
+                        tab,
+                    )
+                    .into_iter()
+                    .map(|entry| {
+                        SelectionIdentity::new(entry.namespace, entry.name, entry.uid)
+                            .with_optional_row_key(entry.row_key)
+                    })
+                    .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    fn select_list_index(&mut self, index: Option<usize>) {
+        let tab = self.state.active_tab.clone();
+        let identities = self.visible_selection_identities(&tab);
+        self.state.set_selection_for_index(&tab, index, &identities);
+    }
+
+    fn current_list_selection_is_stale(&self) -> bool {
+        let tab = self.state.active_tab.clone();
+        let identities = self.visible_selection_identities(&tab);
+        self.state.selection_is_stale_for(&tab, &identities)
+    }
+
+    fn move_list_selection(&mut self, delta: isize) {
+        let tab = self.state.active_tab.clone();
+        let identities = self.visible_selection_identities(&tab);
+        self.state.move_selection(delta, &identities);
+    }
+
+    fn current_list_selection_index(&self) -> Option<usize> {
+        let tab = self.state.active_tab.clone();
+        let identities = self.visible_selection_identities(&tab);
+        self.state.selected_index_for(&tab, &identities)
     }
 
     fn viewer_line_count(&self) -> usize {
@@ -1223,7 +1494,7 @@ impl App {
                     self.state.show_drifting_only = false;
                     self.state.show_deleting_only = false;
                 }
-                self.state.current_table_state().select(Some(0));
+                self.select_list_index(Some(0));
             }
             Action::ToggleProgressingOnly => {
                 self.state.show_progressing_only = !self.state.show_progressing_only;
@@ -1233,7 +1504,7 @@ impl App {
                     self.state.show_drifting_only = false;
                     self.state.show_deleting_only = false;
                 }
-                self.state.current_table_state().select(Some(0));
+                self.select_list_index(Some(0));
             }
             Action::ToggleDriftingOnly => {
                 if self.state.active_tab == TabKind::Terraform {
@@ -1244,7 +1515,7 @@ impl App {
                         self.state.show_progressing_only = false;
                         self.state.show_deleting_only = false;
                     }
-                    self.state.current_table_state().select(Some(0));
+                    self.select_list_index(Some(0));
                 }
             }
             Action::ToggleWaitingOnly => {
@@ -1255,7 +1526,7 @@ impl App {
                     self.state.show_drifting_only = false;
                     self.state.show_deleting_only = false;
                 }
-                self.state.current_table_state().select(Some(0));
+                self.select_list_index(Some(0));
             }
             Action::ToggleDeletingOnly => {
                 self.state.show_deleting_only = !self.state.show_deleting_only;
@@ -1265,7 +1536,7 @@ impl App {
                     self.state.show_progressing_only = false;
                     self.state.show_drifting_only = false;
                 }
-                self.state.current_table_state().select(Some(0));
+                self.select_list_index(Some(0));
             }
             Action::ToggleWrap => {
                 self.state.viewer_wrap = !self.state.viewer_wrap;
@@ -1306,15 +1577,15 @@ impl App {
                         self.state.sort_column = self.state.sort_column.next();
                     }
                 }
-                self.state.current_table_state().select(Some(0));
+                self.state.bump_view_revision();
             }
             Action::InvertSort => {
                 self.state.sort_descending = !self.state.sort_descending;
-                self.state.current_table_state().select(Some(0));
+                self.state.bump_view_revision();
             }
             Action::ScrollTop => {
                 if matches!(self.state.current_view(), ViewState::List(_)) {
-                    self.state.current_table_state().select(Some(0));
+                    self.select_list_index(Some(0));
                 } else {
                     self.state.plan_scroll = 0;
                     self.state.horizontal_scroll = 0;
@@ -1327,7 +1598,7 @@ impl App {
                 if matches!(self.state.current_view(), ViewState::List(_)) {
                     let count = self.current_list_count();
                     if count > 0 {
-                        self.state.current_table_state().select(Some(count - 1));
+                        self.select_list_index(Some(count - 1));
                     }
                 } else {
                     // Clamp to actual content length
@@ -1367,12 +1638,10 @@ impl App {
                 ) {
                     self.state.plan_scroll = self.state.plan_scroll.saturating_add(half);
                 } else {
-                    let current = self.state.current_table_state().selected().unwrap_or(0);
                     let count = self.current_list_count();
                     if count > 0 {
-                        self.state
-                            .current_table_state()
-                            .select(Some((current + half).min(count - 1)));
+                        let current = self.current_list_selection_index().unwrap_or(0);
+                        self.select_list_index(Some((current + half).min(count - 1)));
                     }
                 }
             }
@@ -1392,10 +1661,8 @@ impl App {
                         self.state.log_auto_follow = false;
                     }
                 } else {
-                    let current = self.state.current_table_state().selected().unwrap_or(0);
-                    self.state
-                        .current_table_state()
-                        .select(Some(current.saturating_sub(half)));
+                    let current = self.current_list_selection_index().unwrap_or(0);
+                    self.select_list_index(Some(current.saturating_sub(half)));
                 }
             }
             Action::ScreenDown => {
@@ -1411,12 +1678,10 @@ impl App {
                 ) {
                     self.state.plan_scroll = self.state.plan_scroll.saturating_add(page);
                 } else {
-                    let current = self.state.current_table_state().selected().unwrap_or(0);
                     let count = self.current_list_count();
                     if count > 0 {
-                        self.state
-                            .current_table_state()
-                            .select(Some((current + page).min(count - 1)));
+                        let current = self.current_list_selection_index().unwrap_or(0);
+                        self.select_list_index(Some((current + page).min(count - 1)));
                     }
                 }
             }
@@ -1436,10 +1701,8 @@ impl App {
                         self.state.log_auto_follow = false;
                     }
                 } else {
-                    let current = self.state.current_table_state().selected().unwrap_or(0);
-                    self.state
-                        .current_table_state()
-                        .select(Some(current.saturating_sub(page)));
+                    let current = self.current_list_selection_index().unwrap_or(0);
+                    self.select_list_index(Some(current.saturating_sub(page)));
                 }
             }
             Action::SelectNext => {
@@ -1454,13 +1717,7 @@ impl App {
                 ) {
                     self.state.plan_scroll = self.state.plan_scroll.saturating_add(1);
                 } else {
-                    let current = self.state.current_table_state().selected().unwrap_or(0);
-                    let count = self.current_list_count();
-                    if count > 0 {
-                        self.state
-                            .current_table_state()
-                            .select(Some((current + 1).min(count - 1)));
-                    }
+                    self.move_list_selection(1);
                 }
             }
             Action::SelectPrev => {
@@ -1478,23 +1735,18 @@ impl App {
                         self.state.log_auto_follow = false;
                     }
                 } else {
-                    let current = self.state.current_table_state().selected().unwrap_or(0);
-                    self.state
-                        .current_table_state()
-                        .select(Some(current.saturating_sub(1)));
+                    self.move_list_selection(-1);
                 }
             }
             Action::MouseSelect(row_idx) => {
                 let count = self.current_list_count();
                 if count > 0 {
-                    self.state
-                        .current_table_state()
-                        .select(Some(row_idx.min(count - 1)));
+                    self.select_list_index(Some(row_idx.min(count - 1)));
                 }
             }
             Action::Enter => match self.state.active_tab {
                 TabKind::Controller => {
-                    if let Some(idx) = self.state.backlog_table_state.selected()
+                    if let Some(idx) = self.current_list_selection_index()
                         && let Some((ns, _, _, _)) = self.state.backlog_namespaces.get(idx)
                     {
                         self.state.namespace_filter = Some(ns.clone());
@@ -1509,7 +1761,7 @@ impl App {
                         // they had open before.
                         *self.state.current_view_stack_mut() =
                             vec![ViewState::List(TabKind::Terraform)];
-                        self.state.tf_table_state.select(None);
+                        self.state.clear_selection_for(&TabKind::Terraform);
                     }
                 }
                 TabKind::Terraform => {
@@ -1579,7 +1831,9 @@ impl App {
                         self.state.namespace_filter = None;
                     }
                     // Reset table selection when filters change
-                    self.state.current_table_state().select(None);
+                    let tab = self.state.active_tab.clone();
+                    self.state.clear_selection_for(&tab);
+                    self.state.bulk_selected.clear();
                 } else if self.state.current_view_stack().len() > 1 {
                     // Cancel log stream if leaving a LogViewer
                     if matches!(self.state.current_view(), ViewState::LogViewer { .. }) {
@@ -1609,20 +1863,23 @@ impl App {
                 self.state.input_mode = InputMode::Normal;
                 // Auto-select first filtered result so Enter immediately acts on it
                 let count = self.current_list_count();
-                if count > 0 && self.state.current_table_state().selected().is_none() {
-                    self.state.current_table_state().select(Some(0));
+                if count > 0 && self.current_list_selection_index().is_none() {
+                    self.select_list_index(Some(0));
                 }
             }
             Action::SearchCancel => {
                 self.state.input_mode = InputMode::Normal;
                 self.state.search_query.clear();
                 self.state.search_suspended = false;
+                let tab = self.state.active_tab.clone();
+                self.state.clear_selection_for(&tab);
             }
             Action::ToggleSearchSuspend => {
                 self.state.bump_view_revision();
                 if !self.state.search_query.is_empty() {
                     self.state.search_suspended = !self.state.search_suspended;
-                    self.state.current_table_state().select(None);
+                    let tab = self.state.active_tab.clone();
+                    self.state.clear_selection_for(&tab);
                 }
             }
 
@@ -1664,9 +1921,12 @@ impl App {
                     self.state.namespace_filter = Some(ns.clone());
                 }
                 // Reset table selections
-                self.state.tf_table_state.select(None);
-                self.state.ks_table_state.select(None);
-                self.state.runner_table_state.select(None);
+                self.state.clear_selection_for(&TabKind::Terraform);
+                self.state.clear_selection_for(&TabKind::Kustomizations);
+                self.state.clear_selection_for(&TabKind::Runners);
+                for index in 0..self.state.config.custom_tabs.len() {
+                    self.state.clear_selection_for(&TabKind::CustomTab(index));
+                }
             }
             Action::NamespacePickerCancel => {
                 self.state.input_mode = InputMode::Normal;
@@ -1808,6 +2068,18 @@ impl App {
 
             // Bulk selection
             Action::ToggleSelect => {
+                if self.current_list_selection_is_stale() {
+                    let tab = self.state.active_tab.clone();
+                    self.state.clear_selection_for(&tab);
+                    return;
+                }
+                if self.current_list_selection_index().is_none() {
+                    // Make the first Space behave like the first j: select
+                    // the first visible row before toggling it.
+                    self.select_list_index(Some(0));
+                } else if self.current_list_selection_is_stale() {
+                    return;
+                }
                 if let Some(target) = self.selected_mutation_target() {
                     let key = (target.namespace.clone(), target.name.clone());
                     let same_target = self.state.bulk_selected.get(&key) == Some(&target);
@@ -1820,9 +2092,9 @@ impl App {
                 // After toggling, march the cursor forward so repeated
                 // Space presses select consecutive rows (k9s pattern).
                 let count = self.current_list_count();
-                let cur = self.state.current_table_state().selected().unwrap_or(0);
+                let cur = self.current_list_selection_index().unwrap_or(0);
                 if count > 0 && cur + 1 < count {
-                    self.state.current_table_state().select(Some(cur + 1));
+                    self.select_list_index(Some(cur + 1));
                 }
             }
             Action::BulkReconcile => {
@@ -2704,7 +2976,7 @@ impl App {
                     )
                     .is_real_failure()
                     {
-                        self.state.tf_table_state.select(Some(i));
+                        self.select_list_index(Some(i));
                         return;
                     }
                 }
@@ -2728,7 +3000,7 @@ impl App {
                     )
                     .is_real_failure()
                     {
-                        self.state.ks_table_state.select(Some(i));
+                        self.select_list_index(Some(i));
                         return;
                     }
                 }
