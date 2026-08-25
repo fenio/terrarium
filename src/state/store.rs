@@ -273,6 +273,7 @@ pub struct AppState {
     pub show_failures_only: bool,
     pub show_waiting_only: bool,
     pub show_progressing_only: bool,
+    pub show_drifting_only: bool,
     pub show_deleting_only: bool,
     pub input_mode: InputMode,
 
@@ -523,6 +524,7 @@ impl AppState {
             show_failures_only: false,
             show_waiting_only: false,
             show_progressing_only: false,
+            show_drifting_only: false,
             show_deleting_only: false,
             input_mode: InputMode::Normal,
             tf_table_state: TableState::default(),

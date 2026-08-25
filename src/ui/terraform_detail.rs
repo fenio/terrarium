@@ -29,7 +29,7 @@ pub fn render(f: &mut Frame, area: Rect, tf: &Terraform, ctx: &RenderCtx<'_>) {
 
     // Fixed heights — Conditions stays at 5 inner rows; the dedicated
     // viewer (`c`) handles full multi-screen error blobs.
-    let spec_status_height = 8_u16;
+    let spec_status_height = 9_u16;
     let conditions_height = 7_u16;
 
     if ctx.runner_logs.is_some() {
@@ -122,6 +122,7 @@ fn render_spec(
     let workspace = tf.spec.workspace.as_deref().unwrap_or("default");
     let plan_only = tf.spec.plan_only.unwrap_or(false);
     let destroy = tf.spec.destroy.unwrap_or(false);
+    let destroy_on_deletion = tf.spec.destroy_resources_on_deletion.unwrap_or(false);
     let break_the_glass = crate::k8s::actions::break_the_glass_active(tf);
     let approve_plan = tf.spec.approve_plan.as_deref().unwrap_or("-");
 
@@ -151,6 +152,10 @@ fn render_spec(
             Span::styled(SEP, theme::INLINE_SEP),
             Span::styled("Destroy: ", theme::LABEL),
             detail::styled_bool(destroy),
+        ]),
+        Line::from(vec![
+            Span::styled("DestroyOnDel: ", theme::LABEL),
+            detail::styled_bool(destroy_on_deletion),
         ]),
         Line::from(vec![
             Span::styled("BreakGlass: ", theme::LABEL),
@@ -262,4 +267,41 @@ fn render_status(
     }
 
     f.render_widget(Paragraph::new(lines).block(detail::block("Status")), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn terraform_with_spec(spec: serde_json::Value) -> Terraform {
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
+            "kind": "Terraform",
+            "metadata": {"name": "demo", "namespace": "ns"},
+            "spec": spec
+        }))
+        .expect("minimal Terraform should deserialize")
+    }
+
+    #[test]
+    fn destroy_on_deletion_defaults_to_false_and_reads_true() {
+        let base_spec = serde_json::json!({
+            "interval": "1m",
+            "sourceRef": {"kind": "GitRepository", "name": "source"}
+        });
+        let defaulted = terraform_with_spec(base_spec.clone());
+        let enabled = terraform_with_spec(serde_json::json!({
+            "interval": "1m",
+            "sourceRef": {"kind": "GitRepository", "name": "source"},
+            "destroyResourcesOnDeletion": true
+        }));
+
+        assert!(
+            !defaulted
+                .spec
+                .destroy_resources_on_deletion
+                .unwrap_or(false)
+        );
+        assert!(enabled.spec.destroy_resources_on_deletion.unwrap_or(false));
+    }
 }

@@ -801,6 +801,7 @@ impl App {
             self.state.show_failures_only,
             self.state.show_waiting_only,
             self.state.show_progressing_only,
+            self.state.show_drifting_only,
             self.state.show_deleting_only,
             &self.state.recently_acted,
             self.state.sort_column,
@@ -873,6 +874,7 @@ impl App {
                 self.state.show_failures_only,
                 self.state.show_waiting_only,
                 self.state.show_progressing_only,
+                self.state.show_drifting_only,
                 self.state.show_deleting_only,
                 &self.state.recently_acted,
                 self.state.sort_column,
@@ -1077,6 +1079,7 @@ impl App {
                 if self.state.show_failures_only {
                     self.state.show_waiting_only = false;
                     self.state.show_progressing_only = false;
+                    self.state.show_drifting_only = false;
                     self.state.show_deleting_only = false;
                 }
                 self.state.current_table_state().select(Some(0));
@@ -1086,15 +1089,29 @@ impl App {
                 if self.state.show_progressing_only {
                     self.state.show_failures_only = false;
                     self.state.show_waiting_only = false;
+                    self.state.show_drifting_only = false;
                     self.state.show_deleting_only = false;
                 }
                 self.state.current_table_state().select(Some(0));
+            }
+            Action::ToggleDriftingOnly => {
+                if self.state.active_tab == TabKind::Terraform {
+                    self.state.show_drifting_only = !self.state.show_drifting_only;
+                    if self.state.show_drifting_only {
+                        self.state.show_failures_only = false;
+                        self.state.show_waiting_only = false;
+                        self.state.show_progressing_only = false;
+                        self.state.show_deleting_only = false;
+                    }
+                    self.state.current_table_state().select(Some(0));
+                }
             }
             Action::ToggleWaitingOnly => {
                 self.state.show_waiting_only = !self.state.show_waiting_only;
                 if self.state.show_waiting_only {
                     self.state.show_failures_only = false;
                     self.state.show_progressing_only = false;
+                    self.state.show_drifting_only = false;
                     self.state.show_deleting_only = false;
                 }
                 self.state.current_table_state().select(Some(0));
@@ -1105,6 +1122,7 @@ impl App {
                     self.state.show_failures_only = false;
                     self.state.show_waiting_only = false;
                     self.state.show_progressing_only = false;
+                    self.state.show_drifting_only = false;
                 }
                 self.state.current_table_state().select(Some(0));
             }
@@ -1342,6 +1360,7 @@ impl App {
                         self.state.show_failures_only = true;
                         self.state.show_progressing_only = false;
                         self.state.show_waiting_only = false;
+                        self.state.show_drifting_only = false;
                         self.state.show_deleting_only = false;
                         self.state.active_tab = TabKind::Terraform;
                         // Reset the TF tab back to its list root so the user
@@ -1393,7 +1412,7 @@ impl App {
             Action::Back => {
                 if matches!(self.state.current_view(), ViewState::List(_)) {
                     // Peel off, most recent first: bulk selection → search →
-                    // failures/waiting/progressing → namespace. Clearing
+                    // failures/waiting/progressing/drifting → namespace. Clearing
                     // bulk first gives the user a fast escape after a
                     // multi-select they don't want to act on.
                     if !self.state.bulk_selected.is_empty() {
@@ -1407,6 +1426,8 @@ impl App {
                         self.state.show_waiting_only = false;
                     } else if self.state.show_progressing_only {
                         self.state.show_progressing_only = false;
+                    } else if self.state.show_drifting_only {
+                        self.state.show_drifting_only = false;
                     } else if self.state.show_deleting_only {
                         self.state.show_deleting_only = false;
                     } else if self.state.namespace_filter.is_some() {
@@ -2338,6 +2359,7 @@ impl App {
                     self.state.show_failures_only,
                     self.state.show_waiting_only,
                     self.state.show_progressing_only,
+                    self.state.show_drifting_only,
                     self.state.show_deleting_only,
                     &self.state.recently_acted,
                     self.state.sort_column,

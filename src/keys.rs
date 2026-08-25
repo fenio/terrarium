@@ -153,6 +153,7 @@ fn handle_list_key(key: KeyEvent) -> Action {
         KeyCode::Char('f') => Action::ToggleFailuresOnly,
         KeyCode::Char('w') => Action::ToggleWaitingOnly,
         KeyCode::Char('P') => Action::ToggleProgressingOnly,
+        KeyCode::Char('t') => Action::ToggleDriftingOnly,
         KeyCode::Char('D') => Action::ToggleDeletingOnly,
         KeyCode::Char('o') => Action::CycleSort,
         KeyCode::Char('i') => Action::InvertSort,
@@ -296,6 +297,14 @@ mod tests {
         assert!(matches!(
             handle_detail_key(key(KeyCode::BackTab)),
             Action::PrevTab
+        ));
+    }
+
+    #[test]
+    fn list_key_maps_t_to_drifting_filter() {
+        assert!(matches!(
+            handle_list_key(key(KeyCode::Char('t'))),
+            Action::ToggleDriftingOnly
         ));
     }
 
