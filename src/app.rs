@@ -7,7 +7,9 @@ use crossterm::event::{
 use futures::StreamExt;
 use tokio::sync::mpsc;
 
-use crate::action::{Action, AsyncIdentity, AsyncKind, AsyncScope, AsyncTarget, ResourceKind};
+use crate::action::{
+    Action, AsyncIdentity, AsyncKind, AsyncScope, AsyncTarget, MutationTarget, ResourceKind,
+};
 use crate::k8s::actions as k8s_actions;
 use crate::k8s::metrics;
 use crate::keys::handle_key;
@@ -348,8 +350,8 @@ impl App {
     /// else goes through the normal `dispatch`.
     async fn run_action(&mut self, action: Action, terminal: &mut crate::tui::Tui) {
         match action {
-            Action::ExecBreakTheGlass { namespace, name } => {
-                self.exec_break_the_glass(terminal, &namespace, &name).await;
+            Action::ExecBreakTheGlass { target } => {
+                self.exec_break_the_glass(terminal, &target).await;
             }
             Action::SwitchContext(context) => {
                 self.switch_context(terminal, context).await;
@@ -503,6 +505,56 @@ impl App {
         }
     }
 
+    fn mutation_target_for_terraform(&self, namespace: &str, name: &str) -> Option<MutationTarget> {
+        let tf = self
+            .state
+            .tf_store
+            .get(&kube::runtime::reflector::ObjectRef::new(name).within(namespace))?;
+        mutation_target_from_metadata(
+            ResourceKind::Terraform,
+            namespace,
+            name,
+            &tf.metadata.uid,
+            &tf.metadata.resource_version,
+        )
+    }
+
+    fn mutation_target_for_kustomization(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> Option<MutationTarget> {
+        let ks = self
+            .state
+            .ks_store
+            .get(&kube::runtime::reflector::ObjectRef::new(name).within(namespace))?;
+        mutation_target_from_metadata(
+            ResourceKind::Kustomization,
+            namespace,
+            name,
+            &ks.metadata.uid,
+            &ks.metadata.resource_version,
+        )
+    }
+
+    fn selected_mutation_target(&self) -> Option<MutationTarget> {
+        match self.state.active_tab {
+            TabKind::Terraform => {
+                let (namespace, name) = self.get_selected_terraform()?;
+                self.mutation_target_for_terraform(&namespace, &name)
+            }
+            TabKind::CustomTab(index) => {
+                let (namespace, name) = self.get_selected_custom_tab(index)?;
+                self.mutation_target_for_terraform(&namespace, &name)
+            }
+            TabKind::Kustomizations => {
+                let (namespace, name) = self.get_selected_kustomization()?;
+                self.mutation_target_for_kustomization(&namespace, &name)
+            }
+            TabKind::Controller | TabKind::Runners => None,
+        }
+    }
+
     /// Map a keypress to the right bulk action for the Kustomization tab.
     fn resolve_bulk_ks_action(&self, code: KeyCode) -> Option<Action> {
         let n = self.state.bulk_selected.len();
@@ -550,6 +602,15 @@ impl App {
             .state
             .tf_store
             .get(&kube::runtime::reflector::ObjectRef::new(&name).within(&ns));
+        let mutation_target = tf.as_ref().and_then(|tf| {
+            mutation_target_from_metadata(
+                ResourceKind::Terraform,
+                &ns,
+                &name,
+                &tf.metadata.uid,
+                &tf.metadata.resource_version,
+            )
+        });
         let break_the_glass = tf
             .as_ref()
             .is_some_and(|tf| k8s_actions::break_the_glass_active(tf));
@@ -564,32 +625,24 @@ impl App {
         match code {
             KeyCode::Char('a') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::ApprovePlan {
-                    namespace: ns.clone(),
-                    name: name.clone(),
+                    target: mutation_target.clone()?,
                 }),
                 format!("Approve plan for {ns}/{name}?"),
             )),
             KeyCode::Char('r') => Some(Action::Reconcile {
-                kind: ResourceKind::Terraform,
-                namespace: ns,
-                name,
+                target: mutation_target.clone()?,
             }),
             KeyCode::Char('R') if self.state.tfctl_available => Some(Action::Replan {
-                namespace: ns,
-                name,
+                target: mutation_target.clone()?,
             }),
             KeyCode::Char('s') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::Suspend {
-                    kind: ResourceKind::Terraform,
-                    namespace: ns.clone(),
-                    name: name.clone(),
+                    target: mutation_target.clone()?,
                 }),
                 format!("Suspend {ns}/{name}?"),
             )),
             KeyCode::Char('u') => Some(Action::Resume {
-                kind: ResourceKind::Terraform,
-                namespace: ns,
-                name,
+                target: mutation_target.clone()?,
             }),
             KeyCode::Char('p') => Some(Action::FetchPlan {
                 namespace: ns,
@@ -598,15 +651,13 @@ impl App {
             }),
             KeyCode::Char('F') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::ForceUnlock {
-                    namespace: ns.clone(),
-                    name: name.clone(),
+                    target: mutation_target.clone()?,
                 }),
                 format!("Force unlock state for {ns}/{name}?"),
             )),
             KeyCode::Char('C') if break_the_glass => Some(Action::ShowConfirmDialog(
                 Box::new(Action::ResetBreakTheGlass {
-                    namespace: ns.clone(),
-                    name: name.clone(),
+                    target: mutation_target.clone()?,
                 }),
                 format!("Disable persistent break-the-glass mode for {ns}/{name}?"),
             )),
@@ -630,8 +681,7 @@ impl App {
                 };
                 Some(Action::ShowTypedConfirmDialog(
                     Box::new(Action::DeleteResource {
-                        namespace: ns.clone(),
-                        name: name.clone(),
+                        target: mutation_target.clone()?,
                     }),
                     message,
                     name.clone(),
@@ -662,8 +712,7 @@ impl App {
                 name,
             }),
             KeyCode::Char('x') if self.state.tfctl_available => Some(Action::ExecBreakTheGlass {
-                namespace: ns,
-                name,
+                target: mutation_target?,
             }),
             KeyCode::Char('L') => Some(Action::StreamRunnerLogs {
                 namespace: ns,
@@ -711,25 +760,32 @@ impl App {
             (Some(n), Some(nm)) => (n.clone(), nm.clone()),
             _ => self.get_selected_kustomization()?,
         };
+        let ks = self
+            .state
+            .ks_store
+            .get(&kube::runtime::reflector::ObjectRef::new(&name).within(&ns));
+        let mutation_target = ks.as_ref().and_then(|ks| {
+            mutation_target_from_metadata(
+                ResourceKind::Kustomization,
+                &ns,
+                &name,
+                &ks.metadata.uid,
+                &ks.metadata.resource_version,
+            )
+        });
 
         match code {
             KeyCode::Char('r') => Some(Action::Reconcile {
-                kind: ResourceKind::Kustomization,
-                namespace: ns,
-                name,
+                target: mutation_target.clone()?,
             }),
             KeyCode::Char('s') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::Suspend {
-                    kind: ResourceKind::Kustomization,
-                    namespace: ns.clone(),
-                    name: name.clone(),
+                    target: mutation_target.clone()?,
                 }),
                 format!("Suspend {ns}/{name}?"),
             )),
             KeyCode::Char('u') => Some(Action::Resume {
-                kind: ResourceKind::Kustomization,
-                namespace: ns,
-                name,
+                target: mutation_target?,
             }),
             KeyCode::Char('y') => Some(Action::FetchJson {
                 kind: ResourceKind::Kustomization,
@@ -772,11 +828,21 @@ impl App {
 
     fn resolve_runner_action(&self, code: KeyCode) -> Option<Action> {
         let (ns, name) = self.get_selected_runner()?;
+        let pod = self.state.runner_pods.iter().find(|pod| {
+            pod.metadata.namespace.as_deref() == Some(ns.as_str())
+                && pod.metadata.name.as_deref() == Some(name.as_str())
+        })?;
+        let mutation_target = mutation_target_from_metadata(
+            ResourceKind::Pod,
+            &ns,
+            &name,
+            &pod.metadata.uid,
+            &pod.metadata.resource_version,
+        );
         match code {
             KeyCode::Char('d') => Some(Action::ShowConfirmDialog(
                 Box::new(Action::KillRunner {
-                    namespace: ns.clone(),
-                    name: name.clone(),
+                    target: mutation_target?,
                 }),
                 format!("Kill runner pod {ns}/{name}?"),
             )),
@@ -1742,16 +1808,14 @@ impl App {
 
             // Bulk selection
             Action::ToggleSelect => {
-                let selected = match &self.state.active_tab {
-                    TabKind::Terraform => self.get_selected_terraform(),
-                    TabKind::CustomTab(i) => self.get_selected_custom_tab(*i),
-                    TabKind::Kustomizations => self.get_selected_kustomization(),
-                    _ => None,
-                };
-                if let Some(key) = selected
-                    && !self.state.bulk_selected.remove(&key)
-                {
-                    self.state.bulk_selected.insert(key);
+                if let Some(target) = self.selected_mutation_target() {
+                    let key = (target.namespace.clone(), target.name.clone());
+                    let same_target = self.state.bulk_selected.get(&key) == Some(&target);
+                    if same_target {
+                        self.state.bulk_selected.remove(&key);
+                    } else {
+                        self.state.bulk_selected.insert(key, target);
+                    }
                 }
                 // After toggling, march the cursor forward so repeated
                 // Space presses select consecutive rows (k9s pattern).
@@ -1762,34 +1826,16 @@ impl App {
                 }
             }
             Action::BulkReconcile => {
-                self.execute_bulk_action(|ns, name, kind| Action::Reconcile {
-                    kind,
-                    namespace: ns,
-                    name,
-                });
+                self.execute_bulk_action(|target| Action::Reconcile { target });
             }
             Action::BulkSuspend => {
-                self.execute_bulk_action(|ns, name, kind| Action::Suspend {
-                    kind,
-                    namespace: ns,
-                    name,
-                });
+                self.execute_bulk_action(|target| Action::Suspend { target });
             }
             Action::BulkResume => {
-                self.execute_bulk_action(|ns, name, kind| Action::Resume {
-                    kind,
-                    namespace: ns,
-                    name,
-                });
+                self.execute_bulk_action(|target| Action::Resume { target });
             }
             Action::BulkApprovePlan => {
-                // ApprovePlan is Terraform-only; the resolver gates the
-                // key binding on the TF tab, so the `kind` arg from
-                // execute_bulk_action is unused here.
-                self.execute_bulk_action(|ns, name, _kind| Action::ApprovePlan {
-                    namespace: ns,
-                    name,
-                });
+                self.execute_bulk_action(|target| Action::ApprovePlan { target });
             }
 
             // Save viewer content
@@ -1943,8 +1989,17 @@ impl App {
                 self.open_shortcut(&namespace, &name, shortcut_idx);
             }
 
-            // Non-destructive actions dispatch directly
-            Action::Reconcile { .. } | Action::Resume { .. } | Action::Replan { .. } => {
+            // K8s mutations dispatch asynchronously with their captured
+            // object identity.
+            Action::Reconcile { .. }
+            | Action::Suspend { .. }
+            | Action::Resume { .. }
+            | Action::Replan { .. }
+            | Action::ApprovePlan { .. }
+            | Action::ForceUnlock { .. }
+            | Action::ResetBreakTheGlass { .. }
+            | Action::DeleteResource { .. }
+            | Action::KillRunner { .. } => {
                 self.spawn_k8s_action(action);
             }
 
@@ -2434,12 +2489,21 @@ impl App {
             }
 
             // Async K8s action results
-            Action::K8sActionSuccess(msg) => {
-                self.state.flash_message = Some((msg, Instant::now(), FlashKind::Success));
+            Action::K8sActionSuccess { target, message } => {
+                if !self.mutation_target_matches_current_resource(&target) {
+                    return;
+                }
+                self.state.flash_message = Some((message, Instant::now(), FlashKind::Success));
             }
-            Action::K8sActionError(msg) => {
-                self.state.flash_message =
-                    Some((format!("Error: {msg}"), Instant::now(), FlashKind::Error));
+            Action::K8sActionError { target, message } => {
+                if !self.mutation_target_matches_current_resource(&target) {
+                    return;
+                }
+                self.state.flash_message = Some((
+                    format!("Error: {message}"),
+                    Instant::now(),
+                    FlashKind::Error,
+                ));
             }
 
             Action::TerraformStoreUpdated => {
@@ -2462,6 +2526,43 @@ impl App {
 
     fn require_client(&self) -> Option<kube::Client> {
         self.client.clone()
+    }
+
+    /// A mutation result can arrive after an object was deleted and recreated
+    /// with the same name. Treat a missing object as compatible with a
+    /// completed delete, but never attribute the result to a different UID.
+    fn mutation_target_matches_current_resource(&self, target: &MutationTarget) -> bool {
+        match target.kind {
+            ResourceKind::Terraform => self
+                .state
+                .tf_store
+                .get(
+                    &kube::runtime::reflector::ObjectRef::new(&target.name)
+                        .within(&target.namespace),
+                )
+                .is_none_or(|resource| {
+                    resource.metadata.uid.as_deref() == Some(target.uid.as_str())
+                }),
+            ResourceKind::Kustomization => self
+                .state
+                .ks_store
+                .get(
+                    &kube::runtime::reflector::ObjectRef::new(&target.name)
+                        .within(&target.namespace),
+                )
+                .is_none_or(|resource| {
+                    resource.metadata.uid.as_deref() == Some(target.uid.as_str())
+                }),
+            ResourceKind::Pod => self
+                .state
+                .runner_pods
+                .iter()
+                .find(|pod| {
+                    pod.metadata.namespace.as_deref() == Some(target.namespace.as_str())
+                        && pod.metadata.name.as_deref() == Some(target.name.as_str())
+                })
+                .is_none_or(|pod| pod.metadata.uid.as_deref() == Some(target.uid.as_str())),
+        }
     }
 
     fn async_target_matches_selection(&self, scope: &AsyncScope) -> bool {
@@ -2528,8 +2629,9 @@ impl App {
         // reconcile from a failures-only view makes the row vanish the
         // instant the controller starts reconciling. Covers all paths
         // (single-row + bulk-fanout).
-        if let Some((ns, name)) = action_resource_target(&action) {
-            self.state.mark_recently_acted(ns, name);
+        if let Some(target) = action_resource_target(&action) {
+            self.state
+                .mark_recently_acted(&target.namespace, &target.name);
         }
 
         let client = match self.require_client() {
@@ -2543,18 +2645,18 @@ impl App {
                 return;
             }
         };
-        let target =
-            action_resource_target(&action).map(|(namespace, name)| AsyncTarget::Resource {
-                kind: action_resource_kind(&action).unwrap_or(ResourceKind::Terraform),
-                namespace: namespace.to_string(),
-                name: name.to_string(),
-            });
-        let scope = self.state.begin_async(
-            AsyncKind::Mutation,
-            target,
-            AsyncIdentity::View(self.state.view_revision),
-        );
+        let target = action_resource_target(&action).map(|target| AsyncTarget::Resource {
+            kind: target.kind,
+            namespace: target.namespace.clone(),
+            name: target.name.clone(),
+        });
+        let scope = self
+            .state
+            .begin_async(AsyncKind::Mutation, target, AsyncIdentity::None);
         let tx = scope.sender(self.action_tx.clone());
+        let mutation_target = action_resource_target(&action)
+            .cloned()
+            .expect("mutating actions always carry a target");
         let success_msg = format_success_message(&action);
         let context = self.state.context_name.clone();
         // tfctl-backed actions (replan) need to see terrarium's kubeconfig.
@@ -2565,10 +2667,16 @@ impl App {
                 execute_k8s_action(&client, &action, Some(&context), kubeconfig.as_deref()).await;
             match result {
                 Ok(()) => {
-                    let _ = tx.send(Action::K8sActionSuccess(success_msg));
+                    let _ = tx.send(Action::K8sActionSuccess {
+                        target: mutation_target.clone(),
+                        message: success_msg,
+                    });
                 }
                 Err(e) => {
-                    let _ = tx.send(Action::K8sActionError(format!("{e}")));
+                    let _ = tx.send(Action::K8sActionError {
+                        target: mutation_target,
+                        message: format!("{e}"),
+                    });
                 }
             }
         });
@@ -2631,20 +2739,21 @@ impl App {
 
     fn execute_bulk_action<F>(&mut self, make_action: F)
     where
-        F: Fn(String, String, ResourceKind) -> Action,
+        F: Fn(MutationTarget) -> Action,
     {
-        let kind = match self.state.active_tab {
-            TabKind::Terraform | TabKind::CustomTab(_) => ResourceKind::Terraform,
-            TabKind::Kustomizations => ResourceKind::Kustomization,
-            _ => return,
-        };
+        if !matches!(
+            self.state.active_tab,
+            TabKind::Terraform | TabKind::CustomTab(_) | TabKind::Kustomizations
+        ) {
+            return;
+        }
         // Take the selection so it auto-clears after dispatch — the
         // user has acted on it, leaving it selected would be a footgun
         // on the next keypress.
         let selected = std::mem::take(&mut self.state.bulk_selected);
         let count = selected.len();
-        for (ns, name) in selected {
-            let action = make_action(ns, name, kind);
+        for (_, target) in selected {
+            let action = make_action(target);
             self.spawn_k8s_action(action);
         }
         if count > 0 {
@@ -2903,13 +3012,31 @@ impl App {
     async fn exec_break_the_glass(
         &mut self,
         terminal: &mut crate::tui::Tui,
-        namespace: &str,
-        name: &str,
+        target: &MutationTarget,
     ) {
+        let Some(client) = self.require_client() else {
+            self.state.flash_message = Some((
+                "K8s client not ready yet".to_string(),
+                Instant::now(),
+                FlashKind::Error,
+            ));
+            return;
+        };
+        if let Err(e) = k8s_actions::validate_terraform_target(&client, target).await {
+            self.state.flash_message = Some((
+                format!("Refusing break-glass: {e}"),
+                Instant::now(),
+                FlashKind::Error,
+            ));
+            return;
+        }
         // Just delegate to tfctl — it handles the entire BTG lifecycle correctly.
         // Trying to reimplement its K8s patch logic has proven unreliable.
         self.state.flash_message = Some((
-            format!("Launching tfctl break-glass {name} -n {namespace}..."),
+            format!(
+                "Launching tfctl break-glass {} -n {}...",
+                target.name, target.namespace
+            ),
             Instant::now(),
             FlashKind::Success,
         ));
@@ -2919,6 +3046,20 @@ impl App {
         if let Err(e) = crate::tui::restore() {
             self.state.flash_message = Some((
                 format!("Failed to suspend TUI: {e}"),
+                Instant::now(),
+                FlashKind::Error,
+            ));
+            return;
+        }
+
+        // The object may have changed while the terminal was being prepared
+        // for the interactive command. Re-check immediately before handing
+        // control to tfctl; direct API mutations additionally carry the
+        // resourceVersion on their request.
+        if let Err(e) = k8s_actions::validate_terraform_target(&client, target).await {
+            let _ = crate::tui::resume(terminal, self.state.mouse_enabled);
+            self.state.flash_message = Some((
+                format!("Refusing break-glass: {e}"),
                 Instant::now(),
                 FlashKind::Error,
             ));
@@ -2939,7 +3080,7 @@ impl App {
             cmd.args(["--context", &ctx]);
         }
         let status = cmd
-            .args(["break-glass", name, "-n", namespace])
+            .args(["break-glass", &target.name, "-n", &target.namespace])
             .stdin(std::process::Stdio::inherit())
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
@@ -2955,7 +3096,7 @@ impl App {
         match status {
             Ok(s) if s.success() => {
                 self.state.flash_message = Some((
-                    format!("BTG session ended for {namespace}/{name}"),
+                    format!("BTG session ended for {}/{}", target.namespace, target.name),
                     Instant::now(),
                     FlashKind::Success,
                 ));
@@ -3143,57 +3284,31 @@ async fn execute_k8s_action(
     kubeconfig: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
     match action {
-        Action::ApprovePlan { namespace, name } => {
-            k8s_actions::approve_plan(client, namespace, name).await
-        }
-        Action::Reconcile {
-            kind,
-            namespace,
-            name,
-        } => match kind {
-            ResourceKind::Terraform => k8s_actions::force_reconcile(client, namespace, name).await,
+        Action::ApprovePlan { target } => k8s_actions::approve_plan(client, target).await,
+        Action::Reconcile { target } => match target.kind {
+            ResourceKind::Terraform => k8s_actions::force_reconcile(client, target).await,
             ResourceKind::Kustomization => {
-                k8s_actions::reconcile_kustomization(client, namespace, name).await
+                k8s_actions::reconcile_kustomization(client, target).await
             }
             ResourceKind::Pod => Ok(()),
         },
-        Action::Replan { namespace, name } => {
-            k8s_actions::replan(client, namespace, name, context, kubeconfig).await
-        }
-        Action::Suspend {
-            kind,
-            namespace,
-            name,
-        } => match kind {
-            ResourceKind::Terraform => k8s_actions::suspend(client, namespace, name).await,
-            ResourceKind::Kustomization => {
-                k8s_actions::suspend_kustomization(client, namespace, name).await
-            }
+        Action::Replan { target } => k8s_actions::replan(client, target, context, kubeconfig).await,
+        Action::Suspend { target } => match target.kind {
+            ResourceKind::Terraform => k8s_actions::suspend(client, target).await,
+            ResourceKind::Kustomization => k8s_actions::suspend_kustomization(client, target).await,
             ResourceKind::Pod => Ok(()),
         },
-        Action::Resume {
-            kind,
-            namespace,
-            name,
-        } => match kind {
-            ResourceKind::Terraform => k8s_actions::resume(client, namespace, name).await,
-            ResourceKind::Kustomization => {
-                k8s_actions::resume_kustomization(client, namespace, name).await
-            }
+        Action::Resume { target } => match target.kind {
+            ResourceKind::Terraform => k8s_actions::resume(client, target).await,
+            ResourceKind::Kustomization => k8s_actions::resume_kustomization(client, target).await,
             ResourceKind::Pod => Ok(()),
         },
-        Action::ForceUnlock { namespace, name } => {
-            k8s_actions::force_unlock(client, namespace, name).await
+        Action::ForceUnlock { target } => k8s_actions::force_unlock(client, target).await,
+        Action::ResetBreakTheGlass { target } => {
+            k8s_actions::reset_break_the_glass(client, target).await
         }
-        Action::ResetBreakTheGlass { namespace, name } => {
-            k8s_actions::reset_break_the_glass(client, namespace, name).await
-        }
-        Action::DeleteResource { namespace, name } => {
-            k8s_actions::delete_terraform(client, namespace, name).await
-        }
-        Action::KillRunner { namespace, name } => {
-            k8s_actions::delete_pod(client, namespace, name).await
-        }
+        Action::DeleteResource { target } => k8s_actions::delete_terraform(client, target).await,
+        Action::KillRunner { target } => k8s_actions::delete_pod(client, target).await,
         _ => Ok(()),
     }
 }
@@ -3202,72 +3317,101 @@ async fn execute_k8s_action(
 /// for marking the row as recently acted on. Returns None for actions
 /// that don't target a specific listed resource (Bulk*, sync events,
 /// fetch-results, …).
-fn action_resource_target(action: &Action) -> Option<(&str, &str)> {
+fn action_resource_target(action: &Action) -> Option<&MutationTarget> {
     match action {
-        Action::ApprovePlan { namespace, name }
-        | Action::Replan { namespace, name }
-        | Action::ForceUnlock { namespace, name }
-        | Action::ResetBreakTheGlass { namespace, name }
-        | Action::DeleteResource { namespace, name }
-        | Action::KillRunner { namespace, name } => Some((namespace, name)),
-        Action::Reconcile {
-            namespace, name, ..
-        }
-        | Action::Suspend {
-            namespace, name, ..
-        }
-        | Action::Resume {
-            namespace, name, ..
-        } => Some((namespace, name)),
+        Action::ApprovePlan { target }
+        | Action::Replan { target }
+        | Action::ForceUnlock { target }
+        | Action::ResetBreakTheGlass { target }
+        | Action::DeleteResource { target }
+        | Action::KillRunner { target }
+        | Action::Reconcile { target }
+        | Action::Suspend { target }
+        | Action::Resume { target } => Some(target),
         _ => None,
     }
 }
 
-fn action_resource_kind(action: &Action) -> Option<ResourceKind> {
-    match action {
-        Action::Reconcile { kind, .. }
-        | Action::Suspend { kind, .. }
-        | Action::Resume { kind, .. } => Some(*kind),
-        Action::KillRunner { .. } => Some(ResourceKind::Pod),
-        Action::ApprovePlan { .. }
-        | Action::Replan { .. }
-        | Action::ForceUnlock { .. }
-        | Action::ResetBreakTheGlass { .. }
-        | Action::DeleteResource { .. } => Some(ResourceKind::Terraform),
-        _ => None,
+fn mutation_target_from_metadata(
+    kind: ResourceKind,
+    namespace: &str,
+    name: &str,
+    uid: &Option<String>,
+    resource_version: &Option<String>,
+) -> Option<MutationTarget> {
+    Some(MutationTarget {
+        kind,
+        namespace: namespace.to_string(),
+        name: name.to_string(),
+        uid: uid.clone()?,
+        resource_version: resource_version.clone()?,
+    })
+}
+
+#[cfg(test)]
+mod mutation_target_tests {
+    use super::mutation_target_from_metadata;
+    use crate::action::ResourceKind;
+
+    #[test]
+    fn mutation_target_requires_uid_and_resource_version() {
+        assert!(
+            mutation_target_from_metadata(
+                ResourceKind::Terraform,
+                "ns",
+                "demo",
+                &None,
+                &Some("7".into()),
+            )
+            .is_none()
+        );
+        assert!(
+            mutation_target_from_metadata(
+                ResourceKind::Terraform,
+                "ns",
+                "demo",
+                &Some("uid".into()),
+                &None,
+            )
+            .is_none()
+        );
     }
 }
 
 fn format_success_message(action: &Action) -> String {
     match action {
-        Action::ApprovePlan { namespace, name } => {
-            format!("Approved plan for {namespace}/{name}")
+        Action::ApprovePlan { target } => {
+            format!("Approved plan for {}/{}", target.namespace, target.name)
         }
-        Action::Reconcile {
-            namespace, name, ..
-        } => {
-            format!("Triggered reconciliation for {namespace}/{name}")
+        Action::Reconcile { target } => {
+            format!(
+                "Triggered reconciliation for {}/{}",
+                target.namespace, target.name
+            )
         }
-        Action::Replan { namespace, name } => {
-            format!("Triggered replan for {namespace}/{name}")
+        Action::Replan { target } => {
+            format!("Triggered replan for {}/{}", target.namespace, target.name)
         }
-        Action::Suspend {
-            namespace, name, ..
-        } => format!("Suspended {namespace}/{name}"),
-        Action::Resume {
-            namespace, name, ..
-        } => format!("Resumed {namespace}/{name}"),
-        Action::ForceUnlock { namespace, name } => {
-            format!("Force unlocked {namespace}/{name}")
+        Action::Suspend { target } => {
+            format!("Suspended {}/{}", target.namespace, target.name)
         }
-        Action::ResetBreakTheGlass { namespace, name } => {
-            format!("Disabled persistent break-the-glass mode for {namespace}/{name}")
+        Action::Resume { target } => {
+            format!("Resumed {}/{}", target.namespace, target.name)
         }
-        Action::DeleteResource { namespace, name } => {
-            format!("Deleted {namespace}/{name}")
+        Action::ForceUnlock { target } => {
+            format!("Force unlocked {}/{}", target.namespace, target.name)
         }
-        Action::KillRunner { namespace, name } => {
-            format!("Killed runner {namespace}/{name}")
+        Action::ResetBreakTheGlass { target } => {
+            format!(
+                "Disabled persistent break-the-glass mode for {}/{}",
+                target.namespace, target.name
+            )
+        }
+        Action::DeleteResource { target } => {
+            format!("Deleted {}/{}", target.namespace, target.name)
+        }
+        Action::KillRunner { target } => {
+            format!("Killed runner {}/{}", target.namespace, target.name)
         }
         _ => "Action completed".to_string(),
     }

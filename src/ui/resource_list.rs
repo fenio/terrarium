@@ -240,7 +240,7 @@ pub(crate) fn bulk_marker_cell(
     deleting: bool,
 ) -> Cell<'static> {
     let key = (namespace.to_string(), name.to_string());
-    if state.bulk_selected.contains(&key) {
+    if state.bulk_selected.contains_key(&key) {
         Cell::from(Span::styled("●", theme::BULK_SELECTED))
     } else if state.is_recently_acted(namespace, name) {
         Cell::from(Span::styled("↻", theme::RECENTLY_ACTED))
