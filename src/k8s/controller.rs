@@ -1,12 +1,10 @@
+use crate::action::{Action, ScopedSender};
+use crate::state::store::{ControllerInfo, ControllerPodInfo};
+use crate::util;
 use anyhow::Result;
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::Pod;
 use kube::api::{Api, ListParams};
-use tokio::sync::mpsc::UnboundedSender;
-
-use crate::action::Action;
-use crate::state::store::{ControllerInfo, ControllerPodInfo};
-use crate::util;
 
 const CONTROLLER_LABEL: &str = "control-plane=tofu-controller";
 // Common deployment names to try
@@ -14,7 +12,7 @@ const DEPLOY_NAMES: &[&str] = &["tofu-controller", "tf-controller"];
 
 pub async fn poll_controller_info(
     client: kube::Client,
-    tx: UnboundedSender<Action>,
+    tx: ScopedSender,
     controller_ns: String,
 ) -> Result<()> {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));

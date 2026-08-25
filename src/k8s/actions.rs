@@ -1,13 +1,11 @@
+use crate::action::{Action, ResourceKind, ScopedSender};
+use crate::k8s::kustomization::Kustomization;
+use crate::k8s::terraform::Terraform;
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, StreamExt};
 use k8s_openapi::api::core::v1::{ConfigMap, Event, Pod};
 use kube::api::{Api, ListParams, LogParams, Patch, PatchParams};
 use serde_json::json;
-use tokio::sync::mpsc::UnboundedSender;
-
-use crate::action::{Action, ResourceKind};
-use crate::k8s::kustomization::Kustomization;
-use crate::k8s::terraform::Terraform;
 
 /// Annotation used by `tfctl break-glass` for a one-time BTG session.
 pub const BREAK_THE_GLASS_ANNOTATION: &str = "break-the-glass.tf-controller/requestedAt";
@@ -542,7 +540,8 @@ pub async fn stream_pod_logs(
     ns: &str,
     name: &str,
     container: Option<&str>,
-    tx: UnboundedSender<Action>,
+    stream_id: u64,
+    tx: ScopedSender,
 ) -> Result<()> {
     let api: Api<Pod> = Api::namespaced(client.clone(), ns);
     let mut params = LogParams {
@@ -590,7 +589,10 @@ pub async fn stream_pod_logs(
 
         if !buf.is_empty() {
             let chunk = std::mem::take(&mut buf);
-            if tx.send(Action::LogChunkReceived(chunk)).is_err() {
+            if tx
+                .send(Action::LogChunkReceived { stream_id, chunk })
+                .is_err()
+            {
                 break;
             }
         }

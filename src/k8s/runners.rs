@@ -1,20 +1,18 @@
 use std::collections::HashMap;
 
+use crate::action::{Action, ScopedSender};
 use anyhow::Result;
 use k8s_openapi::api::core::v1::Pod;
 use kube::{
     Client,
     api::{Api, ListParams, LogParams},
 };
-use tokio::sync::mpsc::UnboundedSender;
-
-use crate::action::Action;
 
 const RUNNER_LABEL: &str = "infra.contrib.fluxcd.io/terraform";
 
 pub async fn poll_runner_pods(
     client: Client,
-    tx: UnboundedSender<Action>,
+    tx: ScopedSender,
     namespace: Option<String>,
 ) -> Result<()> {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
