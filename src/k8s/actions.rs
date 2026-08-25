@@ -1,10 +1,10 @@
-use crate::action::{Action, ResourceKind, ScopedSender};
+use crate::action::{Action, MutationTarget, ResourceKind, ScopedSender};
 use crate::k8s::kustomization::Kustomization;
 use crate::k8s::terraform::Terraform;
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, StreamExt};
 use k8s_openapi::api::core::v1::{ConfigMap, Event, Pod};
-use kube::api::{Api, ListParams, LogParams, Patch, PatchParams};
+use kube::api::{Api, DeleteParams, ListParams, LogParams, Patch, PatchParams, Preconditions};
 use serde_json::json;
 
 /// Annotation used by `tfctl break-glass` for a one-time BTG session.
@@ -21,22 +21,135 @@ pub fn break_the_glass_active(terraform: &Terraform) -> bool {
             .is_some_and(|annotations| annotations.contains_key(BREAK_THE_GLASS_ANNOTATION))
 }
 
+fn terraform_api(client: &kube::Client, target: &MutationTarget) -> Result<Api<Terraform>> {
+    if target.kind != ResourceKind::Terraform {
+        return Err(anyhow!(
+            "mutation target kind mismatch: expected Terraform, got {:?}",
+            target.kind
+        ));
+    }
+    Ok(Api::namespaced(client.clone(), &target.namespace))
+}
+
+fn kustomization_api(client: &kube::Client, target: &MutationTarget) -> Result<Api<Kustomization>> {
+    if target.kind != ResourceKind::Kustomization {
+        return Err(anyhow!(
+            "mutation target kind mismatch: expected Kustomization, got {:?}",
+            target.kind
+        ));
+    }
+    Ok(Api::namespaced(client.clone(), &target.namespace))
+}
+
+fn pod_api(client: &kube::Client, target: &MutationTarget) -> Result<Api<Pod>> {
+    if target.kind != ResourceKind::Pod {
+        return Err(anyhow!(
+            "mutation target kind mismatch: expected Pod, got {:?}",
+            target.kind
+        ));
+    }
+    Ok(Api::namespaced(client.clone(), &target.namespace))
+}
+
+fn validate_metadata(
+    target: &MutationTarget,
+    metadata: &k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta,
+) -> Result<()> {
+    let current_uid = metadata
+        .uid
+        .as_deref()
+        .ok_or_else(|| anyhow!("{} has no UID; refusing mutation", target.name))?;
+    if current_uid != target.uid {
+        return Err(anyhow!(
+            "{} has been recreated (UID changed); refusing mutation",
+            target.name
+        ));
+    }
+
+    let current_resource_version = metadata
+        .resource_version
+        .as_deref()
+        .ok_or_else(|| anyhow!("{} has no resourceVersion; refusing mutation", target.name))?;
+    if current_resource_version != target.resource_version {
+        return Err(anyhow!(
+            "{} changed since it was selected; refusing mutation",
+            target.name
+        ));
+    }
+    Ok(())
+}
+
+async fn validated_terraform(api: &Api<Terraform>, target: &MutationTarget) -> Result<Terraform> {
+    let terraform = api.get(&target.name).await?;
+    validate_metadata(target, &terraform.metadata)?;
+    Ok(terraform)
+}
+
+async fn validated_kustomization(
+    api: &Api<Kustomization>,
+    target: &MutationTarget,
+) -> Result<Kustomization> {
+    let kustomization = api.get(&target.name).await?;
+    validate_metadata(target, &kustomization.metadata)?;
+    Ok(kustomization)
+}
+
+/// Revalidate a Terraform target immediately before an external mutation such
+/// as `tfctl break-glass` runs. The UID check prevents a same-name replacement
+/// from receiving the action; the resourceVersion check rejects any object
+/// that changed while the action was waiting for confirmation.
+pub async fn validate_terraform_target(
+    client: &kube::Client,
+    target: &MutationTarget,
+) -> Result<()> {
+    let api = terraform_api(client, target)?;
+    validated_terraform(&api, target).await.map(|_| ())
+}
+
+fn patch_with_resource_version(
+    target: &MutationTarget,
+    mut patch: serde_json::Value,
+) -> Result<serde_json::Value> {
+    let object = patch
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("mutation patch must be a JSON object"))?;
+    let metadata = object
+        .entry("metadata")
+        .or_insert_with(|| serde_json::json!({}));
+    let metadata = metadata
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("mutation patch metadata must be a JSON object"))?;
+    metadata.insert(
+        "resourceVersion".to_string(),
+        serde_json::Value::String(target.resource_version.clone()),
+    );
+    Ok(patch)
+}
+
+fn delete_params(target: &MutationTarget) -> DeleteParams {
+    DeleteParams::default().preconditions(Preconditions {
+        uid: Some(target.uid.clone()),
+        resource_version: Some(target.resource_version.clone()),
+    })
+}
+
 // -- Terraform actions --
 
-pub async fn approve_plan(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
-    let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
-    let tf = api.get(name).await?;
+pub async fn approve_plan(client: &kube::Client, target: &MutationTarget) -> Result<()> {
+    let api: Api<Terraform> = terraform_api(client, target)?;
+    let tf = validated_terraform(&api, target).await?;
 
     let plan_name = tf
         .status
         .as_ref()
         .and_then(|s| s.plan.as_ref())
         .and_then(|p| p.pending.as_ref())
-        .ok_or_else(|| anyhow!("No pending plan for {ns}/{name}"))?;
+        .ok_or_else(|| anyhow!("No pending plan for {}/{}", target.namespace, target.name))?;
 
-    let patch = json!({ "spec": { "approvePlan": plan_name } });
+    let patch =
+        patch_with_resource_version(target, json!({ "spec": { "approvePlan": plan_name } }))?;
     api.patch(
-        name,
+        &target.name,
         &PatchParams::apply("terrarium"),
         &Patch::Merge(&patch),
     )
@@ -44,17 +157,21 @@ pub async fn approve_plan(client: &kube::Client, ns: &str, name: &str) -> Result
     Ok(())
 }
 
-pub async fn force_reconcile(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
-    let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
-    let patch = json!({
+pub async fn force_reconcile(client: &kube::Client, target: &MutationTarget) -> Result<()> {
+    let api: Api<Terraform> = terraform_api(client, target)?;
+    validated_terraform(&api, target).await?;
+    let patch = patch_with_resource_version(
+        target,
+        json!({
         "metadata": {
             "annotations": {
                 "reconcile.fluxcd.io/requestedAt": jiff::Timestamp::now().to_string()
             }
         }
-    });
+        }),
+    )?;
     api.patch(
-        name,
+        &target.name,
         &PatchParams::apply("terrarium"),
         &Patch::Merge(&patch),
     )
@@ -63,12 +180,13 @@ pub async fn force_reconcile(client: &kube::Client, ns: &str, name: &str) -> Res
 }
 
 pub async fn replan(
-    _client: &kube::Client,
-    ns: &str,
-    name: &str,
+    client: &kube::Client,
+    target: &MutationTarget,
     context: Option<&str>,
     kubeconfig: Option<&std::path::Path>,
 ) -> Result<()> {
+    let api: Api<Terraform> = terraform_api(client, target)?;
+    validated_terraform(&api, target).await?;
     // Delegate to tfctl rather than reimplementing the K8s patch logic —
     // both prior attempts (annotation, spec.approvePlan) failed to trigger
     // a replan because the controller's actual mechanism is more involved
@@ -90,7 +208,11 @@ pub async fn replan(
     if let Some(ctx) = context.filter(|c| !c.is_empty() && *c != "connecting...") {
         cmd.args(["--context", ctx]);
     }
-    cmd.args(["-n", ns, "replan", name]);
+    cmd.args(["-n", &target.namespace, "replan", &target.name]);
+    // Minimize the validation-to-execution window for the external command.
+    // tfctl accepts only namespace/name, so unlike the direct API patches it
+    // cannot carry Kubernetes preconditions itself.
+    validated_terraform(&api, target).await?;
     let output = cmd
         .output()
         .await
@@ -110,11 +232,12 @@ pub async fn replan(
     Ok(())
 }
 
-pub async fn suspend(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
-    let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
-    let patch = json!({ "spec": { "suspend": true } });
+pub async fn suspend(client: &kube::Client, target: &MutationTarget) -> Result<()> {
+    let api: Api<Terraform> = terraform_api(client, target)?;
+    validated_terraform(&api, target).await?;
+    let patch = patch_with_resource_version(target, json!({ "spec": { "suspend": true } }))?;
     api.patch(
-        name,
+        &target.name,
         &PatchParams::apply("terrarium"),
         &Patch::Merge(&patch),
     )
@@ -122,11 +245,12 @@ pub async fn suspend(client: &kube::Client, ns: &str, name: &str) -> Result<()> 
     Ok(())
 }
 
-pub async fn resume(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
-    let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
-    let patch = json!({ "spec": { "suspend": false } });
+pub async fn resume(client: &kube::Client, target: &MutationTarget) -> Result<()> {
+    let api: Api<Terraform> = terraform_api(client, target)?;
+    validated_terraform(&api, target).await?;
+    let patch = patch_with_resource_version(target, json!({ "spec": { "suspend": false } }))?;
     api.patch(
-        name,
+        &target.name,
         &PatchParams::apply("terrarium"),
         &Patch::Merge(&patch),
     )
@@ -134,11 +258,15 @@ pub async fn resume(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn force_unlock(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
-    let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
-    let patch = json!({ "spec": { "tfstate": { "forceUnlock": "auto" } } });
+pub async fn force_unlock(client: &kube::Client, target: &MutationTarget) -> Result<()> {
+    let api: Api<Terraform> = terraform_api(client, target)?;
+    validated_terraform(&api, target).await?;
+    let patch = patch_with_resource_version(
+        target,
+        json!({ "spec": { "tfstate": { "forceUnlock": "auto" } } }),
+    )?;
     api.patch(
-        name,
+        &target.name,
         &PatchParams::apply("terrarium"),
         &Patch::Merge(&patch),
     )
@@ -153,11 +281,12 @@ pub async fn force_unlock(client: &kube::Client, ns: &str, name: &str) -> Result
 /// removed by tfctl's deferred cleanup, but can remain after an interrupted
 /// or stuck process. It is intentionally a merge patch so it changes only
 /// these BTG markers and leaves the rest of the object untouched.
-pub async fn reset_break_the_glass(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
-    let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
-    let patch = reset_break_the_glass_patch();
+pub async fn reset_break_the_glass(client: &kube::Client, target: &MutationTarget) -> Result<()> {
+    let api: Api<Terraform> = terraform_api(client, target)?;
+    validated_terraform(&api, target).await?;
+    let patch = patch_with_resource_version(target, reset_break_the_glass_patch())?;
     api.patch(
-        name,
+        &target.name,
         &PatchParams::apply("terrarium"),
         &Patch::Merge(&patch),
     )
@@ -240,15 +369,18 @@ pub async fn fetch_secret_values(
     Ok(values)
 }
 
-pub async fn delete_terraform(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
-    let api: Api<Terraform> = Api::namespaced(client.clone(), ns);
-    api.delete(name, &Default::default()).await?;
+pub async fn delete_terraform(client: &kube::Client, target: &MutationTarget) -> Result<()> {
+    let api = terraform_api(client, target)?;
+    validated_terraform(&api, target).await?;
+    api.delete(&target.name, &delete_params(target)).await?;
     Ok(())
 }
 
-pub async fn delete_pod(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
-    let api: Api<k8s_openapi::api::core::v1::Pod> = Api::namespaced(client.clone(), ns);
-    api.delete(name, &Default::default()).await?;
+pub async fn delete_pod(client: &kube::Client, target: &MutationTarget) -> Result<()> {
+    let api = pod_api(client, target)?;
+    let pod = api.get(&target.name).await?;
+    validate_metadata(target, &pod.metadata)?;
+    api.delete(&target.name, &delete_params(target)).await?;
     Ok(())
 }
 
@@ -325,17 +457,21 @@ pub fn get_container_names(pod: &Pod) -> Vec<String> {
 
 // -- Kustomization actions --
 
-pub async fn reconcile_kustomization(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
-    let api: Api<Kustomization> = Api::namespaced(client.clone(), ns);
-    let patch = json!({
+pub async fn reconcile_kustomization(client: &kube::Client, target: &MutationTarget) -> Result<()> {
+    let api = kustomization_api(client, target)?;
+    validated_kustomization(&api, target).await?;
+    let patch = patch_with_resource_version(
+        target,
+        json!({
         "metadata": {
             "annotations": {
                 "reconcile.fluxcd.io/requestedAt": jiff::Timestamp::now().to_string()
             }
         }
-    });
+        }),
+    )?;
     api.patch(
-        name,
+        &target.name,
         &PatchParams::apply("terrarium"),
         &Patch::Merge(&patch),
     )
@@ -343,11 +479,12 @@ pub async fn reconcile_kustomization(client: &kube::Client, ns: &str, name: &str
     Ok(())
 }
 
-pub async fn suspend_kustomization(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
-    let api: Api<Kustomization> = Api::namespaced(client.clone(), ns);
-    let patch = json!({ "spec": { "suspend": true } });
+pub async fn suspend_kustomization(client: &kube::Client, target: &MutationTarget) -> Result<()> {
+    let api = kustomization_api(client, target)?;
+    validated_kustomization(&api, target).await?;
+    let patch = patch_with_resource_version(target, json!({ "spec": { "suspend": true } }))?;
     api.patch(
-        name,
+        &target.name,
         &PatchParams::apply("terrarium"),
         &Patch::Merge(&patch),
     )
@@ -355,11 +492,12 @@ pub async fn suspend_kustomization(client: &kube::Client, ns: &str, name: &str) 
     Ok(())
 }
 
-pub async fn resume_kustomization(client: &kube::Client, ns: &str, name: &str) -> Result<()> {
-    let api: Api<Kustomization> = Api::namespaced(client.clone(), ns);
-    let patch = json!({ "spec": { "suspend": false } });
+pub async fn resume_kustomization(client: &kube::Client, target: &MutationTarget) -> Result<()> {
+    let api = kustomization_api(client, target)?;
+    validated_kustomization(&api, target).await?;
+    let patch = patch_with_resource_version(target, json!({ "spec": { "suspend": false } }))?;
     api.patch(
-        name,
+        &target.name,
         &PatchParams::apply("terrarium"),
         &Patch::Merge(&patch),
     )
@@ -622,8 +760,73 @@ fn safe_label_value(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{BREAK_THE_GLASS_ANNOTATION, break_the_glass_active, reset_break_the_glass_patch};
+    use super::{
+        BREAK_THE_GLASS_ANNOTATION, break_the_glass_active, delete_params,
+        patch_with_resource_version, reset_break_the_glass_patch, validate_metadata,
+    };
+    use crate::action::{MutationTarget, ResourceKind};
     use crate::k8s::terraform::Terraform;
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+
+    fn target() -> MutationTarget {
+        MutationTarget {
+            kind: ResourceKind::Terraform,
+            namespace: "ns".into(),
+            name: "demo".into(),
+            uid: "uid-old".into(),
+            resource_version: "17".into(),
+        }
+    }
+
+    fn metadata(uid: &str, resource_version: &str) -> ObjectMeta {
+        ObjectMeta {
+            uid: Some(uid.into()),
+            resource_version: Some(resource_version.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn mutation_metadata_accepts_the_selected_object() {
+        assert!(validate_metadata(&target(), &metadata("uid-old", "17")).is_ok());
+    }
+
+    #[test]
+    fn mutation_metadata_rejects_a_recreated_object() {
+        let error = validate_metadata(&target(), &metadata("uid-new", "17"))
+            .expect_err("a recreated object must not be mutated");
+        assert!(error.to_string().contains("recreated"));
+    }
+
+    #[test]
+    fn mutation_metadata_rejects_a_changed_object() {
+        let error = validate_metadata(&target(), &metadata("uid-old", "18"))
+            .expect_err("a changed object must not be mutated");
+        assert!(error.to_string().contains("changed"));
+    }
+
+    #[test]
+    fn mutation_patch_carries_resource_version() {
+        let patch = patch_with_resource_version(
+            &target(),
+            serde_json::json!({
+                "spec": {"suspend": true}
+            }),
+        )
+        .expect("object patch should be accepted");
+        assert_eq!(patch["metadata"]["resourceVersion"], "17");
+        assert_eq!(patch["spec"]["suspend"], true);
+    }
+
+    #[test]
+    fn delete_params_carry_uid_and_resource_version_preconditions() {
+        let params =
+            serde_json::to_value(delete_params(&target())).expect("delete params serialize");
+        assert_eq!(
+            params["preconditions"],
+            serde_json::json!({"uid": "uid-old", "resourceVersion": "17"})
+        );
+    }
 
     #[test]
     fn break_glass_reset_patch_disables_the_spec_flag() {

@@ -299,8 +299,10 @@ pub struct AppState {
     pub runner_sort_column: RunnerSortColumn,
     pub sort_descending: bool,
 
-    /// Set of (namespace, name) for bulk-selected resources
-    pub bulk_selected: std::collections::HashSet<(String, String)>,
+    /// Bulk-selected resources keyed by namespace/name, retaining the object
+    /// identity captured when each row was selected. A resource whose
+    /// identity changes is replaced on the next selection of that row.
+    pub bulk_selected: HashMap<(String, String), crate::action::MutationTarget>,
 
     /// Rows the user has recently acted on (Reconcile / Suspend / Resume /
     /// Approve / Replan / etc.). Each entry holds the time of dispatch and
@@ -561,7 +563,7 @@ impl AppState {
             sort_column: SortColumn::Name,
             runner_sort_column: RunnerSortColumn::Namespace,
             sort_descending: false,
-            bulk_selected: std::collections::HashSet::new(),
+            bulk_selected: HashMap::new(),
             recently_acted: HashMap::new(),
             tf_synced: false,
             ks_synced: false,
@@ -1349,7 +1351,16 @@ mod tests {
     #[test]
     fn switching_tabs_clears_bulk_selection() {
         let mut state = make_state();
-        state.bulk_selected.insert(("ns".into(), "name".into()));
+        state.bulk_selected.insert(
+            ("ns".into(), "name".into()),
+            crate::action::MutationTarget {
+                kind: crate::action::ResourceKind::Terraform,
+                namespace: "ns".into(),
+                name: "name".into(),
+                uid: "uid".into(),
+                resource_version: "1".into(),
+            },
+        );
         assert_eq!(state.bulk_selected.len(), 1);
 
         // Switching to a different tab clears the selection — carrying
@@ -1363,7 +1374,16 @@ mod tests {
 
         // No-op "switch" to the same tab must NOT clear (helps keep
         // accidental re-selections from costing the user their work).
-        state.bulk_selected.insert(("ns".into(), "name".into()));
+        state.bulk_selected.insert(
+            ("ns".into(), "name".into()),
+            crate::action::MutationTarget {
+                kind: crate::action::ResourceKind::Terraform,
+                namespace: "ns".into(),
+                name: "name".into(),
+                uid: "uid".into(),
+                resource_version: "1".into(),
+            },
+        );
         let cur = state.active_tab.clone();
         let idx = cur.index(state.tab_count());
         state.go_to_tab(idx);
@@ -1371,6 +1391,25 @@ mod tests {
             state.bulk_selected.len(),
             1,
             "same-tab go_to_tab must not clear selection"
+        );
+    }
+
+    #[test]
+    fn bulk_selection_retains_resource_identity() {
+        let mut state = make_state();
+        let target = crate::action::MutationTarget {
+            kind: crate::action::ResourceKind::Terraform,
+            namespace: "ns".into(),
+            name: "name".into(),
+            uid: "uid".into(),
+            resource_version: "7".into(),
+        };
+        state
+            .bulk_selected
+            .insert(("ns".into(), "name".into()), target.clone());
+        assert_eq!(
+            state.bulk_selected.get(&("ns".into(), "name".into())),
+            Some(&target)
         );
     }
 

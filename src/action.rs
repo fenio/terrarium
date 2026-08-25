@@ -17,6 +17,18 @@ pub enum ResourceKind {
     Pod,
 }
 
+/// Identity captured when an operator selects a resource for mutation. Names
+/// are reusable in Kubernetes, so namespace/name alone is not sufficient to
+/// prove that a later action still targets the object the operator saw.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MutationTarget {
+    pub kind: ResourceKind,
+    pub namespace: String,
+    pub name: String,
+    pub uid: String,
+    pub resource_version: String,
+}
+
 /// Logical lanes for asynchronous work. A newer request in the same lane and
 /// target supersedes the older one; connection-scoped lanes use request ID 0
 /// and are invalidated when the connection generation changes.
@@ -215,34 +227,27 @@ pub enum Action {
 
     // K8s mutations (Terraform-specific)
     ApprovePlan {
-        namespace: String,
-        name: String,
+        target: MutationTarget,
     },
     Replan {
-        namespace: String,
-        name: String,
+        target: MutationTarget,
     },
     ForceUnlock {
-        namespace: String,
-        name: String,
+        target: MutationTarget,
     },
     ExecBreakTheGlass {
-        namespace: String,
-        name: String,
+        target: MutationTarget,
     },
     /// Clear `spec.breakTheGlass` after a persistent break-the-glass mode
     /// was left behind by a stuck or interrupted session.
     ResetBreakTheGlass {
-        namespace: String,
-        name: String,
+        target: MutationTarget,
     },
     DeleteResource {
-        namespace: String,
-        name: String,
+        target: MutationTarget,
     },
     KillRunner {
-        namespace: String,
-        name: String,
+        target: MutationTarget,
     },
     StreamRunnerLogs {
         namespace: String,
@@ -269,19 +274,13 @@ pub enum Action {
 
     // K8s mutations (shared TF + KS)
     Reconcile {
-        kind: ResourceKind,
-        namespace: String,
-        name: String,
+        target: MutationTarget,
     },
     Suspend {
-        kind: ResourceKind,
-        namespace: String,
-        name: String,
+        target: MutationTarget,
     },
     Resume {
-        kind: ResourceKind,
-        namespace: String,
-        name: String,
+        target: MutationTarget,
     },
 
     // JSON / YAML resource view
@@ -389,8 +388,14 @@ pub enum Action {
     BackgroundError(Option<String>),
 
     // Async K8s action results
-    K8sActionSuccess(String),
-    K8sActionError(String),
+    K8sActionSuccess {
+        target: MutationTarget,
+        message: String,
+    },
+    K8sActionError {
+        target: MutationTarget,
+        message: String,
+    },
     PlanFetched(String),
     PlanFetchError(String),
 
