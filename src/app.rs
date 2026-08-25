@@ -420,8 +420,9 @@ impl App {
     fn handle_mouse_event(&self, mouse: crossterm::event::MouseEvent) -> Option<Action> {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Tab bar's middle row is row 4 (0-indexed).
-                if mouse.row == 4
+                // Tab bar's middle row is row 5 (0-indexed): the version
+                // line now occupies row 3.
+                if mouse.row == 5
                     && let Some((tab_idx, _)) = self
                         .state
                         .tab_hit_ranges

@@ -19,7 +19,7 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // Header: 3 logo/info + 3-row tab strip
+            Constraint::Length(7), // Header: 3 logo/info + version + 3-row tab strip
             Constraint::Min(5),    // Body
             Constraint::Length(2), // Status bar (two rows)
         ])
@@ -186,8 +186,8 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
     let info_label = theme::HEADER_CONTEXT_LABEL;
 
     // The gecko occupies the unused right side of the logo/info header on
-    // wide terminals. Keep it out of the info area so long context names and
-    // the version never get painted underneath it.
+    // wide terminals. Keep it out of the info area so long context names do
+    // not get painted underneath it.
     const GECKO_WIDTH: u16 = 31;
     const GECKO_MIN_HEADER_WIDTH: u16 = 100;
     let gecko_x = if area.width >= GECKO_MIN_HEADER_WIDTH {
@@ -224,30 +224,25 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
             Paragraph::new(Span::styled(format!(" {logo_line}"), logo_style)),
             logo_area,
         );
-
-        // Show version next to the last logo line
-        if i == logo_lines.len() - 1 {
-            let version = env!("CARGO_PKG_VERSION");
-            let ver_x = area.x + logo_width;
-            let ver_width = info_right.saturating_sub(ver_x);
-            if ver_width > 6 {
-                let ver_area = Rect {
-                    x: ver_x,
-                    width: ver_width,
-                    ..row_area
-                };
-                f.render_widget(
-                    Paragraph::new(Span::styled(
-                        format!(" v{version}"),
-                        Style::default()
-                            .fg(Color::Rgb(80, 90, 120))
-                            .bg(theme::HEADER_BAR_BG),
-                    )),
-                    ver_area,
-                );
-            }
-        }
     }
+
+    // Put the version in the open line beneath the wordmark rather than
+    // competing with the context information on the right.
+    let version_area = Rect {
+        x: area.x,
+        y: area.y + logo_lines.len() as u16,
+        width: logo_width.min(area.width),
+        height: 1,
+    };
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            format!(" v{}", env!("CARGO_PKG_VERSION")),
+            Style::default()
+                .fg(Color::Rgb(80, 90, 120))
+                .bg(theme::HEADER_BAR_BG),
+        )),
+        version_area,
+    );
 
     // Info to the right of the logo
     let info_x = area.x + logo_width + 1;
@@ -330,7 +325,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         );
     }
 
-    // -- Rows 3-5: Browser-tab-style navigation --
+    // -- Rows 4-6: Browser-tab-style navigation --
     // (number, label, count_or_none, failures, crd_missing)
     type NavItem = (usize, String, Option<usize>, Option<usize>, bool);
     let tf_count_opt = if state.tf_synced {
@@ -467,7 +462,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
             .tab_hit_ranges
             .push((tab_x, tab_x.saturating_add(tab_width)));
 
-        // Row 3: ╭───╮  Row 4: │ inner │  Row 5: ╰───╯
+        // Row 4: ╭───╮  Row 5: │ inner │  Row 6: ╰───╯
         top_spans.push(Span::styled("╭", border_style));
         top_spans.push(Span::styled("─".repeat(inner_width), border_style));
         top_spans.push(Span::styled("╮", border_style));
@@ -492,21 +487,21 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
     }
 
     // The fourth gecko line shares the otherwise-unused right side of the
-    // first tab-strip row, so the existing six-row layout stays unchanged.
+    // first tab-strip row, so the artwork stays out of the version line.
     let r3_area = Rect {
-        y: area.y + 3,
+        y: area.y + 4,
         height: 1,
         ..area
     };
     f.render_widget(Paragraph::new(Line::from(top_spans)), r3_area);
     let r4_area = Rect {
-        y: area.y + 4,
+        y: area.y + 5,
         height: 1,
         ..area
     };
     f.render_widget(Paragraph::new(Line::from(body_spans)), r4_area);
     let r5_area = Rect {
-        y: area.y + 5,
+        y: area.y + 6,
         height: 1,
         ..area
     };
