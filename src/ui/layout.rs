@@ -833,6 +833,7 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
             ref containers,
             active_container,
             ref content,
+            ..
         } => {
             let vp = ViewerParams {
                 scroll: state.plan_scroll,

@@ -2,6 +2,11 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use crate::action::{Action, ScopedSender};
+use crate::k8s::kustomization::Kustomization;
+use crate::k8s::source::GitRepository;
+use crate::k8s::terraform::Terraform;
+use crate::util;
 use anyhow::Result;
 use futures::StreamExt;
 use kube::{
@@ -12,13 +17,6 @@ use kube::{
         watcher,
     },
 };
-use tokio::sync::mpsc::UnboundedSender;
-
-use crate::action::Action;
-use crate::k8s::kustomization::Kustomization;
-use crate::k8s::source::GitRepository;
-use crate::k8s::terraform::Terraform;
-use crate::util;
 
 pub type TfStore = reflector::Store<Terraform>;
 pub type KsStore = reflector::Store<Kustomization>;
@@ -39,7 +37,7 @@ pub fn create_gitrepo_store() -> (GitRepoStore, Writer<GitRepository>) {
 pub async fn run_tf_watcher(
     client: kube::Client,
     writer: Writer<Terraform>,
-    tx: UnboundedSender<Action>,
+    tx: ScopedSender,
     debug_log: Option<PathBuf>,
 ) -> Result<()> {
     let api: Api<Terraform> = Api::all(client);
@@ -147,7 +145,7 @@ fn log_tf_condition_snapshot(writer: &Mutex<std::fs::File>, tf: &Terraform) {
 pub async fn run_ks_watcher(
     client: kube::Client,
     writer: Writer<Kustomization>,
-    tx: UnboundedSender<Action>,
+    tx: ScopedSender,
 ) -> Result<()> {
     let api: Api<Kustomization> = Api::all(client);
     let mut stream = watcher(api, watcher::Config::default())
@@ -181,7 +179,7 @@ pub async fn run_ks_watcher(
 pub async fn run_gitrepo_watcher(
     client: kube::Client,
     writer: Writer<GitRepository>,
-    tx: UnboundedSender<Action>,
+    tx: ScopedSender,
 ) -> Result<()> {
     let api: Api<GitRepository> = Api::all(client);
     let mut stream = watcher(api, watcher::Config::default())

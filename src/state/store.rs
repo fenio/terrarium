@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, HashMap};
 use k8s_openapi::api::core::v1::Pod;
 use ratatui::widgets::TableState;
 
-use crate::action::Action;
+use crate::action::{Action, AsyncIdentity, AsyncKind, AsyncScope, AsyncTarget, ResourceKind};
 use crate::config::Config;
 use crate::k8s::metrics::{MetricsSnapshot, PrevCounters};
 use crate::k8s::watcher::{GitRepoStore, KsStore, TfStore};
@@ -82,6 +82,7 @@ pub enum ViewState {
     LogViewer {
         namespace: String,
         pod_name: String,
+        stream_id: u64,
         containers: Vec<String>,
         active_container: usize,
         content: String,
@@ -406,6 +407,22 @@ pub struct AppState {
     pub metrics_last_error: Option<String>,
     /// Background task that fetches metrics on a timer; aborted on disable.
     pub metrics_task: Option<tokio::task::JoinHandle<()>>,
+
+    /// Monotonically increasing connection generation. Every asynchronous
+    /// result carries the generation that created it, so reconnects can never
+    /// apply work from the previous cluster.
+    pub connection_generation: u64,
+    /// Monotonically increasing ID for asynchronous requests.
+    next_async_id: u64,
+    /// Revision of the current UI view/target. View-scoped requests are valid
+    /// only while this revision remains current.
+    pub view_revision: u64,
+    /// Requests that may still deliver a result. Stream and metrics requests
+    /// stay registered until explicitly cancelled; one-shot requests are
+    /// removed when their result is dispatched.
+    pending_async: HashMap<u64, AsyncScope>,
+    /// Identity of the currently running log stream, if any.
+    pub active_log_stream_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -584,7 +601,195 @@ impl AppState {
             metrics_prev: PrevCounters::default(),
             metrics_last_error: None,
             metrics_task: None,
+            connection_generation: 0,
+            next_async_id: 0,
+            view_revision: 0,
+            pending_async: HashMap::new(),
+            active_log_stream_id: None,
         }
+    }
+
+    /// Register asynchronous work and return the scope that must wrap every
+    /// action it emits. The scope snapshot is deliberately immutable once the
+    /// task starts.
+    pub fn begin_async(
+        &mut self,
+        kind: AsyncKind,
+        target: Option<AsyncTarget>,
+        identity: AsyncIdentity,
+    ) -> AsyncScope {
+        // A newer request for the same operation and target supersedes the
+        // older one. Different targets remain independent, which matters for
+        // bulk mutations and preserved tab stacks.
+        self.pending_async
+            .retain(|_, existing| existing.kind != kind || existing.target != target);
+        self.next_async_id = self.next_async_id.wrapping_add(1);
+        if self.next_async_id == 0 {
+            self.next_async_id = 1;
+        }
+        let scope = AsyncScope::request(
+            self.connection_generation,
+            self.next_async_id,
+            kind,
+            target,
+            identity,
+        );
+        self.pending_async.insert(scope.request_id, scope.clone());
+        scope
+    }
+
+    /// Check an asynchronous result before it can mutate UI state.
+    pub fn is_async_scope_current(&self, scope: &AsyncScope) -> bool {
+        if scope.generation != self.connection_generation {
+            return false;
+        }
+        if scope.request_id == 0 {
+            return true;
+        }
+        if self.pending_async.get(&scope.request_id) != Some(scope) {
+            return false;
+        }
+        match scope.identity {
+            // Mutation and metrics results are status updates rather than
+            // content for the current view. Their connection/request scope
+            // is sufficient; cursor navigation must not hide a completed
+            // action message.
+            AsyncIdentity::None => true,
+            AsyncIdentity::View(revision) => {
+                revision == self.view_revision && self.target_matches_current_view(scope)
+            }
+            AsyncIdentity::Stream(stream_id) => {
+                self.active_log_stream_id == Some(stream_id) && self.has_log_viewer(stream_id)
+            }
+        }
+    }
+
+    fn target_matches_current_view(&self, scope: &AsyncScope) -> bool {
+        let Some(target) = &scope.target else {
+            return true;
+        };
+
+        match (self.current_view(), target) {
+            (
+                ViewState::TerraformDetail { namespace, name },
+                AsyncTarget::Resource {
+                    kind: ResourceKind::Terraform,
+                    namespace: target_namespace,
+                    name: target_name,
+                },
+            ) => namespace == target_namespace && name == target_name,
+            (
+                ViewState::KustomizationDetail { namespace, name },
+                AsyncTarget::Resource {
+                    kind: ResourceKind::Kustomization,
+                    namespace: target_namespace,
+                    name: target_name,
+                },
+            ) => namespace == target_namespace && name == target_name,
+            (
+                ViewState::LogViewer {
+                    namespace,
+                    pod_name,
+                    ..
+                },
+                AsyncTarget::Pod {
+                    namespace: target_namespace,
+                    name: target_name,
+                },
+            ) => namespace == target_namespace && pod_name == target_name,
+            (ViewState::List(tab), AsyncTarget::Resource { kind, .. }) => {
+                matches!(
+                    (tab, kind),
+                    (
+                        TabKind::Terraform | TabKind::CustomTab(_),
+                        ResourceKind::Terraform
+                    ) | (TabKind::Kustomizations, ResourceKind::Kustomization)
+                        | (TabKind::Runners, ResourceKind::Pod)
+                )
+            }
+            (ViewState::List(TabKind::Runners), AsyncTarget::Pod { .. }) => true,
+            // A result must never be pushed into an unrelated viewer or
+            // detail view. The exact detail cases above and list cases are
+            // the only owners of resource-scoped fetches.
+            _ => false,
+        }
+    }
+
+    /// Retire a one-shot request after its terminal result has been handled.
+    pub fn finish_async(&mut self, scope: &AsyncScope) {
+        if scope.request_id != 0 && !matches!(scope.kind, AsyncKind::LogStream | AsyncKind::Metrics)
+        {
+            self.pending_async.remove(&scope.request_id);
+        }
+    }
+
+    /// Invalidate all requests in a lane, used when a poller or stream is
+    /// disabled/replaced before its task has necessarily stopped emitting.
+    pub fn invalidate_async_kind(&mut self, kind: AsyncKind) {
+        self.pending_async.retain(|_, scope| scope.kind != kind);
+    }
+
+    /// Advance the current view identity and invalidate requests owned by the
+    /// old view. This is called for navigation, selection, and filter changes.
+    pub fn bump_view_revision(&mut self) {
+        self.view_revision = self.view_revision.wrapping_add(1);
+        if self.view_revision == 0 {
+            self.view_revision = 1;
+        }
+        self.pending_async
+            .retain(|_, scope| !matches!(scope.identity, AsyncIdentity::View(_)));
+    }
+
+    pub fn begin_log_stream(&mut self, target: Option<AsyncTarget>) -> AsyncScope {
+        self.invalidate_async_kind(AsyncKind::LogStream);
+        self.next_async_id = self.next_async_id.wrapping_add(1);
+        if self.next_async_id == 0 {
+            self.next_async_id = 1;
+        }
+        let stream_id = self.next_async_id;
+        let scope = AsyncScope::request(
+            self.connection_generation,
+            stream_id,
+            AsyncKind::LogStream,
+            target,
+            AsyncIdentity::Stream(stream_id),
+        );
+        self.pending_async.insert(stream_id, scope.clone());
+        self.active_log_stream_id = Some(stream_id);
+        scope
+    }
+
+    pub fn cancel_log_stream(&mut self) {
+        self.invalidate_async_kind(AsyncKind::LogStream);
+        self.active_log_stream_id = None;
+    }
+
+    fn advance_connection_generation(&mut self) {
+        self.connection_generation = self.connection_generation.wrapping_add(1);
+        if self.connection_generation == 0 {
+            self.connection_generation = 1;
+        }
+        self.pending_async.clear();
+        self.active_log_stream_id = None;
+    }
+
+    /// Invalidate all work from the current connection without resetting the
+    /// cluster data. Used when authentication fails and the user must opt in
+    /// to a new connection.
+    pub fn invalidate_connection(&mut self) {
+        self.advance_connection_generation();
+    }
+
+    pub fn has_log_viewer(&self, stream_id: u64) -> bool {
+        self.view_stacks.iter().any(|stack| {
+            matches!(
+                stack.last(),
+                Some(ViewState::LogViewer {
+                    stream_id: current,
+                    ..
+                }) if *current == stream_id
+            )
+        })
     }
 
     /// True when the shortcut at `idx` applies to the given resource
@@ -687,9 +892,15 @@ impl AppState {
     /// Find the (only) tab stack that has a LogViewer at its top, if any.
     /// Used to route log chunks to a viewer that may not be on the active
     /// tab when the user has jumped away.
-    pub fn log_viewer_mut(&mut self) -> Option<&mut ViewState> {
+    pub fn log_viewer_mut_for(&mut self, stream_id: u64) -> Option<&mut ViewState> {
         for stack in &mut self.view_stacks {
-            if matches!(stack.last(), Some(ViewState::LogViewer { .. })) {
+            if matches!(
+                stack.last(),
+                Some(ViewState::LogViewer {
+                    stream_id: current,
+                    ..
+                }) if *current == stream_id
+            ) {
                 return stack.last_mut();
             }
         }
@@ -727,6 +938,7 @@ impl AppState {
     fn switch_tab_to(&mut self, tab: TabKind) {
         if self.active_tab != tab {
             self.bulk_selected.clear();
+            self.bump_view_revision();
         }
         self.active_tab = tab;
     }
@@ -833,6 +1045,8 @@ impl AppState {
         ks_store: KsStore,
         gr_store: GitRepoStore,
     ) {
+        self.advance_connection_generation();
+
         // Tear down per-cluster background work tied to the old client.
         if let Some(h) = self.log_stream_handle.take() {
             h.abort();
@@ -1215,6 +1429,7 @@ mod tests {
         state.view_stacks[runners_idx].push(ViewState::LogViewer {
             namespace: "ns".into(),
             pod_name: "pod".into(),
+            stream_id: 1,
             containers: vec!["c".into()],
             active_container: 0,
             content: String::new(),
@@ -1227,9 +1442,101 @@ mod tests {
         ));
         // …but the streamed-into LogViewer is still findable for chunk routing.
         assert!(matches!(
-            state.log_viewer_mut(),
+            state.log_viewer_mut_for(1),
             Some(ViewState::LogViewer { .. })
         ));
+    }
+
+    #[test]
+    fn async_scope_rejects_old_connection_generation() {
+        let mut state = make_state();
+        state.active_tab = TabKind::Terraform;
+        let scope = state.begin_async(
+            AsyncKind::Plan,
+            Some(AsyncTarget::Resource {
+                kind: ResourceKind::Terraform,
+                namespace: "ns".into(),
+                name: "tf".into(),
+            }),
+            AsyncIdentity::View(state.view_revision),
+        );
+        assert!(state.is_async_scope_current(&scope));
+        state.invalidate_connection();
+        assert!(!state.is_async_scope_current(&scope));
+    }
+
+    #[test]
+    fn async_scope_supersedes_same_target_but_not_other_target() {
+        let mut state = make_state();
+        state.active_tab = TabKind::Terraform;
+        let target_a = AsyncTarget::Resource {
+            kind: ResourceKind::Terraform,
+            namespace: "ns".into(),
+            name: "a".into(),
+        };
+        let target_b = AsyncTarget::Resource {
+            kind: ResourceKind::Terraform,
+            namespace: "ns".into(),
+            name: "b".into(),
+        };
+        let first = state.begin_async(
+            AsyncKind::Resource,
+            Some(target_a.clone()),
+            AsyncIdentity::View(state.view_revision),
+        );
+        let other = state.begin_async(
+            AsyncKind::Resource,
+            Some(target_b),
+            AsyncIdentity::View(state.view_revision),
+        );
+        let replacement = state.begin_async(
+            AsyncKind::Resource,
+            Some(target_a),
+            AsyncIdentity::View(state.view_revision),
+        );
+        assert!(!state.is_async_scope_current(&first));
+        assert!(state.is_async_scope_current(&other));
+        assert!(state.is_async_scope_current(&replacement));
+    }
+
+    #[test]
+    fn view_scope_is_rejected_after_view_revision_changes() {
+        let mut state = make_state();
+        let scope = state.begin_async(
+            AsyncKind::Events,
+            Some(AsyncTarget::Resource {
+                kind: ResourceKind::Terraform,
+                namespace: "ns".into(),
+                name: "tf".into(),
+            }),
+            AsyncIdentity::View(state.view_revision),
+        );
+        state.bump_view_revision();
+        assert!(!state.is_async_scope_current(&scope));
+    }
+
+    #[test]
+    fn log_scope_only_accepts_the_active_stream() {
+        let mut state = make_state();
+        let first = state.begin_log_stream(Some(AsyncTarget::Pod {
+            namespace: "ns".into(),
+            name: "pod".into(),
+        }));
+        let runners_idx = TabKind::Runners.index(state.tab_count());
+        state.view_stacks[runners_idx].push(ViewState::LogViewer {
+            namespace: "ns".into(),
+            pod_name: "pod".into(),
+            stream_id: first.request_id,
+            containers: vec![],
+            active_container: 0,
+            content: String::new(),
+        });
+        let second = state.begin_log_stream(Some(AsyncTarget::Pod {
+            namespace: "ns".into(),
+            name: "pod".into(),
+        }));
+        assert!(!state.is_async_scope_current(&first));
+        assert!(!state.is_async_scope_current(&second));
     }
 
     // ---- context_vars + when.context ----

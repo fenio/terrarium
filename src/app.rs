@@ -7,7 +7,7 @@ use crossterm::event::{
 use futures::StreamExt;
 use tokio::sync::mpsc;
 
-use crate::action::{Action, ResourceKind};
+use crate::action::{Action, AsyncIdentity, AsyncKind, AsyncScope, AsyncTarget, ResourceKind};
 use crate::k8s::actions as k8s_actions;
 use crate::k8s::metrics;
 use crate::keys::handle_key;
@@ -127,6 +127,9 @@ impl App {
 
         let tasks_arc = self.conn_tasks.clone();
         let tx = self.action_tx.clone();
+        let connection_tx =
+            AsyncScope::generation(self.state.connection_generation, AsyncKind::Connection)
+                .sender(tx.clone());
         let kubeconfig = self.switcher_kubeconfig.clone();
         let namespace = self.namespace.clone();
         let controller_ns = self.controller_ns.clone();
@@ -142,7 +145,7 @@ impl App {
 
             match client_res {
                 Ok((client, cluster_info)) => {
-                    let _ = tx.send(Action::K8sClientReady {
+                    let _ = connection_tx.send(Action::K8sClientReady {
                         client: crate::action::K8sClient(client.clone()),
                         context_name: cluster_info.context_name,
                     });
@@ -155,7 +158,7 @@ impl App {
                         }
                     };
 
-                    let wtx = tx.clone();
+                    let wtx = connection_tx.clone();
                     let c = client.clone();
                     let dbg = tf_debug_log.clone();
                     push(tokio::spawn(async move {
@@ -169,7 +172,7 @@ impl App {
                         }
                     }));
 
-                    let wtx = tx.clone();
+                    let wtx = connection_tx.clone();
                     let c = client.clone();
                     push(tokio::spawn(async move {
                         if let Err(e) =
@@ -181,7 +184,7 @@ impl App {
                         }
                     }));
 
-                    let wtx = tx.clone();
+                    let wtx = connection_tx.clone();
                     let c = client.clone();
                     push(tokio::spawn(async move {
                         if let Err(e) =
@@ -194,7 +197,7 @@ impl App {
                         }
                     }));
 
-                    let wtx = tx.clone();
+                    let wtx = connection_tx.clone();
                     let c = client.clone();
                     let ns_clone = namespace.clone();
                     push(tokio::spawn(async move {
@@ -207,7 +210,7 @@ impl App {
                         }
                     }));
 
-                    let wtx = tx.clone();
+                    let wtx = connection_tx.clone();
                     let c = client.clone();
                     push(tokio::spawn(async move {
                         if let Err(e) = crate::k8s::controller::poll_controller_info(
@@ -224,7 +227,7 @@ impl App {
                     }));
                 }
                 Err(e) => {
-                    let _ = tx.send(Action::ConnectionError(format!(
+                    let _ = connection_tx.send(Action::ConnectionError(format!(
                         "Failed to connect to cluster: {e}"
                     )));
                 }
@@ -973,6 +976,7 @@ impl App {
         if let Some(handle) = self.state.log_stream_handle.take() {
             handle.abort();
         }
+        self.state.cancel_log_stream();
     }
 
     /// Toggle the on-demand controller-metrics panel. When enabled, spawns
@@ -989,6 +993,7 @@ impl App {
             if let Some(h) = self.state.metrics_task.take() {
                 h.abort();
             }
+            self.state.invalidate_async_kind(AsyncKind::Metrics);
             self.state.metrics_enabled = false;
             self.state.metrics_snapshot = None;
             self.state.metrics_prev = crate::k8s::metrics::PrevCounters::default();
@@ -1024,7 +1029,15 @@ impl App {
         }
 
         self.state.metrics_enabled = true;
-        let tx = self.action_tx.clone();
+        let scope = self.state.begin_async(
+            AsyncKind::Metrics,
+            Some(AsyncTarget::Pod {
+                namespace: namespace.clone(),
+                name: String::new(),
+            }),
+            AsyncIdentity::None,
+        );
+        let tx = scope.sender(self.action_tx.clone());
         let handle = tokio::spawn(async move {
             // Fetch immediately, then every 5s.
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
@@ -1058,7 +1071,68 @@ impl App {
         self.state.metrics_task = Some(handle);
     }
 
+    /// Validate asynchronous envelopes before handing their inner action to
+    /// the normal dispatcher. This is the single gate that prevents delayed
+    /// work from an old cluster, request, target, view, or log stream from
+    /// mutating current state.
     async fn dispatch(&mut self, action: Action) {
+        let action = match action {
+            Action::Scoped(scoped) => {
+                let list_target_current =
+                    if matches!(
+                        scoped.scope.kind,
+                        AsyncKind::Plan
+                            | AsyncKind::Resource
+                            | AsyncKind::Outputs
+                            | AsyncKind::Events
+                            | AsyncKind::DetailOutputs
+                            | AsyncKind::ShortcutOutputs
+                            | AsyncKind::SecretValues
+                    ) && matches!(self.state.current_view(), ViewState::List(_))
+                    {
+                        self.async_target_matches_selection(&scoped.scope)
+                    } else {
+                        true
+                    };
+                if !self.state.is_async_scope_current(&scoped.scope) || !list_target_current {
+                    return;
+                }
+                self.state.finish_async(&scoped.scope);
+                *scoped.action
+            }
+            action => action,
+        };
+        self.dispatch_inner(action).await;
+    }
+
+    async fn dispatch_inner(&mut self, action: Action) {
+        if matches!(
+            &action,
+            Action::SelectNext
+                | Action::SelectPrev
+                | Action::PageDown
+                | Action::PageUp
+                | Action::ScreenDown
+                | Action::ScreenUp
+                | Action::MouseSelect(_)
+                | Action::Enter
+                | Action::Back
+                | Action::ToggleFailuresOnly
+                | Action::ToggleWaitingOnly
+                | Action::ToggleProgressingOnly
+                | Action::ToggleDriftingOnly
+                | Action::ToggleDeletingOnly
+                | Action::SearchStart
+                | Action::SearchPush(_)
+                | Action::SearchPop
+                | Action::SearchConfirm
+                | Action::SearchCancel
+                | Action::ToggleSearchSuspend
+                | Action::ToggleSelect
+        ) {
+            self.state.bump_view_revision();
+        }
+
         match action {
             Action::Quit => self.should_quit = true,
 
@@ -1374,13 +1448,14 @@ impl App {
                 }
                 TabKind::Terraform => {
                     if let Some((ns, name)) = self.get_selected_terraform() {
-                        self.spawn_detail_outputs_fetch(&ns, &name);
                         self.state
                             .current_view_stack_mut()
                             .push(ViewState::TerraformDetail {
-                                namespace: ns,
-                                name,
+                                namespace: ns.clone(),
+                                name: name.clone(),
                             });
+                        self.state.bump_view_revision();
+                        self.spawn_detail_outputs_fetch(&ns, &name);
                     }
                 }
                 TabKind::Kustomizations => {
@@ -1391,6 +1466,7 @@ impl App {
                                 namespace: ns,
                                 name,
                             });
+                        self.state.bump_view_revision();
                     }
                 }
                 TabKind::Runners => {
@@ -1400,17 +1476,19 @@ impl App {
                 }
                 TabKind::CustomTab(i) => {
                     if let Some((ns, name)) = self.get_selected_custom_tab(i) {
-                        self.spawn_detail_outputs_fetch(&ns, &name);
                         self.state
                             .current_view_stack_mut()
                             .push(ViewState::TerraformDetail {
-                                namespace: ns,
-                                name,
+                                namespace: ns.clone(),
+                                name: name.clone(),
                             });
+                        self.state.bump_view_revision();
+                        self.spawn_detail_outputs_fetch(&ns, &name);
                     }
                 }
             },
             Action::Back => {
+                self.state.bump_view_revision();
                 if matches!(self.state.current_view(), ViewState::List(_)) {
                     // Peel off, most recent first: bulk selection → search →
                     // failures/waiting/progressing/drifting → namespace. Clearing
@@ -1475,6 +1553,7 @@ impl App {
                 self.state.search_suspended = false;
             }
             Action::ToggleSearchSuspend => {
+                self.state.bump_view_revision();
                 if !self.state.search_query.is_empty() {
                     self.state.search_suspended = !self.state.search_suspended;
                     self.state.current_table_state().select(None);
@@ -1507,6 +1586,7 @@ impl App {
                 self.state.ns_picker_selected = self.state.ns_picker_selected.saturating_sub(1);
             }
             Action::NamespacePickerSelect => {
+                self.state.bump_view_revision();
                 self.state.input_mode = InputMode::Normal;
                 if self.state.ns_picker_selected == 0 {
                     self.state.namespace_filter = None;
@@ -1581,6 +1661,7 @@ impl App {
 
             // Shortcuts popup
             Action::OpenShortcutsPopup { namespace, name } => {
+                self.state.bump_view_revision();
                 let visible = self.state.visible_shortcut_indices(&namespace, &name);
                 self.state.input_mode = InputMode::ShortcutsPopup;
                 self.state.shortcuts_popup_resource = Some((namespace, name));
@@ -1611,6 +1692,7 @@ impl App {
                 }
             }
             Action::ShortcutsPopupCancel => {
+                self.state.bump_view_revision();
                 self.state.input_mode = InputMode::Normal;
                 self.state.shortcuts_popup_resource = None;
                 self.state.shortcuts_popup_visible.clear();
@@ -1799,6 +1881,7 @@ impl App {
             Action::ExecBreakTheGlass { .. } => {}
 
             Action::StreamRunnerLogs { namespace, name } => {
+                self.state.bump_view_revision();
                 let runner_pod = format!("{name}-tf-runner");
                 // Check if the runner pod exists
                 if self.state.runner_pods.iter().any(|p| {
@@ -1816,21 +1899,25 @@ impl App {
             }
 
             Action::JumpToTerraformDetail { namespace, name } => {
+                self.state.bump_view_revision();
                 // Verify the Terraform resource exists in the store
                 let exists = self.state.tf_store.state().iter().any(|tf| {
                     tf.metadata.namespace.as_deref() == Some(&namespace)
                         && tf.metadata.name.as_deref() == Some(&name)
                 });
                 if exists {
-                    self.spawn_detail_outputs_fetch(&namespace, &name);
                     // Switch to the TF tab and replace its stack with a fresh
                     // detail view — the cross-tab jump is meant to land on
                     // the TF resource, not on whatever was previously open.
                     self.state.active_tab = TabKind::Terraform;
                     *self.state.current_view_stack_mut() = vec![
                         ViewState::List(TabKind::Terraform),
-                        ViewState::TerraformDetail { namespace, name },
+                        ViewState::TerraformDetail {
+                            namespace: namespace.clone(),
+                            name: name.clone(),
+                        },
                     ];
+                    self.spawn_detail_outputs_fetch(&namespace, &name);
                 } else {
                     self.state.flash_message = Some((
                         format!("Terraform resource {namespace}/{name} not found"),
@@ -1844,6 +1931,7 @@ impl App {
                 namespace,
                 pod_name,
             } => {
+                self.state.bump_view_revision();
                 self.start_log_stream(&namespace, &pod_name).await;
             }
 
@@ -1879,7 +1967,16 @@ impl App {
                     ));
                     return;
                 };
-                let tx = self.action_tx.clone();
+                let scope = self.state.begin_async(
+                    AsyncKind::Plan,
+                    Some(AsyncTarget::Resource {
+                        kind: ResourceKind::Terraform,
+                        namespace: namespace.clone(),
+                        name: name.clone(),
+                    }),
+                    AsyncIdentity::View(self.state.view_revision),
+                );
+                let tx = scope.sender(self.action_tx.clone());
                 tokio::spawn(async move {
                     match k8s_actions::fetch_plan(&client, &namespace, &name, workspace.as_deref())
                         .await
@@ -1895,6 +1992,7 @@ impl App {
             }
             Action::PlanFetched(plan_text) => {
                 self.state.flash_message = None;
+                self.state.bump_view_revision();
                 self.state
                     .current_view_stack_mut()
                     .push(ViewState::PlanViewer { content: plan_text });
@@ -1925,7 +2023,16 @@ impl App {
                     ));
                     return;
                 };
-                let tx = self.action_tx.clone();
+                let scope = self.state.begin_async(
+                    AsyncKind::Resource,
+                    Some(AsyncTarget::Resource {
+                        kind,
+                        namespace: namespace.clone(),
+                        name: name.clone(),
+                    }),
+                    AsyncIdentity::View(self.state.view_revision),
+                );
+                let tx = scope.sender(self.action_tx.clone());
                 tokio::spawn(async move {
                     match k8s_actions::fetch_resource_json(&client, &kind, &namespace, &name).await
                     {
@@ -1958,7 +2065,16 @@ impl App {
                     ));
                     return;
                 };
-                let tx = self.action_tx.clone();
+                let scope = self.state.begin_async(
+                    AsyncKind::Resource,
+                    Some(AsyncTarget::Resource {
+                        kind,
+                        namespace: namespace.clone(),
+                        name: name.clone(),
+                    }),
+                    AsyncIdentity::View(self.state.view_revision),
+                );
+                let tx = scope.sender(self.action_tx.clone());
                 tokio::spawn(async move {
                     match k8s_actions::fetch_resource_yaml(&client, &kind, &namespace, &name).await
                     {
@@ -1973,6 +2089,7 @@ impl App {
             }
             Action::JsonFetched(yaml) => {
                 self.state.flash_message = None;
+                self.state.bump_view_revision();
                 self.state
                     .current_view_stack_mut()
                     .push(ViewState::JsonViewer { content: yaml });
@@ -1999,7 +2116,16 @@ impl App {
                     ));
                     return;
                 };
-                let tx = self.action_tx.clone();
+                let scope = self.state.begin_async(
+                    AsyncKind::Outputs,
+                    Some(AsyncTarget::Resource {
+                        kind: ResourceKind::Terraform,
+                        namespace: namespace.clone(),
+                        name: name.clone(),
+                    }),
+                    AsyncIdentity::View(self.state.view_revision),
+                );
+                let tx = scope.sender(self.action_tx.clone());
                 tokio::spawn(async move {
                     match k8s_actions::fetch_outputs(&client, &namespace, &name).await {
                         Ok(text) => {
@@ -2013,6 +2139,7 @@ impl App {
             }
             Action::OutputsFetched(text) => {
                 self.state.flash_message = None;
+                self.state.bump_view_revision();
                 self.state
                     .current_view_stack_mut()
                     .push(ViewState::OutputsViewer { content: text });
@@ -2044,7 +2171,16 @@ impl App {
                     ));
                     return;
                 };
-                let tx = self.action_tx.clone();
+                let scope = self.state.begin_async(
+                    AsyncKind::Events,
+                    Some(AsyncTarget::Resource {
+                        kind,
+                        namespace: namespace.clone(),
+                        name: name.clone(),
+                    }),
+                    AsyncIdentity::View(self.state.view_revision),
+                );
+                let tx = scope.sender(self.action_tx.clone());
                 tokio::spawn(async move {
                     match k8s_actions::fetch_events(&client, &kind, &namespace, &name).await {
                         Ok(events) => {
@@ -2058,6 +2194,7 @@ impl App {
             }
             Action::EventsFetched(events) => {
                 self.state.flash_message = None;
+                self.state.bump_view_revision();
                 self.state
                     .current_view_stack_mut()
                     .push(ViewState::EventsViewer { content: events });
@@ -2072,14 +2209,29 @@ impl App {
             } => {
                 self.state.cached_outputs = Some(((namespace, name), values));
             }
-            Action::SecretValuesFetched {
+            Action::DetailOutputsFetchError(e) => {
+                tracing::debug!("Detail output fetch failed: {e}");
+            }
+            Action::ShortcutOutputsFetched {
                 namespace,
+                name,
+                shortcut_idx,
+                values,
+            } => {
+                self.state.cached_outputs = Some(((namespace.clone(), name.clone()), values));
+                self.open_shortcut(&namespace, &name, shortcut_idx);
+            }
+            Action::ShortcutSecretValuesFetched {
+                namespace,
+                name,
                 secret_name,
+                shortcut_idx,
                 values,
             } => {
                 self.state
                     .cached_secrets
-                    .insert((namespace, secret_name), values);
+                    .insert((namespace.clone(), secret_name), values);
+                self.open_shortcut(&namespace, &name, shortcut_idx);
             }
             Action::SecretValuesFetchError(e) => {
                 self.state.flash_message = Some((
@@ -2165,17 +2317,24 @@ impl App {
             }
 
             // Log streaming chunks
-            Action::LogChunkReceived(chunk) => {
+            Action::LogChunkReceived { stream_id, chunk } => {
                 const MAX_LOG_BYTES: usize = 10 * 1024 * 1024; // 10 MB
                 // The LogViewer might be on a tab the user has navigated
                 // away from — chunks still need to find it. Capture flags
                 // we'll need before taking a mutable borrow on the viewer.
-                let on_active_tab =
-                    matches!(self.state.current_view(), ViewState::LogViewer { .. });
+                let on_active_tab = matches!(
+                    self.state.current_view(),
+                    ViewState::LogViewer {
+                        stream_id: current,
+                        ..
+                    } if *current == stream_id
+                );
                 let auto_follow = self.state.log_auto_follow;
                 let body_height = self.state.body_height as usize;
                 let mut new_scroll: Option<usize> = None;
-                if let Some(ViewState::LogViewer { content, .. }) = self.state.log_viewer_mut() {
+                if let Some(ViewState::LogViewer { content, .. }) =
+                    self.state.log_viewer_mut_for(stream_id)
+                {
                     if content.len() + chunk.len() > MAX_LOG_BYTES {
                         // Trim the front to stay under the cap
                         content.push_str(&chunk);
@@ -2235,6 +2394,18 @@ impl App {
                 // AuthExpired sends from sibling tasks are ignored.
                 if !self.state.needs_reauth {
                     self.state.needs_reauth = true;
+                    self.state.invalidate_connection();
+                    if let Some(handle) = self.state.log_stream_handle.take() {
+                        handle.abort();
+                    }
+                    if let Some(handle) = self.state.metrics_task.take() {
+                        handle.abort();
+                    }
+                    self.state.metrics_enabled = false;
+                    self.state.metrics_snapshot = None;
+                    self.state.metrics_prev = crate::k8s::metrics::PrevCounters::default();
+                    self.state.metrics_last_error = None;
+                    self.state.cancel_log_stream();
                     // Stop every background task so kube-rs stops re-running
                     // the OIDC plugin (which keeps opening browser tabs).
                     if let Ok(mut tasks) = self.conn_tasks.lock() {
@@ -2293,20 +2464,60 @@ impl App {
         self.client.clone()
     }
 
-    fn spawn_detail_outputs_fetch(&self, ns: &str, name: &str) {
+    fn async_target_matches_selection(&self, scope: &AsyncScope) -> bool {
+        let Some(AsyncTarget::Resource {
+            kind,
+            namespace,
+            name,
+        }) = &scope.target
+        else {
+            return true;
+        };
+
+        let selected = match (kind, &self.state.active_tab) {
+            (ResourceKind::Terraform, TabKind::Terraform) => self.get_selected_terraform(),
+            (ResourceKind::Terraform, TabKind::CustomTab(index)) => {
+                self.get_selected_custom_tab(*index)
+            }
+            (ResourceKind::Kustomization, TabKind::Kustomizations) => {
+                self.get_selected_kustomization()
+            }
+            (ResourceKind::Pod, TabKind::Runners) => self.get_selected_runner(),
+            _ => return true,
+        };
+        selected.is_some_and(|(selected_namespace, selected_name)| {
+            selected_namespace == *namespace && selected_name == *name
+        })
+    }
+
+    fn spawn_detail_outputs_fetch(&mut self, ns: &str, name: &str) {
         let Some(client) = self.require_client() else {
             return;
         };
-        let tx = self.action_tx.clone();
+        let scope = self.state.begin_async(
+            AsyncKind::DetailOutputs,
+            Some(AsyncTarget::Resource {
+                kind: ResourceKind::Terraform,
+                namespace: ns.to_string(),
+                name: name.to_string(),
+            }),
+            AsyncIdentity::View(self.state.view_revision),
+        );
+        let tx = scope.sender(self.action_tx.clone());
         let ns = ns.to_string();
         let name = name.to_string();
         tokio::spawn(async move {
-            if let Ok(values) = k8s_actions::fetch_output_values(&client, &ns, &name).await {
-                let _ = tx.send(Action::DetailOutputsFetched {
-                    namespace: ns,
-                    name,
-                    values,
-                });
+            match k8s_actions::fetch_output_values(&client, &ns, &name).await {
+                Ok(values) => {
+                    let _ = tx.send(Action::DetailOutputsFetched {
+                        namespace: ns,
+                        name,
+                        values,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(Action::DetailOutputsFetchError(format!("{e}")));
+                }
             }
         });
     }
@@ -2324,13 +2535,26 @@ impl App {
         let client = match self.require_client() {
             Some(c) => c,
             None => {
-                let _ = self.action_tx.send(Action::K8sActionError(
+                self.state.flash_message = Some((
                     "K8s client not ready yet".to_string(),
+                    Instant::now(),
+                    FlashKind::Error,
                 ));
                 return;
             }
         };
-        let tx = self.action_tx.clone();
+        let target =
+            action_resource_target(&action).map(|(namespace, name)| AsyncTarget::Resource {
+                kind: action_resource_kind(&action).unwrap_or(ResourceKind::Terraform),
+                namespace: namespace.to_string(),
+                name: name.to_string(),
+            });
+        let scope = self.state.begin_async(
+            AsyncKind::Mutation,
+            target,
+            AsyncIdentity::View(self.state.view_revision),
+        );
+        let tx = scope.sender(self.action_tx.clone());
         let success_msg = format_success_message(&action);
         let context = self.state.context_name.clone();
         // tfctl-backed actions (replan) need to see terrarium's kubeconfig.
@@ -2420,7 +2644,7 @@ impl App {
         let selected = std::mem::take(&mut self.state.bulk_selected);
         let count = selected.len();
         for (ns, name) in selected {
-            let action = make_action(ns, name, kind.clone());
+            let action = make_action(ns, name, kind);
             self.spawn_k8s_action(action);
         }
         if count > 0 {
@@ -2511,21 +2735,26 @@ impl App {
                     Instant::now(),
                     FlashKind::Success,
                 ));
-                let tx = self.action_tx.clone();
+                let scope = self.state.begin_async(
+                    AsyncKind::ShortcutOutputs,
+                    Some(AsyncTarget::Resource {
+                        kind: ResourceKind::Terraform,
+                        namespace: namespace.to_string(),
+                        name: name.to_string(),
+                    }),
+                    AsyncIdentity::View(self.state.view_revision),
+                );
+                let tx = scope.sender(self.action_tx.clone());
                 let ns = namespace.to_string();
                 let nm = name.to_string();
                 tokio::spawn(async move {
                     match k8s_actions::fetch_output_values(&client, &ns, &nm).await {
                         Ok(values) => {
-                            let _ = tx.send(Action::DetailOutputsFetched {
+                            let _ = tx.send(Action::ShortcutOutputsFetched {
                                 namespace: ns.clone(),
                                 name: nm.clone(),
-                                values,
-                            });
-                            let _ = tx.send(Action::OpenShortcut {
-                                namespace: ns,
-                                name: nm,
                                 shortcut_idx,
+                                values,
                             });
                         }
                         Err(e) => {
@@ -2556,22 +2785,28 @@ impl App {
                 Instant::now(),
                 FlashKind::Success,
             ));
-            let tx = self.action_tx.clone();
+            let scope = self.state.begin_async(
+                AsyncKind::SecretValues,
+                Some(AsyncTarget::Resource {
+                    kind: ResourceKind::Terraform,
+                    namespace: namespace.to_string(),
+                    name: name.to_string(),
+                }),
+                AsyncIdentity::View(self.state.view_revision),
+            );
+            let tx = scope.sender(self.action_tx.clone());
             let ns = namespace.to_string();
             let nm = name.to_string();
             let secret_name = missing.clone();
             tokio::spawn(async move {
                 match k8s_actions::fetch_secret_values(&client, &ns, &secret_name).await {
                     Ok(values) => {
-                        let _ = tx.send(Action::SecretValuesFetched {
+                        let _ = tx.send(Action::ShortcutSecretValuesFetched {
                             namespace: ns.clone(),
+                            name: nm.clone(),
                             secret_name,
-                            values,
-                        });
-                        let _ = tx.send(Action::OpenShortcut {
-                            namespace: ns,
-                            name: nm,
                             shortcut_idx,
+                            values,
                         });
                     }
                     Err(e) => {
@@ -2746,6 +2981,22 @@ impl App {
         // Cancel any existing stream
         self.cancel_log_stream();
 
+        let Some(client) = self.require_client() else {
+            self.state.flash_message = Some((
+                "K8s client not ready yet".to_string(),
+                Instant::now(),
+                FlashKind::Error,
+            ));
+            return;
+        };
+        self.state.bump_view_revision();
+
+        let stream_scope = self.state.begin_log_stream(Some(AsyncTarget::Pod {
+            namespace: namespace.to_string(),
+            name: name.to_string(),
+        }));
+        let stream_id = stream_scope.request_id;
+
         // Get container list from the pod
         let containers = self
             .state
@@ -2766,6 +3017,7 @@ impl App {
             .push(ViewState::LogViewer {
                 namespace: namespace.to_string(),
                 pod_name: name.to_string(),
+                stream_id,
                 containers: containers.clone(),
                 active_container: 0,
                 content: String::new(),
@@ -2775,15 +3027,7 @@ impl App {
         self.state.log_auto_follow = true;
 
         // Start streaming
-        let Some(client) = self.require_client() else {
-            self.state.flash_message = Some((
-                "K8s client not ready yet".to_string(),
-                Instant::now(),
-                FlashKind::Error,
-            ));
-            return;
-        };
-        let tx = self.action_tx.clone();
+        let tx = stream_scope.sender(self.action_tx.clone());
         let ns = namespace.to_string();
         let pod_name = name.to_string();
         // Strip "init:" prefix for the API call
@@ -2791,9 +3035,15 @@ impl App {
             first_container.map(|c| c.strip_prefix("init:").unwrap_or(&c).to_string());
 
         let handle = tokio::spawn(async move {
-            if let Err(e) =
-                k8s_actions::stream_pod_logs(&client, &ns, &pod_name, api_container.as_deref(), tx)
-                    .await
+            if let Err(e) = k8s_actions::stream_pod_logs(
+                &client,
+                &ns,
+                &pod_name,
+                api_container.as_deref(),
+                stream_id,
+                tx,
+            )
+            .await
             {
                 tracing::debug!("Log stream ended: {}", e);
             }
@@ -2830,12 +3080,30 @@ impl App {
         self.cancel_log_stream();
         self.state.current_view_stack_mut().pop();
 
+        let Some(client) = self.require_client() else {
+            self.state.bump_view_revision();
+            self.state.flash_message = Some((
+                "K8s client not ready yet".to_string(),
+                Instant::now(),
+                FlashKind::Error,
+            ));
+            return;
+        };
+        self.state.bump_view_revision();
+
+        let stream_scope = self.state.begin_log_stream(Some(AsyncTarget::Pod {
+            namespace: namespace.clone(),
+            name: pod_name.clone(),
+        }));
+        let stream_id = stream_scope.request_id;
+
         // Push new log viewer with empty content
         self.state
             .current_view_stack_mut()
             .push(ViewState::LogViewer {
                 namespace: namespace.clone(),
                 pod_name: pod_name.clone(),
+                stream_id,
                 containers: containers.clone(),
                 active_container: new_idx,
                 content: String::new(),
@@ -2844,15 +3112,7 @@ impl App {
         self.state.log_auto_follow = true;
 
         // Start new stream
-        let Some(client) = self.require_client() else {
-            self.state.flash_message = Some((
-                "K8s client not ready yet".to_string(),
-                Instant::now(),
-                FlashKind::Error,
-            ));
-            return;
-        };
-        let tx = self.action_tx.clone();
+        let tx = stream_scope.sender(self.action_tx.clone());
         let api_container = new_container
             .strip_prefix("init:")
             .unwrap_or(&new_container)
@@ -2864,6 +3124,7 @@ impl App {
                 &namespace,
                 &pod_name,
                 Some(&api_container),
+                stream_id,
                 tx,
             )
             .await
@@ -2958,6 +3219,21 @@ fn action_resource_target(action: &Action) -> Option<(&str, &str)> {
         | Action::Resume {
             namespace, name, ..
         } => Some((namespace, name)),
+        _ => None,
+    }
+}
+
+fn action_resource_kind(action: &Action) -> Option<ResourceKind> {
+    match action {
+        Action::Reconcile { kind, .. }
+        | Action::Suspend { kind, .. }
+        | Action::Resume { kind, .. } => Some(*kind),
+        Action::KillRunner { .. } => Some(ResourceKind::Pod),
+        Action::ApprovePlan { .. }
+        | Action::Replan { .. }
+        | Action::ForceUnlock { .. }
+        | Action::ResetBreakTheGlass { .. }
+        | Action::DeleteResource { .. } => Some(ResourceKind::Terraform),
         _ => None,
     }
 }
