@@ -9,7 +9,7 @@ use ratatui::{
 use crate::config::{CustomColumn, CustomColumnSource, CustomTab};
 use crate::k8s::terraform::Terraform;
 use crate::k8s::watcher::TfStore;
-use crate::state::store::AppState;
+use crate::state::store::{AppState, SelectionIdentity, TabKind};
 use crate::ui::theme;
 use crate::util;
 
@@ -17,6 +17,8 @@ use crate::util;
 pub struct CustomTabEntry {
     pub namespace: String,
     pub name: String,
+    pub uid: Option<String>,
+    pub row_key: Option<String>,
     pub annotation_key: String,
     pub annotation_value: String,
     pub ready: String,
@@ -25,13 +27,26 @@ pub struct CustomTabEntry {
 }
 
 pub fn render_custom_tab(f: &mut Frame, area: Rect, state: &mut AppState, tab_idx: usize) {
-    let tab_config = &state.config.custom_tabs[tab_idx];
+    let tab_config = state.config.custom_tabs[tab_idx].clone();
     let items = get_filtered_entries(
         &state.tf_store,
         &state.namespace_filter,
         state.effective_search_query(),
-        tab_config,
+        &tab_config,
     );
+    let identities: Vec<SelectionIdentity> = items
+        .iter()
+        .map(|entry| {
+            SelectionIdentity::new(
+                entry.namespace.clone(),
+                entry.name.clone(),
+                entry.uid.clone(),
+            )
+            .with_optional_row_key(entry.row_key.clone())
+        })
+        .collect();
+    state.reconcile_selection_for(&TabKind::CustomTab(tab_idx), &identities);
+    state.reconcile_bulk_selection_for(&TabKind::CustomTab(tab_idx), &identities);
 
     let header_cells: Vec<Cell> = tab_config
         .columns
@@ -158,6 +173,8 @@ pub fn get_filtered_entries(
                     entries.push(CustomTabEntry {
                         namespace: ns.clone(),
                         name: name.clone(),
+                        uid: tf.metadata.uid.clone(),
+                        row_key: Some(key.clone()),
                         annotation_key: key.clone(),
                         annotation_value: val_str,
                         ready: ready.clone(),
@@ -169,6 +186,8 @@ pub fn get_filtered_entries(
                 entries.push(CustomTabEntry {
                     namespace: ns.clone(),
                     name: name.clone(),
+                    uid: tf.metadata.uid.clone(),
+                    row_key: None,
                     annotation_key: "(raw)".to_string(),
                     annotation_value: annotation_value.clone(),
                     ready: ready.clone(),
@@ -180,6 +199,8 @@ pub fn get_filtered_entries(
             entries.push(CustomTabEntry {
                 namespace: ns.clone(),
                 name: name.clone(),
+                uid: tf.metadata.uid.clone(),
+                row_key: None,
                 annotation_key: String::new(),
                 annotation_value: annotation_value.clone(),
                 ready: ready.clone(),

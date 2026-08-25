@@ -10,7 +10,7 @@ use crate::ui::resource_list::{bulk_marker_cell, sort_cell};
 
 use crate::k8s::kustomization::Kustomization;
 use crate::k8s::watcher::KsStore;
-use crate::state::store::{AppState, SortColumn};
+use crate::state::store::{AppState, SelectionIdentity, SortColumn, TabKind};
 use crate::ui::theme;
 use crate::util;
 
@@ -27,6 +27,18 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
         state.sort_column,
         state.sort_descending,
     );
+    let identities: Vec<SelectionIdentity> = items
+        .iter()
+        .map(|ks| {
+            SelectionIdentity::new(
+                ks.metadata.namespace.clone().unwrap_or_default(),
+                ks.metadata.name.clone().unwrap_or_default(),
+                ks.metadata.uid.clone(),
+            )
+        })
+        .collect();
+    state.reconcile_selection_for(&TabKind::Kustomizations, &identities);
+    state.reconcile_bulk_selection_for(&TabKind::Kustomizations, &identities);
 
     let active = state.sort_column;
     let desc = state.sort_descending;
@@ -51,7 +63,7 @@ pub fn render_kustomization_list(f: &mut Frame, area: Rect, state: &mut AppState
             let name = ks.metadata.name.as_deref().unwrap_or("-");
             let (ready_text, ready_style) = get_ready_status(ks);
             let deleting = ks.metadata.deletion_timestamp.is_some();
-            let bulk_cell = bulk_marker_cell(state, ns, name, deleting);
+            let bulk_cell = bulk_marker_cell(state, ns, name, ks.metadata.uid.as_deref(), deleting);
             let suspended_cell = if ks.spec.suspend.unwrap_or(false) {
                 Cell::from(Span::styled("S", theme::SUSPENDED))
             } else {

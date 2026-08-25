@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::k8s::metrics::MetricsSnapshot;
 use crate::k8s::terraform::Terraform;
-use crate::state::store::AppState;
+use crate::state::store::{AppState, SelectionIdentity, TabKind};
 use crate::ui::resource_list::is_drifting_now;
 use crate::ui::theme;
 use crate::util;
@@ -417,6 +417,12 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
         .collect();
     backlog_entries.sort_by(|a, b| (b.1 + b.2).cmp(&(a.1 + a.2))); // most stale first
     state.backlog_namespaces = backlog_entries;
+    let backlog_identities: Vec<SelectionIdentity> = state
+        .backlog_namespaces
+        .iter()
+        .map(|(namespace, _, _, _)| SelectionIdentity::new(namespace.clone(), String::new(), None))
+        .collect();
+    state.reconcile_selection_for(&TabKind::Controller, &backlog_identities);
 
     let total_waiting: usize = state.backlog_namespaces.iter().map(|(_, w, _, _)| *w).sum();
     let total_failing: usize = state.backlog_namespaces.iter().map(|(_, _, f, _)| *f).sum();
@@ -426,7 +432,18 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
         .count();
 
     let label = theme::LABEL;
-    let selected = state.backlog_table_state.selected();
+    let selected = state
+        .backlog_selection
+        .as_ref()
+        .and_then(|selection| {
+            state
+                .backlog_namespaces
+                .iter()
+                .position(|(namespace, _, _, _)| {
+                    selection.namespace == *namespace && selection.name.is_empty()
+                })
+        })
+        .or_else(|| state.backlog_table_state.selected());
 
     // Header area (summary line)
     let inner = block.inner(area);

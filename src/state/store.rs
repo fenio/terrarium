@@ -89,6 +89,42 @@ pub enum ViewState {
     },
 }
 
+/// Stable identity for a row in a live list. The UID distinguishes a resource
+/// recreated under the same namespace/name; the name pair is retained for
+/// objects from sources that do not expose a UID yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionIdentity {
+    pub namespace: String,
+    pub name: String,
+    pub uid: Option<String>,
+    /// Optional row discriminator for expanded custom-tab entries, where one
+    /// Terraform can produce multiple visible rows.
+    pub row_key: Option<String>,
+}
+
+impl SelectionIdentity {
+    pub fn new(namespace: String, name: String, uid: Option<String>) -> Self {
+        Self {
+            namespace,
+            name,
+            uid,
+            row_key: None,
+        }
+    }
+
+    pub fn with_optional_row_key(mut self, row_key: Option<String>) -> Self {
+        self.row_key = row_key;
+        self
+    }
+
+    pub fn matches(&self, other: &Self) -> bool {
+        self.namespace == other.namespace
+            && self.name == other.name
+            && (self.uid.is_none() || self.uid == other.uid)
+            && self.row_key == other.row_key
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputMode {
     Normal,
@@ -282,8 +318,14 @@ pub struct AppState {
     pub ks_table_state: TableState,
     pub runner_table_state: TableState,
     pub backlog_table_state: TableState,
+    /// Stable row identities corresponding to the table selections above.
+    pub tf_selection: Option<SelectionIdentity>,
+    pub ks_selection: Option<SelectionIdentity>,
+    pub runner_selection: Option<SelectionIdentity>,
+    pub backlog_selection: Option<SelectionIdentity>,
     /// Table states for custom tabs, indexed by custom tab index.
     pub custom_tab_states: Vec<TableState>,
+    pub custom_tab_selections: Vec<Option<SelectionIdentity>>,
     /// Cached backlog entries: (namespace, waiting, failing, total), sorted by total stale desc.
     pub backlog_namespaces: Vec<(String, usize, usize, usize)>,
 
@@ -550,9 +592,14 @@ impl AppState {
             ks_table_state: TableState::default(),
             runner_table_state: TableState::default(),
             backlog_table_state: TableState::default(),
+            tf_selection: None,
+            ks_selection: None,
+            runner_selection: None,
+            backlog_selection: None,
             custom_tab_states: (0..custom_tab_count)
                 .map(|_| TableState::default())
                 .collect(),
+            custom_tab_selections: (0..custom_tab_count).map(|_| None).collect(),
             backlog_namespaces: Vec::new(),
             plan_scroll: 0,
             horizontal_scroll: 0,
@@ -945,8 +992,155 @@ impl AppState {
         self.active_tab = tab;
     }
 
-    pub fn current_table_state(&mut self) -> &mut TableState {
-        match &self.active_tab {
+    pub fn set_selection_for_index(
+        &mut self,
+        tab: &TabKind,
+        index: Option<usize>,
+        visible: &[SelectionIdentity],
+    ) {
+        let index = index.filter(|i| *i < visible.len());
+        self.table_state_for_mut(tab).select(index);
+        let identity = index.and_then(|i| visible.get(i).cloned());
+        self.set_selection_identity_for(tab, identity);
+    }
+
+    pub fn move_selection(&mut self, delta: isize, visible: &[SelectionIdentity]) {
+        let tab = self.active_tab.clone();
+        if self.selection_is_stale_for(&tab, visible) {
+            self.clear_selection_for(&tab);
+            return;
+        }
+        let next = if visible.is_empty() {
+            None
+        } else {
+            match self.selected_index_for(&tab, visible) {
+                Some(current) if delta < 0 => Some(current.saturating_sub(delta.unsigned_abs())),
+                Some(current) => Some(
+                    current
+                        .saturating_add(delta as usize)
+                        .min(visible.len() - 1),
+                ),
+                // The first movement/selection starts at the first row. This
+                // makes an empty list selection behave consistently for j/k
+                // and Space.
+                None => Some(0),
+            }
+        };
+        self.set_selection_for_index(&tab, next, visible);
+    }
+
+    pub fn clear_selection_for(&mut self, tab: &TabKind) {
+        self.table_state_for_mut(tab).select(None);
+        self.set_selection_identity_for(tab, None);
+    }
+
+    pub fn selection_is_stale_for(&self, tab: &TabKind, visible: &[SelectionIdentity]) -> bool {
+        self.selection_identity_for(tab)
+            .is_some_and(|selected| !visible.iter().any(|candidate| selected.matches(candidate)))
+    }
+
+    fn selection_identity_for(&self, tab: &TabKind) -> Option<&SelectionIdentity> {
+        match tab {
+            TabKind::Controller => self.backlog_selection.as_ref(),
+            TabKind::Terraform => self.tf_selection.as_ref(),
+            TabKind::Kustomizations => self.ks_selection.as_ref(),
+            TabKind::Runners => self.runner_selection.as_ref(),
+            TabKind::CustomTab(i) => self.custom_tab_selections[*i].as_ref(),
+        }
+    }
+
+    fn set_selection_identity_for(&mut self, tab: &TabKind, identity: Option<SelectionIdentity>) {
+        match tab {
+            TabKind::Controller => self.backlog_selection = identity,
+            TabKind::Terraform => self.tf_selection = identity,
+            TabKind::Kustomizations => self.ks_selection = identity,
+            TabKind::Runners => self.runner_selection = identity,
+            TabKind::CustomTab(i) => self.custom_tab_selections[*i] = identity,
+        }
+    }
+
+    /// Resolve the selected row by its stable identity when one is known;
+    /// otherwise use the table's index for the initial selection.
+    pub fn selected_index_for(
+        &self,
+        tab: &TabKind,
+        visible: &[SelectionIdentity],
+    ) -> Option<usize> {
+        if let Some(selected) = self.selection_identity_for(tab) {
+            visible
+                .iter()
+                .position(|candidate| selected.matches(candidate))
+        } else {
+            self.table_state_for(tab)
+                .selected()
+                .filter(|index| *index < visible.len())
+        }
+    }
+
+    /// Reconcile a table index with the identity of the selected row after a
+    /// live store/filter/sort refresh. A changed UID is treated as a new
+    /// object, so the old selection is cleared instead of silently moving to
+    /// the replacement.
+    pub fn reconcile_selection_for(&mut self, tab: &TabKind, visible: &[SelectionIdentity]) {
+        let stored = self.selection_identity_for(tab).cloned();
+        let current_index = self.table_state_for(tab).selected();
+        let (index, identity) = if let Some(stored) = stored {
+            visible
+                .iter()
+                .position(|candidate| stored.matches(candidate))
+                .map(|i| (Some(i), Some(visible[i].clone())))
+                .unwrap_or((None, None))
+        } else {
+            current_index
+                .and_then(|i| {
+                    visible
+                        .get(i)
+                        .cloned()
+                        .map(|identity| (Some(i), Some(identity)))
+                })
+                .unwrap_or((None, None))
+        };
+
+        self.table_state_for_mut(tab).select(index);
+        self.set_selection_identity_for(tab, identity);
+    }
+
+    /// Drop bulk targets that no longer belong to the active list scope. The
+    /// UID check prevents a recreated resource with the same name from
+    /// inheriting the old target. Expanded custom-tab rows intentionally
+    /// match by their underlying Terraform identity rather than row key.
+    pub fn reconcile_bulk_selection_for(&mut self, tab: &TabKind, visible: &[SelectionIdentity]) {
+        let kind = match tab {
+            TabKind::Terraform | TabKind::CustomTab(_) => ResourceKind::Terraform,
+            TabKind::Kustomizations => ResourceKind::Kustomization,
+            TabKind::Controller | TabKind::Runners => {
+                self.bulk_selected.clear();
+                return;
+            }
+        };
+
+        self.bulk_selected.retain(|_, target| {
+            target.kind == kind
+                && visible.iter().any(|candidate| {
+                    candidate.namespace == target.namespace
+                        && candidate.name == target.name
+                        && candidate.uid.as_deref() == Some(target.uid.as_str())
+                })
+        });
+    }
+
+    fn table_state_for(&self, tab: &TabKind) -> &TableState {
+        match tab {
+            TabKind::Controller => &self.backlog_table_state,
+            TabKind::Terraform => &self.tf_table_state,
+            TabKind::Kustomizations => &self.ks_table_state,
+            TabKind::Runners => &self.runner_table_state,
+            TabKind::CustomTab(i) => &self.custom_tab_states[*i],
+        }
+    }
+
+    fn table_state_for_mut(&mut self, tab: &TabKind) -> &mut TableState {
+        match tab {
             TabKind::Controller => &mut self.backlog_table_state,
             TabKind::Terraform => &mut self.tf_table_state,
             TabKind::Kustomizations => &mut self.ks_table_state,
@@ -1104,8 +1298,15 @@ impl AppState {
         self.ks_table_state = TableState::default();
         self.runner_table_state = TableState::default();
         self.backlog_table_state = TableState::default();
+        self.tf_selection = None;
+        self.ks_selection = None;
+        self.runner_selection = None;
+        self.backlog_selection = None;
         for st in &mut self.custom_tab_states {
             *st = TableState::default();
+        }
+        for selection in &mut self.custom_tab_selections {
+            *selection = None;
         }
         self.input_mode = InputMode::Normal;
     }
@@ -1414,6 +1615,46 @@ mod tests {
     }
 
     #[test]
+    fn bulk_selection_clears_hidden_or_recreated_targets() {
+        let mut state = make_state();
+        state.bulk_selected.insert(
+            ("ns".into(), "kept".into()),
+            crate::action::MutationTarget {
+                kind: ResourceKind::Terraform,
+                namespace: "ns".into(),
+                name: "kept".into(),
+                uid: "uid-kept".into(),
+                resource_version: "1".into(),
+            },
+        );
+        state.bulk_selected.insert(
+            ("ns".into(), "replaced".into()),
+            crate::action::MutationTarget {
+                kind: ResourceKind::Terraform,
+                namespace: "ns".into(),
+                name: "replaced".into(),
+                uid: "uid-old".into(),
+                resource_version: "1".into(),
+            },
+        );
+
+        state.reconcile_bulk_selection_for(
+            &TabKind::Terraform,
+            &[
+                identity("ns", "kept", "uid-kept"),
+                identity("ns", "replaced", "uid-new"),
+            ],
+        );
+
+        assert_eq!(state.bulk_selected.len(), 1);
+        assert!(
+            state
+                .bulk_selected
+                .contains_key(&("ns".into(), "kept".into()))
+        );
+    }
+
+    #[test]
     fn next_and_prev_tab_change_active_without_touching_stacks() {
         let mut state = make_state();
         state.current_view_stack_mut().push(ViewState::JsonViewer {
@@ -1484,6 +1725,58 @@ mod tests {
             state.log_viewer_mut_for(1),
             Some(ViewState::LogViewer { .. })
         ));
+    }
+
+    fn identity(namespace: &str, name: &str, uid: &str) -> SelectionIdentity {
+        SelectionIdentity::new(namespace.into(), name.into(), Some(uid.into()))
+    }
+
+    #[test]
+    fn selection_follows_a_row_when_visible_order_changes() {
+        let mut state = make_state();
+        let tab = TabKind::Terraform;
+        let visible = vec![
+            identity("ns", "first", "uid-1"),
+            identity("ns", "second", "uid-2"),
+        ];
+        state.set_selection_for_index(&tab, Some(1), &visible);
+        let reordered = vec![visible[1].clone(), visible[0].clone()];
+
+        state.reconcile_selection_for(&tab, &reordered);
+
+        assert_eq!(state.tf_table_state.selected(), Some(0));
+        assert_eq!(state.tf_selection, Some(visible[1].clone()));
+    }
+
+    #[test]
+    fn selection_clears_when_selected_uid_is_replaced() {
+        let mut state = make_state();
+        let tab = TabKind::Terraform;
+        let visible = vec![identity("ns", "demo", "uid-old")];
+        state.set_selection_for_index(&tab, Some(0), &visible);
+
+        state.reconcile_selection_for(&tab, &[identity("ns", "demo", "uid-new")]);
+
+        assert_eq!(state.tf_table_state.selected(), None);
+        assert_eq!(state.tf_selection, None);
+    }
+
+    #[test]
+    fn first_forward_move_selects_first_row_when_nothing_is_selected() {
+        let mut state = make_state();
+        state.active_tab = TabKind::Terraform;
+        let visible = vec![identity("ns", "demo", "uid")];
+
+        state.move_selection(1, &visible);
+
+        assert_eq!(state.tf_table_state.selected(), Some(0));
+        assert_eq!(state.tf_selection, Some(visible[0].clone()));
+    }
+
+    #[test]
+    fn selection_identity_without_uid_matches_by_name() {
+        let selected = SelectionIdentity::new("ns".into(), "demo".into(), None);
+        assert!(selected.matches(&identity("ns", "demo", "uid")));
     }
 
     #[test]
