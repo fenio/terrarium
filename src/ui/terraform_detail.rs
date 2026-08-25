@@ -167,43 +167,6 @@ fn render_spec(
     f.render_widget(Paragraph::new(lines).block(detail::block("Spec")), area);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn terraform_with_spec(spec: serde_json::Value) -> Terraform {
-        serde_json::from_value(serde_json::json!({
-            "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
-            "kind": "Terraform",
-            "metadata": {"name": "demo", "namespace": "ns"},
-            "spec": spec
-        }))
-        .expect("minimal Terraform should deserialize")
-    }
-
-    #[test]
-    fn destroy_on_deletion_defaults_to_false_and_reads_true() {
-        let base_spec = serde_json::json!({
-            "interval": "1m",
-            "sourceRef": {"kind": "GitRepository", "name": "source"}
-        });
-        let defaulted = terraform_with_spec(base_spec.clone());
-        let enabled = terraform_with_spec(serde_json::json!({
-            "interval": "1m",
-            "sourceRef": {"kind": "GitRepository", "name": "source"},
-            "destroyResourcesOnDeletion": true
-        }));
-
-        assert!(
-            !defaulted
-                .spec
-                .destroy_resources_on_deletion
-                .unwrap_or(false)
-        );
-        assert!(enabled.spec.destroy_resources_on_deletion.unwrap_or(false));
-    }
-}
-
 fn render_status(
     f: &mut Frame,
     area: Rect,
@@ -304,4 +267,41 @@ fn render_status(
     }
 
     f.render_widget(Paragraph::new(lines).block(detail::block("Status")), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn terraform_with_spec(spec: serde_json::Value) -> Terraform {
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
+            "kind": "Terraform",
+            "metadata": {"name": "demo", "namespace": "ns"},
+            "spec": spec
+        }))
+        .expect("minimal Terraform should deserialize")
+    }
+
+    #[test]
+    fn destroy_on_deletion_defaults_to_false_and_reads_true() {
+        let base_spec = serde_json::json!({
+            "interval": "1m",
+            "sourceRef": {"kind": "GitRepository", "name": "source"}
+        });
+        let defaulted = terraform_with_spec(base_spec.clone());
+        let enabled = terraform_with_spec(serde_json::json!({
+            "interval": "1m",
+            "sourceRef": {"kind": "GitRepository", "name": "source"},
+            "destroyResourcesOnDeletion": true
+        }));
+
+        assert!(
+            !defaulted
+                .spec
+                .destroy_resources_on_deletion
+                .unwrap_or(false)
+        );
+        assert!(enabled.spec.destroy_resources_on_deletion.unwrap_or(false));
+    }
 }

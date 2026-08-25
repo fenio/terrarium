@@ -537,35 +537,6 @@ fn has_drift_been_seen(tf: &Terraform) -> bool {
         .is_some()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn terraform_with_status(status: serde_json::Value) -> Terraform {
-        serde_json::from_value(serde_json::json!({
-            "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
-            "kind": "Terraform",
-            "metadata": {"name": "demo", "namespace": "ns"},
-            "spec": {
-                "interval": "1m",
-                "sourceRef": {"kind": "GitRepository", "name": "source"}
-            },
-            "status": status
-        }))
-        .expect("minimal Terraform should deserialize")
-    }
-
-    #[test]
-    fn drift_seen_is_historical() {
-        let tf = terraform_with_status(serde_json::json!({
-            "lastDriftDetectedAt": "2026-08-24T12:00:00Z"
-        }));
-
-        assert!(has_drift_been_seen(&tf));
-        assert!(!is_drifting_now(&tf));
-    }
-}
-
 // ----- Metrics panel -----
 
 fn render_metrics_panel(f: &mut Frame, area: Rect, state: &AppState) {
@@ -829,5 +800,34 @@ fn color_for_p99(value: Option<f64>, off_scale: Option<f64>) -> Color {
         Some(s) if s >= 10.0 => Color::Rgb(240, 200, 60),
         Some(_) => Color::Rgb(110, 200, 110),
         None => Color::White,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn terraform_with_status(status: serde_json::Value) -> Terraform {
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
+            "kind": "Terraform",
+            "metadata": {"name": "demo", "namespace": "ns"},
+            "spec": {
+                "interval": "1m",
+                "sourceRef": {"kind": "GitRepository", "name": "source"}
+            },
+            "status": status
+        }))
+        .expect("minimal Terraform should deserialize")
+    }
+
+    #[test]
+    fn drift_seen_is_historical() {
+        let tf = terraform_with_status(serde_json::json!({
+            "lastDriftDetectedAt": "2026-08-24T12:00:00Z"
+        }));
+
+        assert!(has_drift_been_seen(&tf));
+        assert!(!is_drifting_now(&tf));
     }
 }
