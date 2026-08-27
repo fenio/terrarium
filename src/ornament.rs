@@ -65,7 +65,7 @@ const ART_CREDITS: [&str; 3] = [
     "  dolphin - jgs",
 ];
 
-const DEDICATION: &str = "For GP, Danny Levin Award 2026 winner, with love from the Kupala team";
+const DEDICATION: &str = "For GP with love from the Kupala team";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct AnimationFrame {
@@ -417,11 +417,8 @@ mod tests {
     }
 
     #[test]
-    fn dedication_names_the_award_winner() {
-        assert_eq!(
-            DEDICATION,
-            "For GP, Danny Levin Award 2026 winner, with love from the Kupala team"
-        );
+    fn dedication_uses_the_short_message() {
+        assert_eq!(DEDICATION, "For GP with love from the Kupala team");
         assert!(!GECKO_ART.starts_with("Tokee"));
         assert!(!GECKO_ART.contains("Gecko gekko"));
     }
