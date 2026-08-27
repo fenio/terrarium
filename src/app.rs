@@ -46,6 +46,10 @@ pub struct App {
     /// so a context switch never leaves watchers pointed at the old
     /// cluster writing into orphaned stores.
     conn_tasks: std::sync::Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    /// True while the initial context picker is waiting for a choice. Escape
+    /// exits without connecting; the normal in-app picker keeps its usual
+    /// cancel behavior.
+    initial_context_picker: bool,
 }
 
 impl Drop for App {
@@ -77,6 +81,7 @@ impl App {
             controller_ns: "flux-system".to_string(),
             tf_debug_log: None,
             conn_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            initial_context_picker: false,
         }
     }
 
@@ -103,7 +108,23 @@ impl App {
             controller_ns,
             tf_debug_log,
             conn_tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            initial_context_picker: false,
         }
+    }
+
+    /// Show the context picker before the first connection when a kubeconfig
+    /// contains several contexts and no explicit `--context` was supplied.
+    pub fn begin_initial_context_selection(&mut self, contexts: Vec<String>) {
+        if contexts.is_empty() {
+            return;
+        }
+        self.state.ctx_picker_selected = contexts
+            .iter()
+            .position(|context| context == &self.state.context_name)
+            .unwrap_or(0);
+        self.state.ctx_picker_items = contexts;
+        self.state.input_mode = InputMode::ContextPicker;
+        self.initial_context_picker = true;
     }
 
     /// (Re)connect the app to `context`, or the switcher kubeconfig's
@@ -1992,6 +2013,7 @@ impl App {
             }
             Action::ContextPickerSelect => {
                 self.state.input_mode = InputMode::Normal;
+                self.initial_context_picker = false;
                 if let Some(ctx) = self
                     .state
                     .ctx_picker_items
@@ -2006,7 +2028,13 @@ impl App {
                 }
             }
             Action::ContextPickerCancel => {
-                self.state.input_mode = InputMode::Normal;
+                if self.initial_context_picker {
+                    self.initial_context_picker = false;
+                    self.state.input_mode = InputMode::Normal;
+                    self.should_quit = true;
+                } else {
+                    self.state.input_mode = InputMode::Normal;
+                }
             }
             Action::SwitchContext(ctx) => {
                 // Normally intercepted by the run loop (which can suspend
