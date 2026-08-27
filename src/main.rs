@@ -112,21 +112,34 @@ async fn main() -> anyhow::Result<()> {
         .as_ref()
         .and_then(write_switcher_kubeconfig);
 
+    // The effective kubeconfig is the merged switcher output when configured,
+    // otherwise the regular on-disk kubeconfig. Keep it around for startup
+    // selection and the exec-auth preflight below.
+    let effective_kubeconfig = switcher_kubeconfig
+        .as_ref()
+        .cloned()
+        .or_else(|| kube::config::Kubeconfig::read().ok());
+    let initial_contexts: Vec<String> = effective_kubeconfig
+        .as_ref()
+        .map(|kc| {
+            kc.contexts
+                .iter()
+                .map(|context| context.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let choose_initial_context =
+        should_choose_initial_context(cli.context.as_deref(), initial_contexts.len());
+
     // Build app state immediately with empty stores. Prefer an explicit
-    // --context, then the switcher kubeconfig's current-context, then the
-    // on-disk kubeconfig's.
+    // --context, then the effective kubeconfig's current-context.
     let context_label = cli
         .context
         .clone()
         .or_else(|| {
-            switcher_kubeconfig
+            effective_kubeconfig
                 .as_ref()
                 .and_then(|kc| kc.current_context.clone())
-        })
-        .or_else(|| {
-            kube::config::Kubeconfig::read()
-                .ok()
-                .and_then(|kc| kc.current_context)
         })
         .unwrap_or_else(|| "connecting...".to_string());
 
@@ -167,23 +180,18 @@ async fn main() -> anyhow::Result<()> {
             Some((w, std::time::Instant::now(), state::store::FlashKind::Error));
     }
 
-    // Pre-flight `exec`/OIDC credential plugins on the normal terminal,
-    // before entering the alternate screen. If the initial context uses an
-    // exec plugin (OIDC browser login, aws/gke/azure token, …) this lets it
-    // run any interactive step and cache its token cleanly, so the client
-    // connect below never garbles the TUI. No-op for token/cert contexts.
-    {
-        let effective_kc = switcher_kubeconfig
-            .clone()
-            .or_else(|| kube::config::Kubeconfig::read().ok());
-        if let Some(exec) = effective_kc
+    // For the automatic startup path, pre-flight `exec`/OIDC credential
+    // plugins on the normal terminal before entering the alternate screen.
+    // Multi-context startup defers this until the user chooses a context, so
+    // the selected context is the one that gets prewarmed.
+    if !choose_initial_context
+        && let Some(exec) = effective_kubeconfig
             .as_ref()
             .and_then(|kc| k8s::exec_auth::exec_for_context(kc, cli.context.as_deref()))
-        {
-            eprintln!("Authenticating to {context_label} … (a browser may open)");
-            if let Err(e) = k8s::exec_auth::prewarm(&exec) {
-                eprintln!("Warning: pre-authentication failed: {e}");
-            }
+    {
+        eprintln!("Authenticating to {context_label} … (a browser may open)");
+        if let Err(e) = k8s::exec_auth::prewarm(&exec) {
+            eprintln!("Warning: pre-authentication failed: {e}");
         }
     }
 
@@ -192,8 +200,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Now that we're on the alternate screen, send stderr to the log file so
     // a failing kube exec/OIDC credential plugin (run lazily by kube-rs with
-    // inherited stderr) can't garble the TUI. The pre-flight auth above ran
-    // before this, so its prompts reached the real terminal.
+    // inherited stderr) can't garble the TUI. Automatic-startup preflight
+    // auth ran before this; deferred startup auth suspends the TUI cleanly.
     logging::capture_stderr();
 
     // Optional per-event TF condition trace, enabled by setting
@@ -215,8 +223,15 @@ async fn main() -> anyhow::Result<()> {
         tf_debug_log,
     );
 
-    // Kick off the initial connection (spawns client init + watchers).
-    app.connect(cli.context.clone());
+    // Let the user choose a kube-context before connecting when a merged
+    // kubeconfig offers several contexts. Explicit --context remains
+    // authoritative, and single-context kubeconfigs keep the old fast path.
+    if choose_initial_context {
+        app.begin_initial_context_selection(initial_contexts);
+    } else {
+        // Kick off the initial connection (spawns client init + watchers).
+        app.connect(cli.context.clone());
+    }
 
     // Run the app (renders immediately, data fills in as watchers connect)
     let result = app.run(&mut terminal).await;
@@ -225,6 +240,10 @@ async fn main() -> anyhow::Result<()> {
     tui::restore()?;
 
     result
+}
+
+fn should_choose_initial_context(explicit_context: Option<&str>, context_count: usize) -> bool {
+    explicit_context.is_none() && context_count > 1
 }
 
 /// Run the `[switcher] builder` command via `sh -c` and parse its stdout
@@ -317,6 +336,15 @@ fn sweep_stale_switcher_kubeconfigs(dir: &std::path::Path) {
 
 #[cfg(test)]
 mod tests {
+    use super::should_choose_initial_context;
+
+    #[test]
+    fn startup_context_picker_requires_multiple_contexts_without_override() {
+        assert!(should_choose_initial_context(None, 2));
+        assert!(!should_choose_initial_context(None, 1));
+        assert!(!should_choose_initial_context(Some("prod"), 2));
+    }
+
     /// The switcher kubeconfig we write for tfctl must serialize back to YAML
     /// that still parses as a kubeconfig with the same contexts — otherwise
     /// `tfctl --context <name>` can't resolve anything.

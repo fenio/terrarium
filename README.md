@@ -523,6 +523,12 @@ The `builder`:
 - is optional — a missing or failing builder is non-fatal; Terrarium falls back
   to the on-disk kubeconfig and shows a flash message.
 
+When no `--context` is supplied and the effective kubeconfig contains multiple
+contexts, Terrarium opens this picker before connecting so you can choose the
+cluster. The current kubeconfig context is highlighted and preselected. A
+single-context kubeconfig keeps the automatic startup behavior; `--context`
+always selects its named context directly.
+
 **Interactive auth (OIDC / exec plugins).** If a context authenticates via a
 client-go `exec` credential plugin (`kubectl oidc-login`, `aws eks get-token`,
 `gke-gcloud-auth-plugin`, Azure, …), Terrarium pre-authenticates it on the
