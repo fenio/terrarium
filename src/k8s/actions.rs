@@ -294,6 +294,29 @@ pub async fn reset_break_the_glass(client: &kube::Client, target: &MutationTarge
     Ok(())
 }
 
+/// Remove all finalizers from a Terraform object after validating the exact
+/// object selected by the operator. This bypasses controller cleanup and can
+/// orphan managed infrastructure, so the UI requires explicit confirmation.
+pub async fn remove_terraform_finalizers(
+    client: &kube::Client,
+    target: &MutationTarget,
+) -> Result<()> {
+    let api = terraform_api(client, target)?;
+    validated_terraform(&api, target).await?;
+    let patch = patch_with_resource_version(target, remove_finalizers_patch())?;
+    api.patch(
+        &target.name,
+        &PatchParams::apply("terrarium"),
+        &Patch::Merge(&patch),
+    )
+    .await?;
+    Ok(())
+}
+
+fn remove_finalizers_patch() -> serde_json::Value {
+    json!({ "metadata": { "finalizers": null } })
+}
+
 fn reset_break_the_glass_patch() -> serde_json::Value {
     json!({
         "spec": { "breakTheGlass": false },
@@ -372,6 +395,13 @@ pub async fn fetch_secret_values(
 pub async fn delete_terraform(client: &kube::Client, target: &MutationTarget) -> Result<()> {
     let api = terraform_api(client, target)?;
     validated_terraform(&api, target).await?;
+    api.delete(&target.name, &delete_params(target)).await?;
+    Ok(())
+}
+
+pub async fn delete_kustomization(client: &kube::Client, target: &MutationTarget) -> Result<()> {
+    let api = kustomization_api(client, target)?;
+    validated_kustomization(&api, target).await?;
     api.delete(&target.name, &delete_params(target)).await?;
     Ok(())
 }
@@ -762,7 +792,8 @@ fn safe_label_value(value: &str) -> String {
 mod tests {
     use super::{
         BREAK_THE_GLASS_ANNOTATION, break_the_glass_active, delete_params,
-        patch_with_resource_version, reset_break_the_glass_patch, validate_metadata,
+        patch_with_resource_version, remove_finalizers_patch, reset_break_the_glass_patch,
+        validate_metadata,
     };
     use crate::action::{MutationTarget, ResourceKind};
     use crate::k8s::terraform::Terraform;
@@ -819,12 +850,38 @@ mod tests {
     }
 
     #[test]
+    fn remove_finalizers_patch_carries_resource_version_and_only_finalizer_removal() {
+        let patch = patch_with_resource_version(&target(), remove_finalizers_patch())
+            .expect("finalizer patch should be accepted");
+        assert_eq!(patch["metadata"]["finalizers"], serde_json::Value::Null);
+        assert_eq!(patch["metadata"]["resourceVersion"], "17");
+        assert_eq!(patch["metadata"].as_object().map(|m| m.len()), Some(2));
+        assert!(patch.get("spec").is_none());
+    }
+
+    #[test]
     fn delete_params_carry_uid_and_resource_version_preconditions() {
         let params =
             serde_json::to_value(delete_params(&target())).expect("delete params serialize");
         assert_eq!(
             params["preconditions"],
             serde_json::json!({"uid": "uid-old", "resourceVersion": "17"})
+        );
+    }
+
+    #[test]
+    fn kustomization_delete_params_carry_uid_and_resource_version_preconditions() {
+        let target = MutationTarget {
+            kind: ResourceKind::Kustomization,
+            namespace: "ns".into(),
+            name: "demo".into(),
+            uid: "uid-ks".into(),
+            resource_version: "23".into(),
+        };
+        let params = serde_json::to_value(delete_params(&target)).expect("delete params serialize");
+        assert_eq!(
+            params["preconditions"],
+            serde_json::json!({"uid": "uid-ks", "resourceVersion": "23"})
         );
     }
 

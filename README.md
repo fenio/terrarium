@@ -141,6 +141,7 @@ These work in both the Terraform list and detail views:
 | `S` | Open the configured-shortcuts popup (see [Custom Shortcuts](#custom-shortcuts)) |
 | `s` / `u` | Suspend / Resume |
 | `F` | Force unlock state (with confirmation) |
+| `X` | Remove all Terraform finalizers (type the name to confirm; emergency use) |
 | `x` | Break the glass — drop into `tfctl` shell |
 | `C` | Clear BTG mode (flag and session annotation, with confirmation) |
 | `L` | Stream runner logs |
@@ -151,6 +152,11 @@ the recovery action for a stuck BTG state; it clears both
 `spec.breakTheGlass` and the `break-the-glass.tf-controller/requestedAt`
 annotation without changing any other spec fields.
 
+`X` is an emergency action for a Terraform stuck terminating: it removes all
+finalizers and bypasses tofu-controller cleanup, which can orphan managed
+infrastructure. It validates the selected object's UID and resource version
+and requires typing the resource name before applying the change.
+
 ### Kustomization Actions
 
 | Key | Action |
@@ -160,6 +166,7 @@ annotation without changing any other spec fields.
 | `e` | View Kubernetes events |
 | `c` | View full conditions (scrollable) |
 | `s` / `u` | Suspend / Resume |
+| `d` | Delete the Kustomization (type the name to confirm) |
 
 ### Runner Actions
 

@@ -767,6 +767,15 @@ impl App {
                 }),
                 format!("Disable persistent break-the-glass mode for {ns}/{name}?"),
             )),
+            KeyCode::Char('X') => Some(Action::ShowTypedConfirmDialog(
+                Box::new(Action::RemoveFinalizers {
+                    target: mutation_target.clone()?,
+                }),
+                format!(
+                    "DANGER: remove ALL finalizers from Terraform {ns}/{name}? This bypasses controller cleanup and may orphan managed infrastructure. Type the resource name to confirm:"
+                ),
+                name.clone(),
+            )),
             KeyCode::Char('d') => {
                 // Deleting a Terraform object is not like killing a runner pod:
                 // tofu-controller reacts to the deletion and (when
@@ -879,6 +888,7 @@ impl App {
                 &ks.metadata.resource_version,
             )
         });
+        let prune = ks.as_ref().is_some_and(|ks| ks.spec.prune);
 
         match code {
             KeyCode::Char('r') => Some(Action::Reconcile {
@@ -893,6 +903,26 @@ impl App {
             KeyCode::Char('u') => Some(Action::Resume {
                 target: mutation_target?,
             }),
+            KeyCode::Char('d') => {
+                let message = if prune {
+                    format!(
+                        "DANGER: {ns}/{name} has prune=true. Deleting it may garbage-collect its managed resources. \
+                         Type the resource name to confirm:"
+                    )
+                } else {
+                    format!(
+                        "DELETE Kustomization object {ns}/{name}? Its managed resources may remain. \
+                         Type the resource name to confirm:"
+                    )
+                };
+                Some(Action::ShowTypedConfirmDialog(
+                    Box::new(Action::DeleteResource {
+                        target: mutation_target.clone()?,
+                    }),
+                    message,
+                    name.clone(),
+                ))
+            }
             KeyCode::Char('y') => Some(Action::FetchJson {
                 kind: ResourceKind::Kustomization,
                 namespace: ns.clone(),
@@ -2270,6 +2300,7 @@ impl App {
             | Action::ApprovePlan { .. }
             | Action::ForceUnlock { .. }
             | Action::ResetBreakTheGlass { .. }
+            | Action::RemoveFinalizers { .. }
             | Action::DeleteResource { .. }
             | Action::KillRunner { .. } => {
                 self.spawn_k8s_action(action);
@@ -3579,7 +3610,14 @@ async fn execute_k8s_action(
         Action::ResetBreakTheGlass { target } => {
             k8s_actions::reset_break_the_glass(client, target).await
         }
-        Action::DeleteResource { target } => k8s_actions::delete_terraform(client, target).await,
+        Action::RemoveFinalizers { target } => {
+            k8s_actions::remove_terraform_finalizers(client, target).await
+        }
+        Action::DeleteResource { target } => match target.kind {
+            ResourceKind::Terraform => k8s_actions::delete_terraform(client, target).await,
+            ResourceKind::Kustomization => k8s_actions::delete_kustomization(client, target).await,
+            ResourceKind::Pod => Ok(()),
+        },
         Action::KillRunner { target } => k8s_actions::delete_pod(client, target).await,
         _ => Ok(()),
     }
@@ -3595,6 +3633,7 @@ fn action_resource_target(action: &Action) -> Option<&MutationTarget> {
         | Action::Replan { target }
         | Action::ForceUnlock { target }
         | Action::ResetBreakTheGlass { target }
+        | Action::RemoveFinalizers { target }
         | Action::DeleteResource { target }
         | Action::KillRunner { target }
         | Action::Reconcile { target }
@@ -3679,8 +3718,19 @@ fn format_success_message(action: &Action) -> String {
                 target.namespace, target.name
             )
         }
+        Action::RemoveFinalizers { target } => {
+            format!(
+                "Removed finalizers from Terraform {}/{}",
+                target.namespace, target.name
+            )
+        }
         Action::DeleteResource { target } => {
-            format!("Deleted {}/{}", target.namespace, target.name)
+            let kind = match target.kind {
+                ResourceKind::Terraform => "Terraform",
+                ResourceKind::Kustomization => "Kustomization",
+                ResourceKind::Pod => "runner",
+            };
+            format!("Deleted {kind} {}/{}", target.namespace, target.name)
         }
         Action::KillRunner { target } => {
             format!("Killed runner {}/{}", target.namespace, target.name)

@@ -109,6 +109,7 @@ fn build_right_column(state: &AppState) -> Vec<Line<'static>> {
         help_line("c", "View full conditions"),
         help_line("s / u", "Suspend / Resume"),
         help_line("F", "Force unlock state"),
+        help_line("X", "Remove all finalizers (dangerous)"),
         help_line("L", "Stream runner logs"),
         help_line_dim_if(
             "x",
@@ -128,6 +129,7 @@ fn build_right_column(state: &AppState) -> Vec<Line<'static>> {
         help_line("e", "View events"),
         help_line("c", "View full conditions"),
         help_line("s / u", "Suspend / Resume"),
+        help_line("d", "Delete Kustomization (type name)"),
         Line::from(""),
         section_header("Runner Actions"),
         help_line("e", "View events"),
