@@ -243,6 +243,11 @@ pub enum Action {
     ResetBreakTheGlass {
         target: MutationTarget,
     },
+    /// Remove all finalizers from a Terraform object, bypassing controller
+    /// cleanup. This is intentionally separate from normal deletion.
+    RemoveFinalizers {
+        target: MutationTarget,
+    },
     DeleteResource {
         target: MutationTarget,
     },

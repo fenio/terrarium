@@ -250,7 +250,12 @@ fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>
                     Group(&[("j/k", "nav"), ("Enter", "detail")]),
                     Group(&[("a", "approve"), ("r", "reconcile"), ("R", "replan")]),
                     Group(&[("s/u", "suspend/resume"), ("p", "plan"), ("F", "unlock")]),
-                    Group(&[("d", "delete"), ("x", "btg"), ("C", "unbtg")]),
+                    Group(&[
+                        ("d", "delete"),
+                        ("X", "finalizers"),
+                        ("x", "btg"),
+                        ("C", "unbtg"),
+                    ]),
                 ],
                 tfctl_disabled,
             )
@@ -258,7 +263,11 @@ fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>
         ViewState::List(TabKind::Kustomizations) => render_groups(
             &[
                 Group(&[("j/k", "nav"), ("Enter", "detail")]),
-                Group(&[("r", "reconcile"), ("s/u", "suspend/resume")]),
+                Group(&[
+                    ("r", "reconcile"),
+                    ("s/u", "suspend/resume"),
+                    ("d", "delete"),
+                ]),
             ],
             &[],
         ),
@@ -286,7 +295,11 @@ fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>
         ViewState::KustomizationDetail { .. } => render_groups(
             &[
                 Group(&[("Esc", "back")]),
-                Group(&[("r", "reconcile"), ("s/u", "suspend/resume")]),
+                Group(&[
+                    ("r", "reconcile"),
+                    ("s/u", "suspend/resume"),
+                    ("d", "delete"),
+                ]),
             ],
             &[],
         ),

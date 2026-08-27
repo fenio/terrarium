@@ -176,6 +176,7 @@ fn handle_list_key(key: KeyEvent) -> Action {
         | KeyCode::Char('d')
         | KeyCode::Char('p')
         | KeyCode::Char('F')
+        | KeyCode::Char('X')
         | KeyCode::Char('C')
         | KeyCode::Char('y')
         | KeyCode::Char('Y')
@@ -210,6 +211,7 @@ fn handle_detail_key(key: KeyEvent) -> Action {
         | KeyCode::Char('u')
         | KeyCode::Char('p')
         | KeyCode::Char('F')
+        | KeyCode::Char('X')
         | KeyCode::Char('C')
         | KeyCode::Char('y')
         | KeyCode::Char('Y')
@@ -313,7 +315,7 @@ mod tests {
         // These are routed to TF/KS resolvers in app.rs — handle_detail_key
         // must NOT swallow them, so they fall through to context resolution.
         for ch in [
-            'a', 'r', 'R', 's', 'u', 'p', 'F', 'C', 'y', 'Y', 'e', 'c', 'O', 'x', 'L',
+            'a', 'r', 'R', 's', 'u', 'p', 'F', 'X', 'C', 'y', 'Y', 'e', 'c', 'O', 'x', 'L',
         ] {
             assert!(
                 matches!(handle_detail_key(key(KeyCode::Char(ch))), Action::None),
