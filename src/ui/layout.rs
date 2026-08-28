@@ -615,7 +615,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
         let pill_x = area.x + area.width.saturating_sub(pill_width as u16 + 1);
         let pill_area = Rect {
             x: pill_x,
-            y: area.y + 4,
+            y: area.y + 6,
             width: pill_width as u16,
             height: 1,
         };
