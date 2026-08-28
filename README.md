@@ -146,6 +146,7 @@ These work in both the Terraform list and detail views:
 | `C` | Clear BTG mode (flag and session annotation, with confirmation) |
 | `L` | Stream runner logs |
 | `d` | Delete the resource (with confirmation) |
+| `E` | Export visible Terraform names to a file |
 
 `x` starts the one-time `tfctl break-glass` troubleshooting session. `C` is
 the recovery action for a stuck BTG state; it clears both

@@ -122,6 +122,7 @@ fn build_right_column(state: &AppState) -> Vec<Line<'static>> {
         ),
         help_line("C", "Unbreak the glass (clear BTG markers)"),
         help_line("d", "Delete resource"),
+        help_line("E", "Export visible Terraform names"),
         Line::from(""),
         section_header("Kustomization Actions"),
         help_line("r", "Reconcile"),

@@ -355,6 +355,8 @@ pub enum Action {
 
     // Save viewer content to file
     SaveViewerContent,
+    /// Export the names of the currently visible Terraform rows.
+    ExportTerraformNames,
 
     // K8s data events
     TerraformStoreUpdated,

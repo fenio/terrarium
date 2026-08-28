@@ -256,6 +256,7 @@ fn build_help_lines(state: &AppState) -> (Vec<Span<'static>>, Vec<Span<'static>>
                         ("x", "btg"),
                         ("C", "unbtg"),
                     ]),
+                    Group(&[("E", "export names")]),
                 ],
                 tfctl_disabled,
             )

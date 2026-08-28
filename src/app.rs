@@ -2172,6 +2172,9 @@ impl App {
             Action::SaveViewerContent => {
                 self.save_viewer_content();
             }
+            Action::ExportTerraformNames => {
+                self.export_terraform_names();
+            }
 
             // Confirm dialog
             Action::ShowConfirmDialog(wrapped, message) => {
@@ -3133,6 +3136,52 @@ impl App {
         }
     }
 
+    fn export_terraform_names(&mut self) {
+        if !matches!(self.state.active_tab, TabKind::Terraform) {
+            return;
+        }
+
+        let items = get_filtered_terraforms(
+            &self.state.tf_store,
+            &self.state.namespace_filter,
+            self.state.effective_search_query(),
+            self.state.show_failures_only,
+            self.state.show_waiting_only,
+            self.state.show_progressing_only,
+            self.state.show_drifting_only,
+            self.state.show_deleting_only,
+            &self.state.recently_acted,
+            self.state.sort_column,
+            self.state.sort_descending,
+        );
+        let names = terraform_names_text(&items);
+        let timestamp = jiff::Timestamp::now().strftime("%Y%m%d_%H%M%S");
+        let filename = format!("terrarium_terraform_names_{timestamp}.txt");
+
+        match create_private_file(&filename).and_then(|mut file| {
+            file.write_all(names.as_bytes())?;
+            if !names.is_empty() {
+                file.write_all(b"\n")?;
+            }
+            Ok(())
+        }) {
+            Ok(()) => {
+                self.state.flash_message = Some((
+                    format!("Exported {} Terraform name(s) to {filename}", items.len()),
+                    Instant::now(),
+                    FlashKind::Success,
+                ));
+            }
+            Err(error) => {
+                self.state.flash_message = Some((
+                    format!("Export error: {error}"),
+                    Instant::now(),
+                    FlashKind::Error,
+                ));
+            }
+        }
+    }
+
     fn open_shortcut(&mut self, namespace: &str, name: &str, shortcut_idx: usize) {
         let shortcut = match self.state.config.shortcuts.get(shortcut_idx) {
             Some(s) => s.clone(),
@@ -3767,6 +3816,18 @@ fn format_success_message(action: &Action) -> String {
     }
 }
 
+fn terraform_names_text(items: &[crate::k8s::terraform::Terraform]) -> String {
+    let names = items
+        .iter()
+        .filter_map(|tf| tf.metadata.name.as_deref())
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", names.join("\n"))
+    }
+}
+
 /// Create a file with restrictive permissions (owner-only read/write).
 #[cfg(unix)]
 fn create_private_file(path: &str) -> std::io::Result<std::fs::File> {
@@ -3993,7 +4054,7 @@ fn lookup_output_path(outputs: &std::collections::HashMap<String, String>, path:
 mod tests {
     use super::{
         first_uncached_secret, resolve_map_placeholders, resolve_output_placeholders,
-        resolve_secret_placeholders, resolve_var_placeholders,
+        resolve_secret_placeholders, resolve_var_placeholders, terraform_names_text,
     };
     use std::collections::{BTreeMap, HashMap};
 
@@ -4263,5 +4324,27 @@ mod tests {
         let result =
             resolve_var_placeholders("{var.host}/{var.env}/{var.host}", &vars, "ctx", &mut warned);
         assert_eq!(result, "h.example/prod/h.example");
+    }
+
+    #[test]
+    fn terraform_names_text_writes_one_name_per_line() {
+        let items: Vec<crate::k8s::terraform::Terraform> = vec![
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
+                "kind": "Terraform",
+                "metadata": {"name": "cluster-a", "namespace": "ns"},
+                "spec": {"interval": "1m", "sourceRef": {"kind": "GitRepository", "name": "source"}}
+            }))
+            .expect("first Terraform should deserialize"),
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
+                "kind": "Terraform",
+                "metadata": {"name": "cluster-b", "namespace": "ns"},
+                "spec": {"interval": "1m", "sourceRef": {"kind": "GitRepository", "name": "source"}}
+            }))
+            .expect("second Terraform should deserialize"),
+        ];
+
+        assert_eq!(terraform_names_text(&items), "cluster-a\ncluster-b\n");
     }
 }
