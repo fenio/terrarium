@@ -167,6 +167,7 @@ fn handle_list_key(key: KeyEvent) -> Action {
         // 'S' opens the Shortcuts popup; resolved against the selected
         // resource in app.rs (so it's a no-op when nothing is selected).
         KeyCode::Char('S') => Action::None,
+        KeyCode::Char('E') => Action::ExportTerraformNames,
         // Context-dependent actions resolved in app.rs
         KeyCode::Char('a')
         | KeyCode::Char('r')
