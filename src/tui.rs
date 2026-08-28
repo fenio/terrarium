@@ -1,5 +1,5 @@
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
+    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
     execute,
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -10,9 +10,14 @@ pub type Tui = Terminal<CrosstermBackend<io::Stdout>>;
 
 pub fn init(mouse: bool) -> io::Result<Tui> {
     if mouse {
-        execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+        execute!(
+            stdout(),
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            EnableBracketedPaste
+        )?;
     } else {
-        execute!(stdout(), EnterAlternateScreen)?;
+        execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
     }
     terminal::enable_raw_mode()?;
     let backend = CrosstermBackend::new(stdout());
@@ -26,7 +31,12 @@ pub fn restore() -> io::Result<()> {
     // (OIDC browser login, tfctl) can print to the screen.
     crate::logging::stderr_to_terminal();
     terminal::disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(
+        stdout(),
+        LeaveAlternateScreen,
+        DisableMouseCapture,
+        DisableBracketedPaste
+    )?;
     Ok(())
 }
 
@@ -44,9 +54,14 @@ pub fn restore() -> io::Result<()> {
 /// the next draw is guaranteed to repaint every cell.
 pub fn resume(terminal: &mut Tui, mouse: bool) -> io::Result<()> {
     if mouse {
-        execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+        execute!(
+            stdout(),
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            EnableBracketedPaste
+        )?;
     } else {
-        execute!(stdout(), EnterAlternateScreen)?;
+        execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
     }
     terminal::enable_raw_mode()?;
     // Clear the physical screen (no cursor round-trip), then swap in a fresh

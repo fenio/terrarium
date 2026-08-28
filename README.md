@@ -89,6 +89,7 @@ having to back out first.
 |-----|--------|
 | `/` | Search / filter by name or namespace |
 | `\` | Pause / resume active filter (keeps the query) |
+| Paste | Pasted filter text is applied as one update |
 | `f` | Toggle failures-only filter (real failures — excludes in-flight reconciles) |
 | `w` | Toggle waiting-only filter (Ready but past reconciliation interval) |
 | `P` | Toggle progressing-only filter (currently reconciling) |
