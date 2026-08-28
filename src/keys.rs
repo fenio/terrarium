@@ -312,6 +312,14 @@ mod tests {
     }
 
     #[test]
+    fn list_key_keeps_export_key_available_to_the_app() {
+        assert!(matches!(
+            handle_list_key(key(KeyCode::Char('E'))),
+            Action::ExportTerraformNames
+        ));
+    }
+
+    #[test]
     fn detail_key_returns_none_for_context_resolved_chars() {
         // These are routed to TF/KS resolvers in app.rs — handle_detail_key
         // must NOT swallow them, so they fall through to context resolution.

@@ -530,6 +530,11 @@ impl App {
                     _ => Some(action),
                 }
             }
+            Event::Paste(text) => Some(if self.state.input_mode == InputMode::Search {
+                Action::SearchPaste(text)
+            } else {
+                Action::None
+            }),
             Event::Mouse(mouse) if self.state.mouse_enabled => self.handle_mouse_event(mouse),
             Event::Resize(w, h) => Some(Action::Resize(w, h)),
             _ => None,
@@ -1512,6 +1517,7 @@ impl App {
                 | Action::ToggleDeletingOnly
                 | Action::SearchStart
                 | Action::SearchPush(_)
+                | Action::SearchPaste(_)
                 | Action::SearchPop
                 | Action::SearchConfirm
                 | Action::SearchCancel
@@ -1906,6 +1912,11 @@ impl App {
             }
             Action::SearchPush(c) => {
                 self.state.search_query.push(c);
+            }
+            Action::SearchPaste(text) => {
+                if self.state.input_mode == InputMode::Search {
+                    self.state.search_query.push_str(&text);
+                }
             }
             Action::SearchPop => {
                 self.state.search_query.pop();
@@ -4053,10 +4064,53 @@ fn lookup_output_path(outputs: &std::collections::HashMap<String, String>, path:
 #[cfg(test)]
 mod tests {
     use super::{
-        first_uncached_secret, resolve_map_placeholders, resolve_output_placeholders,
+        App, first_uncached_secret, resolve_map_placeholders, resolve_output_placeholders,
         resolve_secret_placeholders, resolve_var_placeholders, terraform_names_text,
     };
+    use crate::action::Action;
+    use crate::config::Config;
+    use crate::k8s::watcher::{create_gitrepo_store, create_ks_store, create_tf_store};
+    use crate::state::store::{AppState, InputMode};
+    use crossterm::event::Event;
     use std::collections::{BTreeMap, HashMap};
+    use tokio::sync::mpsc;
+
+    fn test_app() -> App {
+        let (tf_store, _) = create_tf_store();
+        let (ks_store, _) = create_ks_store();
+        let (gr_store, _) = create_gitrepo_store();
+        let state = AppState::new(
+            tf_store,
+            ks_store,
+            gr_store,
+            "test".into(),
+            Config::default(),
+        );
+        let (action_tx, action_rx) = mpsc::unbounded_channel();
+        App::new_deferred(
+            state,
+            action_tx,
+            action_rx,
+            None,
+            None,
+            None,
+            "flux-system".into(),
+            None,
+        )
+    }
+
+    #[test]
+    fn bracketed_paste_maps_to_one_search_action() {
+        let mut app = test_app();
+        app.state.input_mode = InputMode::Search;
+
+        let action = app.handle_crossterm_event(Event::Paste("cluster-long-name".into()));
+
+        assert!(matches!(
+            action,
+            Some(Action::SearchPaste(text)) if text == "cluster-long-name"
+        ));
+    }
 
     fn outputs(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs

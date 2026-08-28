@@ -176,6 +176,7 @@ pub enum Action {
     // Filtering
     SearchStart,
     SearchPush(char),
+    SearchPaste(String),
     SearchPop,
     SearchConfirm,
     SearchCancel,
