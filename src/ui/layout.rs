@@ -1049,26 +1049,29 @@ fn render_viewer(f: &mut Frame, area: Rect, content: &str, vp: &ViewerParams) {
 }
 
 fn render_plan_viewer(f: &mut Frame, area: Rect, content: &str, vp: &ViewerParams) {
+    let mut heredoc_term: Option<String> = None;
     let lines: Vec<Line> = content
         .lines()
         .map(|line| {
-            let trimmed = line.trim_start();
-            let style = if trimmed.starts_with("+ ") || trimmed.starts_with("+\t") || trimmed == "+"
-            {
-                theme::PLAN_CREATE
-            } else if trimmed.starts_with("- ")
-                || trimmed.starts_with("-\t")
-                || trimmed == "-"
-                || trimmed.starts_with("-/")
-            {
-                theme::PLAN_DESTROY
-            } else if trimmed.starts_with("~ ") || trimmed.starts_with("~\t") || trimmed == "~" {
-                theme::PLAN_CHANGE
-            } else if trimmed.starts_with("<= ") || trimmed.starts_with("<=\t") {
-                theme::PLAN_READ
-            } else {
-                Style::default().fg(Color::White)
-            };
+            // Style the line using the heredoc state BEFORE this line's own
+            // transitions, so the opening `+ foo = <<-EOT` still gets diff
+            // colour and the closing `EOT` still counts as body.
+            let in_heredoc = heredoc_term.is_some();
+
+            if let Some(term) = heredoc_term.as_deref() {
+                if is_heredoc_close(line, term) {
+                    heredoc_term = None;
+                    // `EOT -> <<-EOT` closes one heredoc and opens another
+                    // on the same line — pick up the new terminator.
+                    if let Some(new_term) = detect_heredoc_open(line) {
+                        heredoc_term = Some(new_term);
+                    }
+                }
+            } else if let Some(term) = detect_heredoc_open(line) {
+                heredoc_term = Some(term);
+            }
+
+            let style = plan_line_style(line, in_heredoc);
             if !vp.search_query.is_empty() {
                 highlight_search_in_line(line, vp.search_query, style)
             } else {
@@ -1084,6 +1087,74 @@ fn render_plan_viewer(f: &mut Frame, area: Rect, content: &str, vp: &ViewerParam
         para = para.wrap(Wrap { trim: false });
     }
     f.render_widget(para, area);
+}
+
+fn plan_line_style(line: &str, in_heredoc: bool) -> Style {
+    if in_heredoc {
+        return Style::default().fg(Color::White);
+    }
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("+ ") || trimmed.starts_with("+\t") || trimmed == "+" {
+        theme::PLAN_CREATE
+    } else if trimmed.starts_with("- ")
+        || trimmed.starts_with("-\t")
+        || trimmed == "-"
+        || trimmed.starts_with("-/")
+    {
+        theme::PLAN_DESTROY
+    } else if trimmed.starts_with("~ ") || trimmed.starts_with("~\t") || trimmed == "~" {
+        theme::PLAN_CHANGE
+    } else if trimmed.starts_with("<= ") || trimmed.starts_with("<=\t") {
+        theme::PLAN_READ
+    } else {
+        Style::default().fg(Color::White)
+    }
+}
+
+/// If `line` ends with an HCL heredoc opener (`<<TAG` or `<<-TAG`), return
+/// the tag. `TAG` must be a plain identifier (letters + digits + `_`), which
+/// matches what `terraform plan` emits (`EOT` by default).
+fn detect_heredoc_open(line: &str) -> Option<String> {
+    let trimmed = line.trim_end();
+    let pos = trimmed.rfind("<<")?;
+    let after = &trimmed[pos + 2..];
+    let ident = after.strip_prefix('-').unwrap_or(after);
+    if ident.is_empty() {
+        return None;
+    }
+    let mut chars = ident.chars();
+    let first = chars.next().unwrap();
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return None;
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(ident.to_string())
+}
+
+fn is_heredoc_close(line: &str, terminator: &str) -> bool {
+    // Terraform prints the terminator alone on a line for a plain heredoc,
+    // but in a diff view the pretty-printer decorates it: `EOT,` for list
+    // elements, `EOT -> <newvalue>` (or `EOT → <newvalue>`) when a heredoc
+    // attribute is being replaced. Match the terminator as a word at line
+    // start; anything after the word boundary counts as a close.
+    let trimmed = line.trim_start();
+    let Some(rest) = trimmed.strip_prefix(terminator) else {
+        return false;
+    };
+    // Word boundary — reject `EOTfoo` / `EOT2` (would be a different tag).
+    if rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+        return false;
+    }
+    let tail = rest.trim_start();
+    tail.is_empty()
+        || tail.starts_with(',')
+        || tail.starts_with("->")
+        || tail.starts_with('→')
+        || tail.starts_with(')')
+        || tail.starts_with(']')
+        || tail.starts_with('#')
 }
 
 /// Colorize a single line of the Conditions viewer. Recognises the
@@ -1474,7 +1545,7 @@ fn render_json_viewer(f: &mut Frame, area: Rect, content: &str, vp: &ViewerParam
 
 #[cfg(test)]
 mod tests {
-    use super::gecko_frame;
+    use super::{detect_heredoc_open, gecko_frame, is_heredoc_close, plan_line_style, theme};
 
     #[test]
     fn gecko_holds_each_pose_for_ten_seconds() {
@@ -1488,5 +1559,75 @@ mod tests {
     fn gecko_frames_have_four_lines() {
         assert_eq!(gecko_frame(0).len(), 4);
         assert_eq!(gecko_frame(40).len(), 4);
+    }
+
+    #[test]
+    fn heredoc_open_detects_both_variants() {
+        assert_eq!(
+            detect_heredoc_open("  + values = <<-EOT").as_deref(),
+            Some("EOT")
+        );
+        assert_eq!(
+            detect_heredoc_open("  + values = <<EOT").as_deref(),
+            Some("EOT")
+        );
+        assert_eq!(
+            detect_heredoc_open("  ~ script = <<-BASH").as_deref(),
+            Some("BASH")
+        );
+    }
+
+    #[test]
+    fn heredoc_open_ignores_non_openers() {
+        // `<<` without an identifier, or with junk after
+        assert_eq!(detect_heredoc_open("  values = <<"), None);
+        assert_eq!(detect_heredoc_open("  foo = \"a << b\""), None);
+        // Quoted-looking content with trailing punctuation
+        assert_eq!(detect_heredoc_open("  foo = <<-EOT,"), None);
+    }
+
+    #[test]
+    fn heredoc_close_matches_trimmed_terminator() {
+        assert!(is_heredoc_close("EOT", "EOT"));
+        assert!(is_heredoc_close("    EOT", "EOT"));
+        assert!(!is_heredoc_close("EOT2", "EOT"));
+        assert!(!is_heredoc_close("  - EOT", "EOT"));
+    }
+
+    #[test]
+    fn heredoc_close_accepts_trailing_comma_when_heredoc_is_list_item() {
+        // Terraform prints `EOT,` when the heredoc is a list element.
+        assert!(is_heredoc_close("        EOT,", "EOT"));
+        assert!(is_heredoc_close("EOT,", "EOT"));
+    }
+
+    #[test]
+    fn heredoc_close_accepts_arrow_transition_to_new_value() {
+        // `~ attr = <<-EOT ... EOT -> (known after apply)` — the heredoc
+        // attribute is being replaced by a scalar; the closing `EOT` sits
+        // on the same line as the arrow. ASCII and Unicode arrows.
+        assert!(is_heredoc_close("    EOT -> (known after apply)", "EOT"));
+        assert!(is_heredoc_close("    EOT → (known after apply)", "EOT"));
+        // Same line closes then re-opens (`EOT -> <<-EOT ...`).
+        assert!(is_heredoc_close("    EOT -> <<-EOT", "EOT"));
+    }
+
+    #[test]
+    fn heredoc_close_rejects_when_terminator_is_ident_prefix() {
+        assert!(!is_heredoc_close("EOTfoo", "EOT"));
+        assert!(!is_heredoc_close("EOT2", "EOT"));
+        assert!(!is_heredoc_close("EOT_x: 1", "EOT")); // YAML key `EOT_x`
+    }
+
+    #[test]
+    fn yaml_list_marker_inside_heredoc_is_not_destroy() {
+        // Simulates what `render_plan_viewer` computes for a body line.
+        let line = "            - \"name\": \"Lighthouse\"";
+        assert_eq!(
+            plan_line_style(line, true),
+            super::Style::default().fg(super::Color::White)
+        );
+        // Same line outside a heredoc still counts as destroy.
+        assert_eq!(plan_line_style(line, false), theme::PLAN_DESTROY);
     }
 }
