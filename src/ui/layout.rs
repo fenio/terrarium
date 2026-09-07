@@ -1623,7 +1623,10 @@ mod tests {
     fn yaml_list_marker_inside_heredoc_is_not_destroy() {
         // Simulates what `render_plan_viewer` computes for a body line.
         let line = "            - \"name\": \"Lighthouse\"";
-        assert_eq!(plan_line_style(line, true), super::Style::default().fg(super::Color::White));
+        assert_eq!(
+            plan_line_style(line, true),
+            super::Style::default().fg(super::Color::White)
+        );
         // Same line outside a heredoc still counts as destroy.
         assert_eq!(plan_line_style(line, false), theme::PLAN_DESTROY);
     }
