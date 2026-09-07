@@ -427,6 +427,12 @@ pub struct AppState {
     /// (displayed_count, raw_count, time_raw_count_was_first_seen)
     pub stable_tf_failures: (usize, usize, std::time::Instant),
     pub stable_ks_failures: (usize, usize, std::time::Instant),
+    /// Whether the stabilizer has been primed with a real post-sync count
+    /// on the current connection. Reset on reconnect so the previous
+    /// cluster's failure count doesn't linger through the 5-second hold
+    /// window after a context switch.
+    pub tf_failures_primed: bool,
+    pub ks_failures_primed: bool,
 
     /// Screen geometry of the main body, used for mouse hit-testing.
     pub body_y: u16,
@@ -639,6 +645,8 @@ impl AppState {
             last_data_update: None,
             stable_tf_failures: (0, 0, std::time::Instant::now()),
             stable_ks_failures: (0, 0, std::time::Instant::now()),
+            tf_failures_primed: false,
+            ks_failures_primed: false,
             body_y: 6,
             body_height: 20,
             tab_hit_ranges: Vec::new(),
@@ -1176,6 +1184,18 @@ impl AppState {
     }
 
     pub fn stabilized_tf_failures(&mut self, raw: usize) -> usize {
+        // Hide the indicator until the initial sync completes — the raw
+        // count is meaningless while the reflector is still filling.
+        if !self.tf_synced {
+            return 0;
+        }
+        // First read after sync on a fresh connection: adopt the real
+        // count immediately instead of waiting the 5s stability window.
+        if !self.tf_failures_primed {
+            self.stable_tf_failures = (raw, raw, std::time::Instant::now());
+            self.tf_failures_primed = true;
+            return raw;
+        }
         Self::stabilize(
             &mut self.stable_tf_failures,
             raw,
@@ -1184,6 +1204,14 @@ impl AppState {
     }
 
     pub fn stabilized_ks_failures(&mut self, raw: usize) -> usize {
+        if !self.ks_synced {
+            return 0;
+        }
+        if !self.ks_failures_primed {
+            self.stable_ks_failures = (raw, raw, std::time::Instant::now());
+            self.ks_failures_primed = true;
+            return raw;
+        }
         Self::stabilize(
             &mut self.stable_ks_failures,
             raw,
@@ -1283,6 +1311,14 @@ impl AppState {
         self.connection_error = None;
         self.needs_reauth = false;
         self.background_error = None;
+
+        // Drop the previous cluster's failure counts and re-prime on the
+        // next sync so the header shows the new context's numbers as soon
+        // as its data is in.
+        self.stable_tf_failures = (0, 0, std::time::Instant::now());
+        self.stable_ks_failures = (0, 0, std::time::Instant::now());
+        self.tf_failures_primed = false;
+        self.ks_failures_primed = false;
 
         // Open views point at resources that may not exist on the new
         // cluster — return every tab to its root list.
