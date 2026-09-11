@@ -585,11 +585,17 @@ TERRARIUM_CONFIG=examples/shortcuts.toml terrarium
 
 ## Build from source
 
-Requires Rust 1.88+ (automatically managed via `rust-toolchain.toml`).
+Requires Rust 1.89+ (automatically managed via `rust-toolchain.toml`).
 
 ```sh
 cargo build --release
 cp target/release/terrarium /usr/local/bin/
+```
+
+Run the Terraform list filtering and sorting benchmarks with:
+
+```sh
+cargo bench --bench hot_paths
 ```
 
 ## Troubleshooting
