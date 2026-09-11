@@ -326,32 +326,37 @@ impl App {
     pub async fn run(&mut self, terminal: &mut crate::tui::Tui) -> anyhow::Result<()> {
         let mut event_stream = EventStream::new();
         let mut tick_interval = tokio::time::interval(std::time::Duration::from_millis(250));
+        let mut needs_redraw = true;
 
         loop {
-            terminal.draw(|f| layout::render(f, &mut self.state))?;
+            if needs_redraw {
+                terminal.draw(|f| layout::render(f, &mut self.state))?;
+            }
 
             // Wait for the first event (blocking).
-            tokio::select! {
+            needs_redraw = tokio::select! {
                 event = event_stream.next() => {
                     match event {
-                        Some(Ok(evt)) => {
-                            self.run_terminal_event(evt, &mut event_stream, terminal).await?;
-                        }
+                        Some(Ok(evt)) => self
+                            .run_terminal_event(evt, &mut event_stream, terminal)
+                            .await?,
                         Some(Err(err)) => return Err(err.into()),
                         None => return Ok(()),
                     }
                 }
                 action = self.action_rx.recv() => {
-                    if let Some(action) = action {
-                        self.run_action(action, terminal).await;
+                    match action {
+                        Some(action) => self.run_action(action, terminal).await,
+                        None => return Ok(()),
                     }
                 }
                 _ = tick_interval.tick() => {
                     self.state.expire_flash();
                     self.state.prune_recently_acted();
                     self.state.tick_count = self.state.tick_count.wrapping_add(1);
+                    true
                 }
-            }
+            };
 
             if self.should_quit {
                 break;
@@ -369,7 +374,8 @@ impl App {
         first_event: Event,
         event_stream: &mut EventStream,
         terminal: &mut crate::tui::Tui,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
+        let refresh_terminal = matches!(&first_event, Event::FocusGained);
         if let Some(first_delta) = self.list_navigation_delta(&first_event) {
             let mut deltas = vec![first_delta];
             let mut deferred_event = None;
@@ -417,11 +423,12 @@ impl App {
             {
                 self.run_action(action, terminal).await;
             }
+            Ok(true)
         } else if let Some(action) = self.handle_crossterm_event(first_event) {
-            self.run_action(action, terminal).await;
+            Ok(self.run_action(action, terminal).await)
+        } else {
+            Ok(refresh_terminal)
         }
-
-        Ok(())
     }
 
     fn list_navigation_delta(&self, event: &Event) -> Option<isize> {
@@ -462,13 +469,15 @@ impl App {
     /// Route an action, intercepting the few that must run with access to
     /// the terminal handle (they temporarily suspend the TUI); everything
     /// else goes through the normal `dispatch`.
-    async fn run_action(&mut self, action: Action, terminal: &mut crate::tui::Tui) {
+    async fn run_action(&mut self, action: Action, terminal: &mut crate::tui::Tui) -> bool {
         match action {
             Action::ExecBreakTheGlass { target } => {
                 self.exec_break_the_glass(terminal, &target).await;
+                true
             }
             Action::SwitchContext(context) => {
                 self.switch_context(terminal, context).await;
+                true
             }
             other => self.dispatch(other).await,
         }
@@ -1468,7 +1477,7 @@ impl App {
     /// the normal dispatcher. This is the single gate that prevents delayed
     /// work from an old cluster, request, target, view, or log stream from
     /// mutating current state.
-    async fn dispatch(&mut self, action: Action) {
+    async fn dispatch(&mut self, action: Action) -> bool {
         let action = match action {
             Action::Scoped(scoped) => {
                 let list_target_current =
@@ -1488,14 +1497,18 @@ impl App {
                         true
                     };
                 if !self.state.is_async_scope_current(&scoped.scope) || !list_target_current {
-                    return;
+                    return false;
                 }
                 self.state.finish_async(&scoped.scope);
                 *scoped.action
             }
             action => action,
         };
+        if matches!(action, Action::None) {
+            return false;
+        }
         self.dispatch_inner(action).await;
+        true
     }
 
     async fn dispatch_inner(&mut self, action: Action) {
@@ -4067,7 +4080,7 @@ mod tests {
         App, first_uncached_secret, resolve_map_placeholders, resolve_output_placeholders,
         resolve_secret_placeholders, resolve_var_placeholders, terraform_names_text,
     };
-    use crate::action::Action;
+    use crate::action::{Action, AsyncKind, AsyncScope};
     use crate::config::Config;
     use crate::k8s::watcher::{create_gitrepo_store, create_ks_store, create_tf_store};
     use crate::state::store::{AppState, InputMode};
@@ -4110,6 +4123,31 @@ mod tests {
             action,
             Some(Action::SearchPaste(text)) if text == "cluster-long-name"
         ));
+    }
+
+    #[tokio::test]
+    async fn no_op_action_does_not_request_redraw() {
+        let mut app = test_app();
+
+        assert!(!app.dispatch(Action::None).await);
+    }
+
+    #[tokio::test]
+    async fn stale_scoped_action_does_not_request_redraw() {
+        let mut app = test_app();
+        let stale_scope = AsyncScope::generation(1, AsyncKind::Connection);
+
+        assert!(
+            !app.dispatch(Action::scoped(stale_scope, Action::Resize(120, 40)))
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatched_action_requests_redraw() {
+        let mut app = test_app();
+
+        assert!(app.dispatch(Action::Resize(120, 40)).await);
     }
 
     fn outputs(pairs: &[(&str, &str)]) -> HashMap<String, String> {
