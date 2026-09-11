@@ -1,17 +1,5 @@
-mod action;
-mod app;
-mod config;
-mod error;
-mod k8s;
-mod keys;
-mod logging;
-mod ornament;
-mod state;
-mod tui;
-mod ui;
-mod util;
-
 use clap::Parser;
+use terrarium::{action, app, config, k8s, logging, ornament, state, tui};
 use tokio::sync::mpsc;
 
 #[derive(Parser, Debug)]
