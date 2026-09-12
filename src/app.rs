@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{
     Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
@@ -21,6 +21,36 @@ use crate::ui::kustomization_list::get_filtered_kustomizations;
 use crate::ui::layout;
 use crate::ui::resource_list::get_filtered_terraforms;
 use crate::ui::runner_list::get_filtered_runners;
+
+// Bound expensive layout passes while keeping interactive input responsive.
+const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
+
+struct RenderSchedule {
+    needs_redraw: bool,
+    next_render_at: tokio::time::Instant,
+}
+
+impl RenderSchedule {
+    fn after_render(started_at: tokio::time::Instant) -> Self {
+        Self {
+            needs_redraw: false,
+            next_render_at: started_at + FRAME_INTERVAL,
+        }
+    }
+
+    fn request(&mut self, needs_redraw: bool) {
+        self.needs_redraw |= needs_redraw;
+    }
+
+    fn is_due(&self, now: tokio::time::Instant) -> bool {
+        self.needs_redraw && now >= self.next_render_at
+    }
+
+    fn rendered(&mut self, started_at: tokio::time::Instant) {
+        self.needs_redraw = false;
+        self.next_render_at = started_at + FRAME_INTERVAL;
+    }
+}
 
 pub struct App {
     pub state: AppState,
@@ -325,38 +355,48 @@ impl App {
 
     pub async fn run(&mut self, terminal: &mut crate::tui::Tui) -> anyhow::Result<()> {
         let mut event_stream = EventStream::new();
-        let mut tick_interval = tokio::time::interval(std::time::Duration::from_millis(250));
-        let mut needs_redraw = true;
+        let mut tick_interval = tokio::time::interval(Duration::from_millis(250));
+        let started_at = tokio::time::Instant::now();
+        terminal.draw(|f| layout::render(f, &mut self.state))?;
+        let mut render_schedule = RenderSchedule::after_render(started_at);
 
         loop {
-            if needs_redraw {
+            let now = tokio::time::Instant::now();
+            if render_schedule.is_due(now) {
                 terminal.draw(|f| layout::render(f, &mut self.state))?;
+                render_schedule.rendered(now);
             }
 
             // Wait for the first event (blocking).
-            needs_redraw = tokio::select! {
+            tokio::select! {
+                // Rendering at the top of the loop keeps a hot input or action
+                // stream from starving a frame once this deadline is due.
+                _ = tokio::time::sleep_until(render_schedule.next_render_at),
+                    if render_schedule.needs_redraw => {}
                 event = event_stream.next() => {
-                    match event {
+                    let needs_redraw = match event {
                         Some(Ok(evt)) => self
                             .run_terminal_event(evt, &mut event_stream, terminal)
                             .await?,
                         Some(Err(err)) => return Err(err.into()),
                         None => return Ok(()),
-                    }
+                    };
+                    render_schedule.request(needs_redraw);
                 }
                 action = self.action_rx.recv() => {
-                    match action {
+                    let needs_redraw = match action {
                         Some(action) => self.run_action(action, terminal).await,
                         None => return Ok(()),
-                    }
+                    };
+                    render_schedule.request(needs_redraw);
                 }
                 _ = tick_interval.tick() => {
                     self.state.expire_flash();
                     self.state.prune_recently_acted();
                     self.state.tick_count = self.state.tick_count.wrapping_add(1);
-                    true
+                    render_schedule.request(true);
                 }
-            };
+            }
 
             if self.should_quit {
                 break;
@@ -4077,8 +4117,9 @@ fn lookup_output_path(outputs: &std::collections::HashMap<String, String>, path:
 #[cfg(test)]
 mod tests {
     use super::{
-        App, first_uncached_secret, resolve_map_placeholders, resolve_output_placeholders,
-        resolve_secret_placeholders, resolve_var_placeholders, terraform_names_text,
+        App, FRAME_INTERVAL, RenderSchedule, first_uncached_secret, resolve_map_placeholders,
+        resolve_output_placeholders, resolve_secret_placeholders, resolve_var_placeholders,
+        terraform_names_text,
     };
     use crate::action::{Action, AsyncKind, AsyncScope};
     use crate::config::Config;
@@ -4086,6 +4127,7 @@ mod tests {
     use crate::state::store::{AppState, InputMode};
     use crossterm::event::Event;
     use std::collections::{BTreeMap, HashMap};
+    use std::time::Duration;
     use tokio::sync::mpsc;
 
     fn test_app() -> App {
@@ -4148,6 +4190,35 @@ mod tests {
         let mut app = test_app();
 
         assert!(app.dispatch(Action::Resize(120, 40)).await);
+    }
+
+    #[test]
+    fn render_schedule_coalesces_requests_until_next_frame() {
+        let started_at = tokio::time::Instant::now();
+        let deadline = started_at + FRAME_INTERVAL;
+        let mut schedule = RenderSchedule::after_render(started_at);
+
+        schedule.request(true);
+        schedule.request(false);
+
+        assert!(!schedule.is_due(deadline - Duration::from_nanos(1)));
+        assert!(schedule.is_due(deadline));
+
+        schedule.rendered(deadline);
+        schedule.request(true);
+
+        assert!(!schedule.is_due(deadline));
+        assert!(schedule.is_due(deadline + FRAME_INTERVAL));
+    }
+
+    #[test]
+    fn render_schedule_draws_immediately_after_idle() {
+        let started_at = tokio::time::Instant::now();
+        let mut schedule = RenderSchedule::after_render(started_at);
+
+        schedule.request(true);
+
+        assert!(schedule.is_due(started_at + Duration::from_secs(1)));
     }
 
     fn outputs(pairs: &[(&str, &str)]) -> HashMap<String, String> {
