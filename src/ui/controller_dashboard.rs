@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use ratatui::{
     Frame,
@@ -8,6 +8,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph},
 };
 
+use crate::k8s::kustomization::Kustomization;
 use crate::k8s::metrics::MetricsSnapshot;
 use crate::k8s::terraform::Terraform;
 use crate::state::store::{AppState, SelectionIdentity, TabKind};
@@ -37,11 +38,13 @@ pub fn render(f: &mut Frame, area: Rect, state: &mut AppState) {
             Constraint::Min(3),     // Backlog / stale
         ])
         .split(left_area);
+    let all_tfs = state.tf_store.state();
+    let all_ks = state.ks_store.state();
 
     render_controller_info(f, chunks[0], state);
-    render_tf_stats(f, chunks[1], state);
-    render_ks_stats(f, chunks[2], state);
-    render_backlog(f, chunks[3], state);
+    render_tf_stats(f, chunks[1], state, &all_tfs);
+    render_ks_stats(f, chunks[2], state, &all_ks);
+    render_backlog(f, chunks[3], state, &all_tfs);
 
     if let Some(metrics_area) = metrics_area {
         render_metrics_panel(f, metrics_area, state);
@@ -169,7 +172,7 @@ fn render_controller_info(f: &mut Frame, area: Rect, state: &AppState) {
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_tf_stats(f: &mut Frame, area: Rect, state: &AppState) {
+fn render_tf_stats(f: &mut Frame, area: Rect, state: &AppState, all_tfs: &[Arc<Terraform>]) {
     let block = Block::default()
         .title(Span::styled(
             " Terraform Resources ",
@@ -191,12 +194,6 @@ fn render_tf_stats(f: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
-    let all_tfs: Vec<_> = state
-        .tf_store
-        .state()
-        .iter()
-        .map(|a| (**a).clone())
-        .collect();
     let total = all_tfs.len();
 
     let ready_count = all_tfs
@@ -283,7 +280,7 @@ fn render_tf_stats(f: &mut Frame, area: Rect, state: &AppState) {
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_ks_stats(f: &mut Frame, area: Rect, state: &AppState) {
+fn render_ks_stats(f: &mut Frame, area: Rect, state: &AppState, all_ks: &[Arc<Kustomization>]) {
     let block = Block::default()
         .title(Span::styled(
             " Kustomization Resources ",
@@ -305,12 +302,6 @@ fn render_ks_stats(f: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
-    let all_ks: Vec<_> = state
-        .ks_store
-        .state()
-        .iter()
-        .map(|a| (**a).clone())
-        .collect();
     let total = all_ks.len();
 
     let ready_count = all_ks
@@ -346,7 +337,7 @@ fn render_ks_stats(f: &mut Frame, area: Rect, state: &AppState) {
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
+fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState, all_tfs: &[Arc<Terraform>]) {
     let block = Block::default()
         .title(Span::styled(
             " Backlog (past due interval) ",
@@ -358,19 +349,12 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState) {
         .border_type(BorderType::Rounded)
         .border_style(theme::BORDER);
 
-    let all_tfs: Vec<_> = state
-        .tf_store
-        .state()
-        .iter()
-        .map(|a| (**a).clone())
-        .collect();
-
     // For each TF, check if time since last Ready transition exceeds its spec.interval.
     // Classify stale TFs as "waiting" (Ready=True, just backlogged) or "failing" (Ready!=True).
     // ns -> (waiting, failing, total)
     let mut stale_by_ns: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
 
-    for tf in &all_tfs {
+    for tf in all_tfs {
         if tf.spec.suspend.unwrap_or(false) {
             continue;
         }

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ratatui::{
     Frame,
     layout::{Constraint, Rect},
@@ -126,9 +128,9 @@ pub fn get_filtered_terraforms(
     recently_acted: &std::collections::HashMap<(String, String), std::time::Instant>,
     sort_column: SortColumn,
     descending: bool,
-) -> Vec<Terraform> {
-    let all: Vec<Terraform> = store.state().iter().map(|arc| (**arc).clone()).collect();
-    let mut filtered: Vec<Terraform> = all
+) -> Vec<Arc<Terraform>> {
+    let mut filtered: Vec<Arc<Terraform>> = store
+        .state()
         .into_iter()
         .filter(|tf| {
             if let Some(ns) = namespace_filter {
@@ -196,7 +198,7 @@ pub fn get_filtered_terraforms(
             let ready_a = get_ready_str(a);
             let ready_b = get_ready_str(b);
             ready_a
-                .cmp(&ready_b)
+                .cmp(ready_b)
                 .then(a.metadata.name.cmp(&b.metadata.name))
         }),
         SortColumn::Revision => filtered.sort_by(|a, b| {
@@ -205,7 +207,7 @@ pub fn get_filtered_terraforms(
             let rev_a = revision_str(a);
             let rev_b = revision_str(b);
             match (rev_a, rev_b) {
-                (Some(x), Some(y)) => x.cmp(&y).then(a.metadata.name.cmp(&b.metadata.name)),
+                (Some(x), Some(y)) => x.cmp(y).then(a.metadata.name.cmp(&b.metadata.name)),
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
                 (None, None) => a.metadata.name.cmp(&b.metadata.name),
@@ -293,19 +295,18 @@ fn applied_ts(tf: &Terraform) -> Option<jiff::Timestamp> {
         .map(|c| c.last_transition_time.0)
 }
 
-fn revision_str(tf: &Terraform) -> Option<String> {
+fn revision_str(tf: &Terraform) -> Option<&str> {
     tf.status
         .as_ref()
         .and_then(|s| s.last_applied_revision.as_deref())
-        .map(|s| s.to_string())
 }
 
-fn get_ready_str(tf: &Terraform) -> String {
+fn get_ready_str(tf: &Terraform) -> &str {
     tf.status
         .as_ref()
         .and_then(|s| s.conditions.as_ref())
         .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-        .map(|c| c.status.clone())
+        .map(|c| c.status.as_str())
         .unwrap_or_default()
 }
 
@@ -547,5 +548,32 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Some("drifting")]
         );
+    }
+
+    #[test]
+    fn filtered_terraforms_reuse_store_arcs() {
+        let tf = terraform_with_name_and_status("shared", serde_json::json!({}));
+        let (store, mut writer) = crate::k8s::watcher::create_tf_store();
+        writer.apply_watcher_event(&kube::runtime::watcher::Event::Apply(tf));
+        let stored = store
+            .get(&kube::runtime::reflector::ObjectRef::new("shared").within("ns"))
+            .expect("Terraform should be present");
+
+        let filtered = get_filtered_terraforms(
+            &store,
+            &None,
+            "",
+            false,
+            false,
+            false,
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            SortColumn::Name,
+            false,
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert!(Arc::ptr_eq(&stored, &filtered[0]));
     }
 }

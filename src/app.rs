@@ -1321,9 +1321,9 @@ impl App {
             .into_iter()
             .map(|tf| {
                 SelectionIdentity::new(
-                    tf.metadata.namespace.unwrap_or_default(),
-                    tf.metadata.name.unwrap_or_default(),
-                    tf.metadata.uid,
+                    tf.metadata.namespace.clone().unwrap_or_default(),
+                    tf.metadata.name.clone().unwrap_or_default(),
+                    tf.metadata.uid.clone(),
                 )
             })
             .collect(),
@@ -1342,9 +1342,9 @@ impl App {
             .into_iter()
             .map(|ks| {
                 SelectionIdentity::new(
-                    ks.metadata.namespace.unwrap_or_default(),
-                    ks.metadata.name.unwrap_or_default(),
-                    ks.metadata.uid,
+                    ks.metadata.namespace.clone().unwrap_or_default(),
+                    ks.metadata.name.clone().unwrap_or_default(),
+                    ks.metadata.uid.clone(),
                 )
             })
             .collect(),
@@ -2396,10 +2396,11 @@ impl App {
             Action::JumpToTerraformDetail { namespace, name } => {
                 self.state.bump_view_revision();
                 // Verify the Terraform resource exists in the store
-                let exists = self.state.tf_store.state().iter().any(|tf| {
-                    tf.metadata.namespace.as_deref() == Some(&namespace)
-                        && tf.metadata.name.as_deref() == Some(&name)
-                });
+                let exists = self
+                    .state
+                    .tf_store
+                    .get(&kube::runtime::reflector::ObjectRef::new(&name).within(&namespace))
+                    .is_some();
                 if exists {
                     // Switch to the TF tab and replace its stack with a fresh
                     // detail view — the cross-tab jump is meant to land on
@@ -2760,12 +2761,7 @@ impl App {
                     ResourceKind::Terraform => self
                         .state
                         .tf_store
-                        .state()
-                        .iter()
-                        .find(|t| {
-                            t.metadata.namespace.as_deref() == Some(namespace.as_str())
-                                && t.metadata.name.as_deref() == Some(name.as_str())
-                        })
+                        .get(&kube::runtime::reflector::ObjectRef::new(&name).within(&namespace))
                         .map(|tf| {
                             let conds = tf
                                 .status
@@ -2783,12 +2779,7 @@ impl App {
                     ResourceKind::Kustomization => self
                         .state
                         .ks_store
-                        .state()
-                        .iter()
-                        .find(|k| {
-                            k.metadata.namespace.as_deref() == Some(namespace.as_str())
-                                && k.metadata.name.as_deref() == Some(name.as_str())
-                        })
+                        .get(&kube::runtime::reflector::ObjectRef::new(&name).within(&namespace))
                         .map(|ks| {
                             let conds = ks
                                 .status
@@ -3472,12 +3463,7 @@ impl App {
             let (labels, annotations) = self
                 .state
                 .tf_store
-                .state()
-                .iter()
-                .find(|arc| {
-                    arc.metadata.namespace.as_deref() == Some(namespace)
-                        && arc.metadata.name.as_deref() == Some(name)
-                })
+                .get(&kube::runtime::reflector::ObjectRef::new(name).within(namespace))
                 .map(|arc| {
                     (
                         arc.metadata.labels.clone(),
@@ -3710,17 +3696,20 @@ impl App {
     }
 
     async fn switch_log_container(&mut self, direction: isize) {
-        let (namespace, pod_name, containers, active) = if let ViewState::LogViewer {
-            namespace,
-            pod_name,
-            containers,
-            active_container,
-            ..
-        } = self.state.current_view().clone()
-        {
-            (namespace, pod_name, containers, active_container)
-        } else {
-            return;
+        let (namespace, pod_name, containers, active) = match self.state.current_view() {
+            ViewState::LogViewer {
+                namespace,
+                pod_name,
+                containers,
+                active_container,
+                ..
+            } => (
+                namespace.clone(),
+                pod_name.clone(),
+                containers.clone(),
+                *active_container,
+            ),
+            _ => return,
         };
 
         if containers.len() <= 1 {
@@ -3953,7 +3942,7 @@ fn format_success_message(action: &Action) -> String {
     }
 }
 
-fn terraform_names_text(items: &[crate::k8s::terraform::Terraform]) -> String {
+fn terraform_names_text(items: &[std::sync::Arc<crate::k8s::terraform::Terraform>]) -> String {
     let names = items
         .iter()
         .filter_map(|tf| tf.metadata.name.as_deref())
@@ -4641,21 +4630,21 @@ mod tests {
 
     #[test]
     fn terraform_names_text_writes_one_name_per_line() {
-        let items: Vec<crate::k8s::terraform::Terraform> = vec![
-            serde_json::from_value(serde_json::json!({
+        let items: Vec<std::sync::Arc<crate::k8s::terraform::Terraform>> = vec![
+            std::sync::Arc::new(serde_json::from_value(serde_json::json!({
                 "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
                 "kind": "Terraform",
                 "metadata": {"name": "cluster-a", "namespace": "ns"},
                 "spec": {"interval": "1m", "sourceRef": {"kind": "GitRepository", "name": "source"}}
             }))
-            .expect("first Terraform should deserialize"),
-            serde_json::from_value(serde_json::json!({
+            .expect("first Terraform should deserialize")),
+            std::sync::Arc::new(serde_json::from_value(serde_json::json!({
                 "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
                 "kind": "Terraform",
                 "metadata": {"name": "cluster-b", "namespace": "ns"},
                 "spec": {"interval": "1m", "sourceRef": {"kind": "GitRepository", "name": "source"}}
             }))
-            .expect("second Terraform should deserialize"),
+            .expect("second Terraform should deserialize")),
         ];
 
         assert_eq!(terraform_names_text(&items), "cluster-a\ncluster-b\n");
