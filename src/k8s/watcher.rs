@@ -2,7 +2,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use crate::action::{Action, ScopedSender};
+use crate::action::{Action, ScopedSender, StoreUpdateWake};
 use crate::k8s::kustomization::Kustomization;
 use crate::k8s::source::GitRepository;
 use crate::k8s::terraform::Terraform;
@@ -34,6 +34,20 @@ pub fn create_gitrepo_store() -> (GitRepoStore, Writer<GitRepository>) {
     reflector::store()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StoreNotification {
+    Updated,
+    Synced,
+}
+
+fn store_notification<K>(event: &watcher::Event<K>) -> Option<StoreNotification> {
+    match event {
+        watcher::Event::Apply(_) | watcher::Event::Delete(_) => Some(StoreNotification::Updated),
+        watcher::Event::InitDone => Some(StoreNotification::Synced),
+        watcher::Event::Init | watcher::Event::InitApply(_) => None,
+    }
+}
+
 pub async fn run_tf_watcher(
     client: kube::Client,
     writer: Writer<Terraform>,
@@ -58,6 +72,7 @@ pub async fn run_tf_watcher(
         .default_backoff()
         .reflect(writer)
         .boxed();
+    let update_wake = StoreUpdateWake::default();
 
     // kube's watcher is self-healing: when the watch stream drops — an idle
     // or route timeout on a proxy (Envoy's default route timeout is 15s),
@@ -67,19 +82,23 @@ pub async fn run_tf_watcher(
     // turned every routine watch drop into a fatal "connection lost".
     while let Some(item) = stream.next().await {
         match item {
-            Ok(watcher::Event::Apply(obj) | watcher::Event::InitApply(obj)) => {
-                if let Some(w) = debug_writer.as_ref() {
-                    log_tf_condition_snapshot(w, &obj);
+            Ok(event) => {
+                if let watcher::Event::Apply(obj) | watcher::Event::InitApply(obj) = &event
+                    && let Some(w) = debug_writer.as_ref()
+                {
+                    log_tf_condition_snapshot(w, obj);
                 }
-                let _ = tx.send(Action::TerraformStoreUpdated);
+
+                match store_notification(&event) {
+                    Some(StoreNotification::Updated) => {
+                        update_wake.send_update(&tx, Action::TerraformStoreUpdated);
+                    }
+                    Some(StoreNotification::Synced) => {
+                        let _ = tx.send(Action::TerraformStoreSynced);
+                    }
+                    None => {}
+                }
             }
-            Ok(watcher::Event::InitDone) => {
-                // InitDone is the only initial-sync signal for an empty
-                // cluster: applied_objects() filters this marker out, so an
-                // empty initial list otherwise leaves the UI on "syncing".
-                let _ = tx.send(Action::TerraformStoreUpdated);
-            }
-            Ok(watcher::Event::Delete(_) | watcher::Event::Init) => {}
             Err(e) => {
                 if crate::util::is_auth_error(&crate::util::error_chain(&e)) {
                     let _ = tx.send(Action::AuthExpired);
@@ -104,16 +123,6 @@ fn is_crd_missing(e: &watcher::Error) -> bool {
     msg.contains("404")
         || msg.contains("not found")
         || msg.contains("the server could not find the requested resource")
-}
-
-/// Events that prove the reflector has completed an initial sync. In
-/// particular, `InitDone` is emitted even when the initial list is empty;
-/// object-only stream adapters filter it out.
-fn is_store_sync_event<K>(event: &watcher::Event<K>) -> bool {
-    matches!(
-        event,
-        watcher::Event::Apply(_) | watcher::Event::InitApply(_) | watcher::Event::InitDone
-    )
 }
 
 /// Append one line per Terraform watcher event capturing Ready + Reconciling
@@ -152,14 +161,19 @@ pub async fn run_ks_watcher(
         .default_backoff()
         .reflect(writer)
         .boxed();
+    let update_wake = StoreUpdateWake::default();
 
     while let Some(item) = stream.next().await {
         match item {
-            Ok(event) => {
-                if is_store_sync_event(&event) {
-                    let _ = tx.send(Action::KustomizationStoreUpdated);
+            Ok(event) => match store_notification(&event) {
+                Some(StoreNotification::Updated) => {
+                    update_wake.send_update(&tx, Action::KustomizationStoreUpdated);
                 }
-            }
+                Some(StoreNotification::Synced) => {
+                    let _ = tx.send(Action::KustomizationStoreSynced);
+                }
+                None => {}
+            },
             Err(e) => {
                 if crate::util::is_auth_error(&crate::util::error_chain(&e)) {
                     let _ = tx.send(Action::AuthExpired);
@@ -186,14 +200,19 @@ pub async fn run_gitrepo_watcher(
         .default_backoff()
         .reflect(writer)
         .boxed();
+    let update_wake = StoreUpdateWake::default();
 
     while let Some(item) = stream.next().await {
         match item {
-            Ok(event) => {
-                if is_store_sync_event(&event) {
-                    let _ = tx.send(Action::GitRepoStoreUpdated);
+            Ok(event) => match store_notification(&event) {
+                Some(StoreNotification::Updated) => {
+                    update_wake.send_update(&tx, Action::GitRepoStoreUpdated);
                 }
-            }
+                Some(StoreNotification::Synced) => {
+                    let _ = tx.send(Action::GitRepoStoreSynced);
+                }
+                None => {}
+            },
             Err(e) => {
                 if crate::util::is_auth_error(&crate::util::error_chain(&e)) {
                     let _ = tx.send(Action::AuthExpired);
@@ -212,12 +231,24 @@ pub async fn run_gitrepo_watcher(
 
 #[cfg(test)]
 mod tests {
-    use super::is_store_sync_event;
+    use super::{StoreNotification, store_notification};
     use kube::runtime::watcher::Event;
 
     #[test]
-    fn empty_initial_list_init_done_marks_store_synced() {
-        assert!(is_store_sync_event::<()>(&Event::InitDone));
-        assert!(!is_store_sync_event::<()>(&Event::Init));
+    fn watcher_events_map_to_visible_store_transitions() {
+        assert_eq!(
+            store_notification(&Event::Apply(())),
+            Some(StoreNotification::Updated)
+        );
+        assert_eq!(
+            store_notification(&Event::Delete(())),
+            Some(StoreNotification::Updated)
+        );
+        assert_eq!(store_notification::<()>(&Event::Init), None);
+        assert_eq!(store_notification(&Event::InitApply(())), None);
+        assert_eq!(
+            store_notification::<()>(&Event::InitDone),
+            Some(StoreNotification::Synced)
+        );
     }
 }
