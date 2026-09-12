@@ -94,18 +94,20 @@ pub async fn run_tf_watcher(
                         update_wake.send_update(&tx, Action::TerraformStoreUpdated);
                     }
                     Some(StoreNotification::Synced) => {
-                        let _ = tx.send(Action::TerraformStoreSynced);
+                        if tx.send(Action::TerraformStoreSynced).await.is_err() {
+                            return Ok(());
+                        }
                     }
                     None => {}
                 }
             }
             Err(e) => {
                 if crate::util::is_auth_error(&crate::util::error_chain(&e)) {
-                    let _ = tx.send(Action::AuthExpired);
+                    let _ = tx.send(Action::AuthExpired).await;
                     return Ok(());
                 }
                 if is_crd_missing(&e) {
-                    let _ = tx.send(Action::TerraformCrdMissing);
+                    let _ = tx.send(Action::TerraformCrdMissing).await;
                     return Ok(());
                 }
                 tracing::debug!("Terraform watch error (will retry): {e}");
@@ -170,17 +172,19 @@ pub async fn run_ks_watcher(
                     update_wake.send_update(&tx, Action::KustomizationStoreUpdated);
                 }
                 Some(StoreNotification::Synced) => {
-                    let _ = tx.send(Action::KustomizationStoreSynced);
+                    if tx.send(Action::KustomizationStoreSynced).await.is_err() {
+                        return Ok(());
+                    }
                 }
                 None => {}
             },
             Err(e) => {
                 if crate::util::is_auth_error(&crate::util::error_chain(&e)) {
-                    let _ = tx.send(Action::AuthExpired);
+                    let _ = tx.send(Action::AuthExpired).await;
                     return Ok(());
                 }
                 if is_crd_missing(&e) {
-                    let _ = tx.send(Action::KustomizationCrdMissing);
+                    let _ = tx.send(Action::KustomizationCrdMissing).await;
                     return Ok(());
                 }
                 tracing::debug!("Kustomization watch error (will retry): {e}");
@@ -209,17 +213,19 @@ pub async fn run_gitrepo_watcher(
                     update_wake.send_update(&tx, Action::GitRepoStoreUpdated);
                 }
                 Some(StoreNotification::Synced) => {
-                    let _ = tx.send(Action::GitRepoStoreSynced);
+                    if tx.send(Action::GitRepoStoreSynced).await.is_err() {
+                        return Ok(());
+                    }
                 }
                 None => {}
             },
             Err(e) => {
                 if crate::util::is_auth_error(&crate::util::error_chain(&e)) {
-                    let _ = tx.send(Action::AuthExpired);
+                    let _ = tx.send(Action::AuthExpired).await;
                     return Ok(());
                 }
                 if is_crd_missing(&e) {
-                    let _ = tx.send(Action::GitRepoCrdMissing);
+                    let _ = tx.send(Action::GitRepoCrdMissing).await;
                     return Ok(());
                 }
                 tracing::debug!("GitRepository watch error (will retry): {e}");

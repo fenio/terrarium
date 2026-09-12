@@ -5,6 +5,10 @@ use std::sync::{
 
 use k8s_openapi::api::core::v1::Pod;
 
+pub const ACTION_CHANNEL_CAPACITY: usize = 64;
+pub type ActionSender = tokio::sync::mpsc::Sender<Action>;
+pub type ActionReceiver = tokio::sync::mpsc::Receiver<Action>;
+
 /// Wrapper for kube::Client that implements Debug.
 #[derive(Clone)]
 pub struct K8sClient(pub kube::Client);
@@ -111,7 +115,7 @@ impl AsyncScope {
         }
     }
 
-    pub fn sender(&self, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> ScopedSender {
+    pub fn sender(&self, tx: ActionSender) -> ScopedSender {
         ScopedSender {
             tx,
             scope: self.clone(),
@@ -127,7 +131,7 @@ pub struct ScopedAction {
 
 #[derive(Clone)]
 pub struct ScopedSender {
-    tx: tokio::sync::mpsc::UnboundedSender<Action>,
+    tx: ActionSender,
     scope: AsyncScope,
 }
 
@@ -149,7 +153,7 @@ impl StoreUpdateWake {
             return;
         }
 
-        if tx.send(action(self.clone())).is_err() {
+        if tx.try_send(action(self.clone())).is_err() {
             self.release();
         }
     }
@@ -160,12 +164,22 @@ impl StoreUpdateWake {
 }
 
 impl ScopedSender {
-    pub fn send(
+    pub fn try_send(
+        &self,
+        action: Action,
+    ) -> Result<(), Box<tokio::sync::mpsc::error::TrySendError<Action>>> {
+        self.tx
+            .try_send(Action::scoped(self.scope.clone(), action))
+            .map_err(Box::new)
+    }
+
+    pub async fn send(
         &self,
         action: Action,
     ) -> Result<(), Box<tokio::sync::mpsc::error::SendError<Action>>> {
         self.tx
             .send(Action::scoped(self.scope.clone(), action))
+            .await
             .map_err(Box::new)
     }
 }
@@ -482,16 +496,46 @@ impl Action {
 mod tests {
     use super::{Action, AsyncKind, AsyncScope, StoreUpdateWake};
 
+    #[tokio::test]
+    async fn scoped_send_waits_for_channel_capacity() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let sender = AsyncScope::generation(0, AsyncKind::Connection).sender(tx);
+        sender.send(Action::None).await.expect("initial send");
+
+        let blocked_sender = sender.clone();
+        let blocked = tokio::spawn(async move { blocked_sender.send(Action::Quit).await });
+        tokio::task::yield_now().await;
+        assert!(!blocked.is_finished());
+
+        rx.recv().await.expect("initial action");
+        assert!(blocked.await.expect("send task").is_ok());
+        assert!(rx.recv().await.is_some());
+    }
+
+    #[test]
+    fn store_update_wake_retries_after_full_channel() {
+        let wake = StoreUpdateWake::default();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        tx.try_send(Action::None).expect("fill channel");
+        let sender = AsyncScope::generation(0, AsyncKind::Connection).sender(tx);
+
+        wake.send_update(&sender, Action::TerraformStoreUpdated);
+        assert!(matches!(rx.try_recv(), Ok(Action::None)));
+
+        wake.send_update(&sender, Action::TerraformStoreUpdated);
+        assert!(rx.try_recv().is_ok());
+    }
+
     #[test]
     fn store_update_wake_reopens_after_failed_send() {
         let wake = StoreUpdateWake::default();
-        let (closed_tx, closed_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (closed_tx, closed_rx) = tokio::sync::mpsc::channel(1);
         let closed_sender = AsyncScope::generation(0, AsyncKind::Connection).sender(closed_tx);
         drop(closed_rx);
 
         wake.send_update(&closed_sender, Action::TerraformStoreUpdated);
 
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
         let sender = AsyncScope::generation(0, AsyncKind::Connection).sender(tx);
         wake.send_update(&sender, Action::TerraformStoreUpdated);
 

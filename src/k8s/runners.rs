@@ -16,6 +16,7 @@ pub async fn poll_runner_pods(
     namespace: Option<String>,
 ) -> Result<()> {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         interval.tick().await;
@@ -25,25 +26,36 @@ pub async fn poll_runner_pods(
             Ok(pods) => {
                 // Fetch logs for Running pods in parallel
                 let logs = fetch_active_runner_logs(&client, &pods).await;
-                let _ = tx.send(Action::RunnerLogsUpdated(logs));
-                let _ = tx.send(Action::RunnerPodsUpdated(pods));
+                if tx.send(Action::RunnerLogsUpdated(logs)).await.is_err()
+                    || tx.send(Action::RunnerPodsUpdated(pods)).await.is_err()
+                {
+                    return Ok(());
+                }
                 // Recovered — clear any prior status-bar indicator.
-                let _ = tx.send(Action::BackgroundError(None));
+                if tx.send(Action::BackgroundError(None)).await.is_err() {
+                    return Ok(());
+                }
             }
             Err(e) => {
                 // A failing OIDC/exec credential plugin: stop polling so
                 // kube-rs stops re-invoking it (each call opens a browser
                 // login tab). The app requires a deliberate Ctrl-X re-auth.
                 if crate::util::is_auth_error(&format!("{e:#}")) {
-                    let _ = tx.send(Action::AuthExpired);
+                    let _ = tx.send(Action::AuthExpired).await;
                     return Ok(());
                 }
                 // Full detail to the log; a concise, non-modal hint to the UI
                 // so the failure is visible without garbling the screen.
                 tracing::warn!("Failed to list runner pods: {}", e);
-                let _ = tx.send(Action::BackgroundError(Some(format!(
-                    "Runner pods unavailable: {e}"
-                ))));
+                if tx
+                    .send(Action::BackgroundError(Some(format!(
+                        "Runner pods unavailable: {e}"
+                    ))))
+                    .await
+                    .is_err()
+                {
+                    return Ok(());
+                }
             }
         }
     }

@@ -64,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Create action channel
-    let (action_tx, action_rx) = mpsc::unbounded_channel::<action::Action>();
+    let (action_tx, action_rx) = mpsc::channel(action::ACTION_CHANNEL_CAPACITY);
 
     // Seed AppState with empty reflector stores so the UI can render
     // before any client exists. The matching writers are unused here —
@@ -202,7 +202,7 @@ async fn main() -> anyhow::Result<()> {
     // replaced by the first connect().
     let mut app = app::App::new_deferred(
         app_state,
-        action_tx.clone(),
+        action_tx,
         action_rx,
         switcher_kubeconfig,
         switcher_kubeconfig_path,

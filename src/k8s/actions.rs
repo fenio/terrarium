@@ -2,7 +2,7 @@ use crate::action::{Action, MutationTarget, ResourceKind, ScopedSender};
 use crate::k8s::kustomization::Kustomization;
 use crate::k8s::terraform::Terraform;
 use anyhow::{Result, anyhow};
-use futures::{AsyncBufReadExt, StreamExt};
+use futures::AsyncReadExt;
 use k8s_openapi::api::core::v1::{ConfigMap, Event, Pod};
 use kube::api::{Api, DeleteParams, ListParams, LogParams, Patch, PatchParams, Preconditions};
 use serde_json::json;
@@ -703,6 +703,63 @@ pub async fn fetch_events(
 
 // -- Log streaming --
 
+const LOG_BATCH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+const MAX_LOG_CHUNK_BYTES: usize = 64 * 1024;
+
+fn take_log_chunk(buf: &mut Vec<u8>, stream_done: bool) -> Option<String> {
+    if buf.is_empty() {
+        return None;
+    }
+    let mut chunk = String::new();
+    let mut consumed = 0;
+
+    while consumed < buf.len() && chunk.len() < MAX_LOG_CHUNK_BYTES {
+        let remaining = &buf[consumed..];
+        match std::str::from_utf8(remaining) {
+            Ok(valid) => {
+                let mut take = valid.len().min(MAX_LOG_CHUNK_BYTES - chunk.len());
+                while !valid.is_char_boundary(take) {
+                    take -= 1;
+                }
+                chunk.push_str(&valid[..take]);
+                consumed += take;
+                break;
+            }
+            Err(error) if error.valid_up_to() > 0 => {
+                let valid = std::str::from_utf8(&remaining[..error.valid_up_to()])
+                    .expect("UTF-8 error prefix is valid");
+                let mut take = valid.len().min(MAX_LOG_CHUNK_BYTES - chunk.len());
+                while !valid.is_char_boundary(take) {
+                    take -= 1;
+                }
+                chunk.push_str(&valid[..take]);
+                consumed += take;
+                if take < valid.len() {
+                    break;
+                }
+            }
+            Err(error) => match error.error_len() {
+                Some(invalid_bytes) if MAX_LOG_CHUNK_BYTES - chunk.len() >= 3 => {
+                    chunk.push('\u{fffd}');
+                    consumed += invalid_bytes;
+                }
+                None if stream_done && MAX_LOG_CHUNK_BYTES - chunk.len() >= 3 => {
+                    chunk.push('\u{fffd}');
+                    consumed = buf.len();
+                }
+                _ => break,
+            },
+        }
+    }
+
+    if consumed == 0 {
+        None
+    } else {
+        buf.drain(..consumed);
+        Some(chunk)
+    }
+}
+
 pub async fn stream_pod_logs(
     client: &kube::Client,
     ns: &str,
@@ -720,52 +777,59 @@ pub async fn stream_pod_logs(
     if let Some(c) = container {
         params.container = Some(c.to_string());
     }
-    let stream = api.log_stream(name, &params).await?;
-    let mut lines = futures::io::BufReader::new(stream).lines();
+    let mut stream = api.log_stream(name, &params).await?;
 
-    // Batch lines together to avoid 1-action-per-line overhead.
-    // Collect lines for up to 50ms before flushing, so the initial
-    // burst of historical lines arrives as a few large chunks instead
-    // of hundreds of tiny ones.
-    let mut buf = String::new();
+    // Batch stream data for up to 50ms before flushing, so the initial
+    // history arrives as a few bounded chunks instead of hundreds of
+    // tiny actions.
+    let mut buf = Vec::with_capacity(MAX_LOG_CHUNK_BYTES);
+    let mut read_buf = [0_u8; 8 * 1024];
+    let mut stream_done = false;
     loop {
-        let deadline = tokio::time::sleep(std::time::Duration::from_millis(50));
-        tokio::pin!(deadline);
+        if !stream_done && buf.len() < MAX_LOG_CHUNK_BYTES {
+            let deadline = tokio::time::sleep(LOG_BATCH_INTERVAL);
+            tokio::pin!(deadline);
 
-        // Collect lines until the deadline fires or the stream ends.
-        let stream_done = loop {
-            tokio::select! {
-                biased;
-                line = lines.next() => {
-                    match line {
-                        Some(Ok(text)) => {
-                            buf.push_str(&text);
-                            buf.push('\n');
+            // Bound batches by both time and size. Check the timer first so
+            // an always-ready log stream cannot starve it.
+            loop {
+                let read_len = (MAX_LOG_CHUNK_BYTES - buf.len()).min(read_buf.len());
+                tokio::select! {
+                    biased;
+                    _ = &mut deadline => break,
+                    read = stream.read(&mut read_buf[..read_len]) => {
+                        match read {
+                            Ok(0) => {
+                                stream_done = true;
+                                break;
+                            }
+                            Ok(read) => {
+                                buf.extend_from_slice(&read_buf[..read]);
+                                if buf.len() == MAX_LOG_CHUNK_BYTES {
+                                    break;
+                                }
+                            }
+                            Err(error) => {
+                                tracing::debug!("Log stream error: {error}");
+                                stream_done = true;
+                                break;
+                            }
                         }
-                        Some(Err(e)) => {
-                            tracing::debug!("Log stream error: {}", e);
-                            break true;
-                        }
-                        None => break true,
                     }
                 }
-                _ = &mut deadline => {
-                    break false;
-                }
-            }
-        };
-
-        if !buf.is_empty() {
-            let chunk = std::mem::take(&mut buf);
-            if tx
-                .send(Action::LogChunkReceived { stream_id, chunk })
-                .is_err()
-            {
-                break;
             }
         }
 
-        if stream_done {
+        if let Some(chunk) = take_log_chunk(&mut buf, stream_done)
+            && tx
+                .send(Action::LogChunkReceived { stream_id, chunk })
+                .await
+                .is_err()
+        {
+            break;
+        }
+
+        if stream_done && buf.is_empty() {
             break;
         }
     }
@@ -791,9 +855,9 @@ fn safe_label_value(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        BREAK_THE_GLASS_ANNOTATION, break_the_glass_active, delete_params,
+        BREAK_THE_GLASS_ANNOTATION, MAX_LOG_CHUNK_BYTES, break_the_glass_active, delete_params,
         patch_with_resource_version, remove_finalizers_patch, reset_break_the_glass_patch,
-        validate_metadata,
+        take_log_chunk, validate_metadata,
     };
     use crate::action::{MutationTarget, ResourceKind};
     use crate::k8s::terraform::Terraform;
@@ -913,5 +977,37 @@ mod tests {
                 .collect(),
         );
         assert!(break_the_glass_active(&terraform));
+    }
+
+    #[test]
+    fn log_chunks_are_size_bounded_and_preserve_utf8() {
+        let mut buf = vec![b'a'; MAX_LOG_CHUNK_BYTES - 1];
+        buf.push(0xc3);
+
+        let first = take_log_chunk(&mut buf, false).expect("non-empty prefix");
+        assert_eq!(first.len(), MAX_LOG_CHUNK_BYTES - 1);
+        assert_eq!(buf, [0xc3]);
+
+        buf.push(0xa9);
+        assert_eq!(take_log_chunk(&mut buf, false).unwrap(), "é");
+    }
+
+    #[test]
+    fn log_chunks_replace_invalid_utf8_without_dropping_valid_bytes() {
+        let mut buf = b"before\xffafter".to_vec();
+
+        let chunk = take_log_chunk(&mut buf, true).expect("log chunk");
+
+        assert_eq!(chunk, "before\u{fffd}after");
+        assert!(chunk.len() <= MAX_LOG_CHUNK_BYTES);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn log_chunks_replace_truncated_utf8_at_eof() {
+        let mut buf = b"before\xc3".to_vec();
+
+        assert_eq!(take_log_chunk(&mut buf, true).unwrap(), "before\u{fffd}");
+        assert!(buf.is_empty());
     }
 }
