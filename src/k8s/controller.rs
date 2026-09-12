@@ -16,6 +16,7 @@ pub async fn poll_controller_info(
     controller_ns: String,
 ) -> Result<()> {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         interval.tick().await;
@@ -26,10 +27,12 @@ pub async fn poll_controller_info(
         if let Some(err) = &info.error
             && crate::util::is_auth_error(err)
         {
-            let _ = tx.send(Action::AuthExpired);
+            let _ = tx.send(Action::AuthExpired).await;
             return Ok(());
         }
-        let _ = tx.send(Action::ControllerInfoUpdated(info));
+        if tx.send(Action::ControllerInfoUpdated(info)).await.is_err() {
+            return Ok(());
+        }
     }
 }
 

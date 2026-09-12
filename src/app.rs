@@ -5,11 +5,10 @@ use crossterm::event::{
     Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use futures::{FutureExt, StreamExt};
-use tokio::sync::mpsc;
 
 use crate::action::{
-    Action, AsyncIdentity, AsyncKind, AsyncScope, AsyncTarget, MutationTarget, ResourceKind,
-    StoreUpdateWake,
+    Action, ActionReceiver, ActionSender, AsyncIdentity, AsyncKind, AsyncScope, AsyncTarget,
+    MutationTarget, ResourceKind, StoreUpdateWake,
 };
 use crate::k8s::actions as k8s_actions;
 use crate::k8s::metrics;
@@ -55,10 +54,11 @@ impl RenderSchedule {
 
 pub struct App {
     pub state: AppState,
-    action_tx: mpsc::UnboundedSender<Action>,
-    action_rx: mpsc::UnboundedReceiver<Action>,
+    action_tx: ActionSender,
+    action_rx: ActionReceiver,
     client: Option<kube::Client>,
     should_quit: bool,
+    follow_up_action: Option<Action>,
     pending_store_wakes: Vec<StoreUpdateWake>,
 
     /// In-memory kubeconfig used by the context switcher. When present
@@ -97,8 +97,8 @@ impl App {
     #[allow(dead_code)]
     pub fn new(
         state: AppState,
-        action_tx: mpsc::UnboundedSender<Action>,
-        action_rx: mpsc::UnboundedReceiver<Action>,
+        action_tx: ActionSender,
+        action_rx: ActionReceiver,
         client: kube::Client,
     ) -> Self {
         Self {
@@ -107,6 +107,7 @@ impl App {
             action_rx,
             client: Some(client),
             should_quit: false,
+            follow_up_action: None,
             pending_store_wakes: Vec::new(),
             switcher_kubeconfig: None,
             switcher_kubeconfig_path: None,
@@ -121,8 +122,8 @@ impl App {
     #[allow(clippy::too_many_arguments)]
     pub fn new_deferred(
         state: AppState,
-        action_tx: mpsc::UnboundedSender<Action>,
-        action_rx: mpsc::UnboundedReceiver<Action>,
+        action_tx: ActionSender,
+        action_rx: ActionReceiver,
         switcher_kubeconfig: Option<kube::config::Kubeconfig>,
         switcher_kubeconfig_path: Option<std::path::PathBuf>,
         namespace: Option<String>,
@@ -135,6 +136,7 @@ impl App {
             action_rx,
             client: None,
             should_quit: false,
+            follow_up_action: None,
             pending_store_wakes: Vec::new(),
             switcher_kubeconfig,
             switcher_kubeconfig_path,
@@ -204,10 +206,16 @@ impl App {
 
             match client_res {
                 Ok((client, cluster_info)) => {
-                    let _ = connection_tx.send(Action::K8sClientReady {
-                        client: crate::action::K8sClient(client.clone()),
-                        context_name: cluster_info.context_name,
-                    });
+                    if connection_tx
+                        .send(Action::K8sClientReady {
+                            client: crate::action::K8sClient(client.clone()),
+                            context_name: cluster_info.context_name,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
 
                     // Register each spawned task so a later reconnect can
                     // abort it. `push` locks the shared vec per spawn.
@@ -225,9 +233,11 @@ impl App {
                             crate::k8s::watcher::run_tf_watcher(c, tf_writer, wtx.clone(), dbg)
                                 .await
                         {
-                            let _ = wtx.send(Action::ConnectionError(format!(
-                                "Terraform watcher failed: {e}"
-                            )));
+                            let _ = wtx
+                                .send(Action::ConnectionError(format!(
+                                    "Terraform watcher failed: {e}"
+                                )))
+                                .await;
                         }
                     }));
 
@@ -237,9 +247,11 @@ impl App {
                         if let Err(e) =
                             crate::k8s::watcher::run_ks_watcher(c, ks_writer, wtx.clone()).await
                         {
-                            let _ = wtx.send(Action::ConnectionError(format!(
-                                "Kustomization watcher failed: {e}"
-                            )));
+                            let _ = wtx
+                                .send(Action::ConnectionError(format!(
+                                    "Kustomization watcher failed: {e}"
+                                )))
+                                .await;
                         }
                     }));
 
@@ -250,9 +262,11 @@ impl App {
                             crate::k8s::watcher::run_gitrepo_watcher(c, gr_writer, wtx.clone())
                                 .await
                         {
-                            let _ = wtx.send(Action::ConnectionError(format!(
-                                "GitRepository watcher failed: {e}"
-                            )));
+                            let _ = wtx
+                                .send(Action::ConnectionError(format!(
+                                    "GitRepository watcher failed: {e}"
+                                )))
+                                .await;
                         }
                     }));
 
@@ -263,9 +277,11 @@ impl App {
                         if let Err(e) =
                             crate::k8s::runners::poll_runner_pods(c, wtx.clone(), ns_clone).await
                         {
-                            let _ = wtx.send(Action::ConnectionError(format!(
-                                "Runner poller failed: {e}"
-                            )));
+                            let _ = wtx
+                                .send(Action::ConnectionError(format!(
+                                    "Runner poller failed: {e}"
+                                )))
+                                .await;
                         }
                     }));
 
@@ -279,16 +295,20 @@ impl App {
                         )
                         .await
                         {
-                            let _ = wtx.send(Action::ConnectionError(format!(
-                                "Controller poller failed: {e}"
-                            )));
+                            let _ = wtx
+                                .send(Action::ConnectionError(format!(
+                                    "Controller poller failed: {e}"
+                                )))
+                                .await;
                         }
                     }));
                 }
                 Err(e) => {
-                    let _ = connection_tx.send(Action::ConnectionError(format!(
-                        "Failed to connect to cluster: {e}"
-                    )));
+                    let _ = connection_tx
+                        .send(Action::ConnectionError(format!(
+                            "Failed to connect to cluster: {e}"
+                        )))
+                        .await;
                 }
             }
         });
@@ -529,17 +549,25 @@ impl App {
     /// the terminal handle (they temporarily suspend the TUI); everything
     /// else goes through the normal `dispatch`.
     async fn run_action(&mut self, action: Action, terminal: &mut crate::tui::Tui) -> bool {
-        match action {
-            Action::ExecBreakTheGlass { target } => {
-                self.exec_break_the_glass(terminal, &target).await;
-                true
+        let mut needs_redraw = false;
+        let mut next_action = Some(action);
+
+        while let Some(action) = next_action {
+            match action {
+                Action::ExecBreakTheGlass { target } => {
+                    self.exec_break_the_glass(terminal, &target).await;
+                    needs_redraw = true;
+                }
+                Action::SwitchContext(context) => {
+                    self.switch_context(terminal, context).await;
+                    needs_redraw = true;
+                }
+                other => needs_redraw |= self.dispatch(other).await,
             }
-            Action::SwitchContext(context) => {
-                self.switch_context(terminal, context).await;
-                true
-            }
-            other => self.dispatch(other).await,
+            next_action = self.follow_up_action.take();
         }
+
+        needs_redraw
     }
 
     fn handle_crossterm_event(&self, event: Event) -> Option<Action> {
@@ -1514,13 +1542,18 @@ impl App {
                 .await
                 {
                     Ok(snap) => {
-                        if tx.send(Action::MetricsSnapshotReceived(snap)).is_err() {
+                        if tx
+                            .send(Action::MetricsSnapshotReceived(snap))
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
                     }
                     Err(e) => {
                         if tx
                             .send(Action::MetricsFetchError(format!("{e:#}")))
+                            .await
                             .is_err()
                         {
                             break;
@@ -2107,7 +2140,7 @@ impl App {
                     // the TUI for an interactive exec/OIDC login if needed.
                     // Re-selecting the current context is allowed — it acts
                     // as a reconnect / re-authenticate.
-                    let _ = self.action_tx.send(Action::SwitchContext(ctx));
+                    self.follow_up_action = Some(Action::SwitchContext(ctx));
                 }
             }
             Action::ContextPickerCancel => {
@@ -2321,15 +2354,15 @@ impl App {
                             // Bulk meta-actions need the main dispatcher's
                             // BulkReconcile/Suspend/Resume/ApprovePlan
                             // handlers, which iterate bulk_selected and
-                            // call spawn_k8s_action per row. Re-enqueueing
-                            // through action_tx routes them there;
+                            // call spawn_k8s_action per row. Route them as a
+                            // direct follow-up after this dispatch;
                             // spawn_k8s_action would hit the catch-all in
                             // execute_k8s_action and silently no-op.
                             wrapped @ (Action::BulkReconcile
                             | Action::BulkSuspend
                             | Action::BulkResume
                             | Action::BulkApprovePlan) => {
-                                let _ = self.action_tx.send(wrapped);
+                                self.follow_up_action = Some(wrapped);
                             }
                             wrapped => self.spawn_k8s_action(wrapped),
                         }
@@ -2454,10 +2487,10 @@ impl App {
                         .await
                     {
                         Ok(plan_text) => {
-                            let _ = tx.send(Action::PlanFetched(plan_text));
+                            let _ = tx.send(Action::PlanFetched(plan_text)).await;
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::PlanFetchError(format!("{e}")));
+                            let _ = tx.send(Action::PlanFetchError(format!("{e}"))).await;
                         }
                     }
                 });
@@ -2509,10 +2542,10 @@ impl App {
                     match k8s_actions::fetch_resource_json(&client, &kind, &namespace, &name).await
                     {
                         Ok(json) => {
-                            let _ = tx.send(Action::JsonFetched(json));
+                            let _ = tx.send(Action::JsonFetched(json)).await;
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::JsonFetchError(format!("{e}")));
+                            let _ = tx.send(Action::JsonFetchError(format!("{e}"))).await;
                         }
                     }
                 });
@@ -2551,10 +2584,10 @@ impl App {
                     match k8s_actions::fetch_resource_yaml(&client, &kind, &namespace, &name).await
                     {
                         Ok(yaml) => {
-                            let _ = tx.send(Action::JsonFetched(yaml));
+                            let _ = tx.send(Action::JsonFetched(yaml)).await;
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::JsonFetchError(format!("{e}")));
+                            let _ = tx.send(Action::JsonFetchError(format!("{e}"))).await;
                         }
                     }
                 });
@@ -2601,10 +2634,10 @@ impl App {
                 tokio::spawn(async move {
                     match k8s_actions::fetch_outputs(&client, &namespace, &name).await {
                         Ok(text) => {
-                            let _ = tx.send(Action::OutputsFetched(text));
+                            let _ = tx.send(Action::OutputsFetched(text)).await;
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::OutputsFetchError(format!("{e}")));
+                            let _ = tx.send(Action::OutputsFetchError(format!("{e}"))).await;
                         }
                     }
                 });
@@ -2656,10 +2689,10 @@ impl App {
                 tokio::spawn(async move {
                     match k8s_actions::fetch_events(&client, &kind, &namespace, &name).await {
                         Ok(events) => {
-                            let _ = tx.send(Action::EventsFetched(events));
+                            let _ = tx.send(Action::EventsFetched(events)).await;
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::EventsFetchError(format!("{e}")));
+                            let _ = tx.send(Action::EventsFetchError(format!("{e}"))).await;
                         }
                     }
                 });
@@ -2810,12 +2843,7 @@ impl App {
                     if content.len() + chunk.len() > MAX_LOG_BYTES {
                         // Trim the front to stay under the cap
                         content.push_str(&chunk);
-                        let excess = content.len() - MAX_LOG_BYTES;
-                        if let Some(newline_pos) = content[excess..].find('\n') {
-                            *content = content[excess + newline_pos + 1..].to_string();
-                        } else {
-                            *content = content[excess..].to_string();
-                        }
+                        trim_log_content(content, MAX_LOG_BYTES);
                     } else {
                         content.push_str(&chunk);
                     }
@@ -3039,14 +3067,18 @@ impl App {
         tokio::spawn(async move {
             match k8s_actions::fetch_output_values(&client, &ns, &name).await {
                 Ok(values) => {
-                    let _ = tx.send(Action::DetailOutputsFetched {
-                        namespace: ns,
-                        name,
-                        values,
-                    });
+                    let _ = tx
+                        .send(Action::DetailOutputsFetched {
+                            namespace: ns,
+                            name,
+                            values,
+                        })
+                        .await;
                 }
                 Err(e) => {
-                    let _ = tx.send(Action::DetailOutputsFetchError(format!("{e}")));
+                    let _ = tx
+                        .send(Action::DetailOutputsFetchError(format!("{e}")))
+                        .await;
                 }
             }
         });
@@ -3096,16 +3128,20 @@ impl App {
                 execute_k8s_action(&client, &action, Some(&context), kubeconfig.as_deref()).await;
             match result {
                 Ok(()) => {
-                    let _ = tx.send(Action::K8sActionSuccess {
-                        target: mutation_target.clone(),
-                        message: success_msg,
-                    });
+                    let _ = tx
+                        .send(Action::K8sActionSuccess {
+                            target: mutation_target.clone(),
+                            message: success_msg,
+                        })
+                        .await;
                 }
                 Err(e) => {
-                    let _ = tx.send(Action::K8sActionError {
-                        target: mutation_target,
-                        message: format!("{e}"),
-                    });
+                    let _ = tx
+                        .send(Action::K8sActionError {
+                            target: mutation_target,
+                            message: format!("{e}"),
+                        })
+                        .await;
                 }
             }
         });
@@ -3334,15 +3370,17 @@ impl App {
                 tokio::spawn(async move {
                     match k8s_actions::fetch_output_values(&client, &ns, &nm).await {
                         Ok(values) => {
-                            let _ = tx.send(Action::ShortcutOutputsFetched {
-                                namespace: ns.clone(),
-                                name: nm.clone(),
-                                shortcut_idx,
-                                values,
-                            });
+                            let _ = tx
+                                .send(Action::ShortcutOutputsFetched {
+                                    namespace: ns.clone(),
+                                    name: nm.clone(),
+                                    shortcut_idx,
+                                    values,
+                                })
+                                .await;
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::OutputsFetchError(format!("{e}")));
+                            let _ = tx.send(Action::OutputsFetchError(format!("{e}"))).await;
                         }
                     }
                 });
@@ -3385,16 +3423,20 @@ impl App {
             tokio::spawn(async move {
                 match k8s_actions::fetch_secret_values(&client, &ns, &secret_name).await {
                     Ok(values) => {
-                        let _ = tx.send(Action::ShortcutSecretValuesFetched {
-                            namespace: ns.clone(),
-                            name: nm.clone(),
-                            secret_name,
-                            shortcut_idx,
-                            values,
-                        });
+                        let _ = tx
+                            .send(Action::ShortcutSecretValuesFetched {
+                                namespace: ns.clone(),
+                                name: nm.clone(),
+                                secret_name,
+                                shortcut_idx,
+                                values,
+                            })
+                            .await;
                     }
                     Err(e) => {
-                        let _ = tx.send(Action::SecretValuesFetchError(format!("{e}")));
+                        let _ = tx
+                            .send(Action::SecretValuesFetchError(format!("{e}")))
+                            .await;
                     }
                 }
             });
@@ -4145,23 +4187,41 @@ fn lookup_output_path(outputs: &std::collections::HashMap<String, String>, path:
     }
 }
 
+fn trim_log_content(content: &mut String, max_bytes: usize) {
+    if content.len() <= max_bytes {
+        return;
+    }
+    let mut trim_from = content.len() - max_bytes;
+    while !content.is_char_boundary(trim_from) {
+        trim_from += 1;
+    }
+    let trim_to = content[trim_from..]
+        .find('\n')
+        .map_or(trim_from, |newline| trim_from + newline + 1);
+    content.drain(..trim_to);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         App, FRAME_INTERVAL, RenderSchedule, first_uncached_secret, resolve_map_placeholders,
         resolve_output_placeholders, resolve_secret_placeholders, resolve_var_placeholders,
-        terraform_names_text,
+        terraform_names_text, trim_log_content,
     };
-    use crate::action::{Action, AsyncKind, AsyncScope, StoreUpdateWake};
+    use crate::action::{ACTION_CHANNEL_CAPACITY, Action, AsyncKind, AsyncScope, StoreUpdateWake};
     use crate::config::Config;
     use crate::k8s::watcher::{create_gitrepo_store, create_ks_store, create_tf_store};
-    use crate::state::store::{AppState, InputMode};
+    use crate::state::store::{AppState, DialogState, InputMode};
     use crossterm::event::Event;
     use std::collections::{BTreeMap, HashMap};
     use std::time::Duration;
     use tokio::sync::mpsc;
 
     fn test_app() -> App {
+        test_app_with_capacity(ACTION_CHANNEL_CAPACITY)
+    }
+
+    fn test_app_with_capacity(capacity: usize) -> App {
         let (tf_store, _) = create_tf_store();
         let (ks_store, _) = create_ks_store();
         let (gr_store, _) = create_gitrepo_store();
@@ -4172,7 +4232,7 @@ mod tests {
             "test".into(),
             Config::default(),
         );
-        let (action_tx, action_rx) = mpsc::unbounded_channel();
+        let (action_tx, action_rx) = mpsc::channel(capacity);
         App::new_deferred(
             state,
             action_tx,
@@ -4221,6 +4281,34 @@ mod tests {
         let mut app = test_app();
 
         assert!(app.dispatch(Action::Resize(120, 40)).await);
+    }
+
+    #[tokio::test]
+    async fn confirmed_bulk_action_does_not_self_send_to_full_channel() {
+        let mut app = test_app_with_capacity(1);
+        app.action_tx
+            .try_send(Action::None)
+            .expect("fill action channel");
+        app.state.pending_dialog = Some(DialogState {
+            wrapped_action: Action::BulkReconcile,
+            message: String::new(),
+            expected_input: None,
+            typed_input: String::new(),
+        });
+
+        assert!(app.dispatch(Action::ConfirmDialog(true)).await);
+
+        assert!(matches!(app.follow_up_action, Some(Action::BulkReconcile)));
+        assert!(matches!(app.action_rx.try_recv(), Ok(Action::None)));
+    }
+
+    #[test]
+    fn log_trimming_uses_utf8_boundaries() {
+        let mut content = format!("é{}", "a".repeat(10));
+
+        trim_log_content(&mut content, 11);
+
+        assert_eq!(content, "a".repeat(10));
     }
 
     #[tokio::test]
