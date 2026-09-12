@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 
 use crate::action::{
     Action, AsyncIdentity, AsyncKind, AsyncScope, AsyncTarget, MutationTarget, ResourceKind,
+    StoreUpdateWake,
 };
 use crate::k8s::actions as k8s_actions;
 use crate::k8s::metrics;
@@ -58,6 +59,7 @@ pub struct App {
     action_rx: mpsc::UnboundedReceiver<Action>,
     client: Option<kube::Client>,
     should_quit: bool,
+    pending_store_wakes: Vec<StoreUpdateWake>,
 
     /// In-memory kubeconfig used by the context switcher. When present
     /// (e.g. assembled by a `[switcher] builder` command), clients are
@@ -105,6 +107,7 @@ impl App {
             action_rx,
             client: Some(client),
             should_quit: false,
+            pending_store_wakes: Vec::new(),
             switcher_kubeconfig: None,
             switcher_kubeconfig_path: None,
             namespace: None,
@@ -132,6 +135,7 @@ impl App {
             action_rx,
             client: None,
             should_quit: false,
+            pending_store_wakes: Vec::new(),
             switcher_kubeconfig,
             switcher_kubeconfig_path,
             namespace,
@@ -313,7 +317,7 @@ impl App {
                 Instant::now(),
                 FlashKind::Success,
             ));
-            terminal.draw(|f| layout::render(f, &mut self.state)).ok();
+            self.draw(terminal).ok();
 
             if crate::tui::restore().is_ok() {
                 println!("\nAuthenticating to {context} … (a browser may open)\n");
@@ -353,17 +357,32 @@ impl App {
             .unwrap_or_default()
     }
 
+    fn draw(&mut self, terminal: &mut crate::tui::Tui) -> std::io::Result<()> {
+        // Release before reading the stores. An update racing with this draw
+        // can then enqueue a wake for another frame if this one misses it.
+        self.release_store_wakes();
+        terminal
+            .draw(|frame| layout::render(frame, &mut self.state))
+            .map(|_| ())
+    }
+
+    fn release_store_wakes(&mut self) {
+        for wake in self.pending_store_wakes.drain(..) {
+            wake.release();
+        }
+    }
+
     pub async fn run(&mut self, terminal: &mut crate::tui::Tui) -> anyhow::Result<()> {
         let mut event_stream = EventStream::new();
         let mut tick_interval = tokio::time::interval(Duration::from_millis(250));
         let started_at = tokio::time::Instant::now();
-        terminal.draw(|f| layout::render(f, &mut self.state))?;
+        self.draw(terminal)?;
         let mut render_schedule = RenderSchedule::after_render(started_at);
 
         loop {
             let now = tokio::time::Instant::now();
             if render_schedule.is_due(now) {
-                terminal.draw(|f| layout::render(f, &mut self.state))?;
+                self.draw(terminal)?;
                 render_schedule.rendered(now);
             }
 
@@ -2904,15 +2923,27 @@ impl App {
                 ));
             }
 
-            Action::TerraformStoreUpdated => {
+            Action::TerraformStoreUpdated(wake) => {
+                self.pending_store_wakes.push(wake);
+                self.state.last_data_update = Some(Instant::now());
+            }
+            Action::KustomizationStoreUpdated(wake) => {
+                self.pending_store_wakes.push(wake);
+                self.state.last_data_update = Some(Instant::now());
+            }
+            Action::GitRepoStoreUpdated(wake) => {
+                self.pending_store_wakes.push(wake);
+                self.state.last_data_update = Some(Instant::now());
+            }
+            Action::TerraformStoreSynced => {
                 self.state.tf_synced = true;
                 self.state.last_data_update = Some(Instant::now());
             }
-            Action::KustomizationStoreUpdated => {
+            Action::KustomizationStoreSynced => {
                 self.state.ks_synced = true;
                 self.state.last_data_update = Some(Instant::now());
             }
-            Action::GitRepoStoreUpdated => {
+            Action::GitRepoStoreSynced => {
                 self.state.gr_synced = true;
                 self.state.last_data_update = Some(Instant::now());
             }
@@ -3484,7 +3515,7 @@ impl App {
             Instant::now(),
             FlashKind::Success,
         ));
-        terminal.draw(|f| layout::render(f, &mut self.state)).ok();
+        self.draw(terminal).ok();
 
         // Suspend TUI
         if let Err(e) = crate::tui::restore() {
@@ -4121,7 +4152,7 @@ mod tests {
         resolve_output_placeholders, resolve_secret_placeholders, resolve_var_placeholders,
         terraform_names_text,
     };
-    use crate::action::{Action, AsyncKind, AsyncScope};
+    use crate::action::{Action, AsyncKind, AsyncScope, StoreUpdateWake};
     use crate::config::Config;
     use crate::k8s::watcher::{create_gitrepo_store, create_ks_store, create_tf_store};
     use crate::state::store::{AppState, InputMode};
@@ -4190,6 +4221,37 @@ mod tests {
         let mut app = test_app();
 
         assert!(app.dispatch(Action::Resize(120, 40)).await);
+    }
+
+    #[tokio::test]
+    async fn store_update_wakes_coalesce_until_render() {
+        let mut app = test_app();
+        let sender = AsyncScope::generation(0, AsyncKind::Connection).sender(app.action_tx.clone());
+        let wake = StoreUpdateWake::default();
+
+        wake.send_update(&sender, Action::TerraformStoreUpdated);
+        wake.send_update(&sender, Action::TerraformStoreUpdated);
+
+        let action = app.action_rx.recv().await.expect("store update wake");
+        assert!(app.dispatch(action).await);
+        assert!(app.action_rx.try_recv().is_err());
+        assert!(!app.state.tf_synced);
+        assert!(app.state.last_data_update.is_some());
+
+        app.release_store_wakes();
+        wake.send_update(&sender, Action::TerraformStoreUpdated);
+
+        assert!(app.action_rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn store_sync_action_marks_initial_sync_complete() {
+        let mut app = test_app();
+
+        assert!(app.dispatch(Action::TerraformStoreSynced).await);
+
+        assert!(app.state.tf_synced);
+        assert!(app.state.last_data_update.is_some());
     }
 
     #[test]

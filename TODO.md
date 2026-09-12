@@ -8,7 +8,7 @@ operational risk and user impact, not by implementation size.
 - [x] Restore green CI: keep test modules after production items so `cargo clippy --all-targets -- -D warnings` passes.
 - [x] Scope asynchronous results to a connection generation and request target. Delayed plan, JSON, output, event, secret, metrics, watcher, and mutation results must be discarded after a context switch or when the target view/resource changes.
 - [x] Fix live-list selection identity. Track selected namespace/name/UID rather than relying only on an index; make first `j` and first Space behave consistently; reselect or clear safely after store/filter/sort updates.
-- [ ] Fix reflector initial-sync state. Emit synchronized state only on `InitDone`; use separate notifications for object updates.
+- [x] Fix reflector initial-sync state. Emit synchronized state only on `InitDone`; use separate notifications for object updates.
 - [ ] Make string handling Unicode-safe. Replace byte-offset slicing in condition wrapping, viewer search highlighting, and log trimming with character-boundary/display-width-aware logic.
 
 ## P1: Correctness And Safety

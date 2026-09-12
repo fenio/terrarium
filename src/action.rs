@@ -1,3 +1,8 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
 use k8s_openapi::api::core::v1::Pod;
 
 /// Wrapper for kube::Client that implements Debug.
@@ -124,6 +129,34 @@ pub struct ScopedAction {
 pub struct ScopedSender {
     tx: tokio::sync::mpsc::UnboundedSender<Action>,
     scope: AsyncScope,
+}
+
+/// Shared pending bit that keeps at most one store-update wake queued.
+#[derive(Debug, Clone, Default)]
+pub struct StoreUpdateWake(Arc<AtomicBool>);
+
+impl StoreUpdateWake {
+    pub(crate) fn send_update(
+        &self,
+        tx: &ScopedSender,
+        action: impl FnOnce(StoreUpdateWake) -> Action,
+    ) {
+        if self
+            .0
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+
+        if tx.send(action(self.clone())).is_err() {
+            self.release();
+        }
+    }
+
+    pub(crate) fn release(&self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl ScopedSender {
@@ -360,9 +393,12 @@ pub enum Action {
     ExportTerraformNames,
 
     // K8s data events
-    TerraformStoreUpdated,
-    KustomizationStoreUpdated,
-    GitRepoStoreUpdated,
+    TerraformStoreUpdated(StoreUpdateWake),
+    KustomizationStoreUpdated(StoreUpdateWake),
+    GitRepoStoreUpdated(StoreUpdateWake),
+    TerraformStoreSynced,
+    KustomizationStoreSynced,
+    GitRepoStoreSynced,
     RunnerPodsUpdated(Vec<Pod>),
     ControllerInfoUpdated(crate::state::store::ControllerInfo),
     RunnerLogsUpdated(std::collections::HashMap<(String, String), String>),
@@ -439,5 +475,26 @@ impl Action {
             scope,
             action: Box::new(action),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Action, AsyncKind, AsyncScope, StoreUpdateWake};
+
+    #[test]
+    fn store_update_wake_reopens_after_failed_send() {
+        let wake = StoreUpdateWake::default();
+        let (closed_tx, closed_rx) = tokio::sync::mpsc::unbounded_channel();
+        let closed_sender = AsyncScope::generation(0, AsyncKind::Connection).sender(closed_tx);
+        drop(closed_rx);
+
+        wake.send_update(&closed_sender, Action::TerraformStoreUpdated);
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sender = AsyncScope::generation(0, AsyncKind::Connection).sender(tx);
+        wake.send_update(&sender, Action::TerraformStoreUpdated);
+
+        assert!(rx.try_recv().is_ok());
     }
 }
