@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use kube::runtime::reflector::ObjectRef;
 use ratatui::{
     style::{Color, Style},
     text::{Line, Span},
@@ -22,14 +23,7 @@ pub fn find_gitrepo(
     name: &str,
 ) -> Option<Arc<GitRepository>> {
     let ns = ref_namespace.unwrap_or(fallback_namespace);
-    store
-        .state()
-        .iter()
-        .find(|gr| {
-            gr.metadata.namespace.as_deref() == Some(ns)
-                && gr.metadata.name.as_deref() == Some(name)
-        })
-        .cloned()
+    store.get(&ObjectRef::new(name).within(ns))
 }
 
 /// Render a "Source:" line with health icon and revision (or reason)

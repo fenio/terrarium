@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use kube::runtime::reflector::ObjectRef;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -6,8 +9,8 @@ use ratatui::{
     widgets::{Block, Paragraph, Wrap},
 };
 
-use crate::k8s::kustomization::KustomizationSourceRefKind;
-use crate::k8s::terraform::TerraformSourceRefKind;
+use crate::k8s::kustomization::{Kustomization, KustomizationSourceRefKind};
+use crate::k8s::terraform::{Terraform, TerraformSourceRefKind};
 use crate::state::store::{AppState, InputMode, TabKind, ViewState};
 use crate::ui::{
     context_picker, controller_dashboard, custom_tab, dialog, help, kustomization_detail,
@@ -162,11 +165,13 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
     let bg = Block::default().style(Style::default().bg(theme::HEADER_BAR_BG));
     f.render_widget(bg, area);
 
-    let tf_count = state.tf_store.state().len();
-    let ks_count = state.ks_store.state().len();
+    let terraforms = state.tf_store.state();
+    let kustomizations = state.ks_store.state();
+    let tf_count = terraforms.len();
+    let ks_count = kustomizations.len();
     let runner_count = state.runner_pods.len();
-    let tf_failures_raw = count_failures_tf(state);
-    let ks_failures_raw = count_failures_ks(state);
+    let tf_failures_raw = count_failures_tf(&terraforms);
+    let ks_failures_raw = count_failures_ks(&kustomizations);
     let tf_failures = state.stabilized_tf_failures(tf_failures_raw);
     let ks_failures = state.stabilized_ks_failures(ks_failures_raw);
 
@@ -371,7 +376,7 @@ fn render_header_block(f: &mut Frame, area: Rect, state: &mut AppState) {
     ];
     for (i, ct) in state.config.custom_tabs.iter().enumerate() {
         let count = if state.tf_synced {
-            Some(custom_tab::count_entries(&state.tf_store, ct))
+            Some(custom_tab::count_entries(&terraforms, ct))
         } else {
             None
         };
@@ -651,10 +656,8 @@ fn gecko_frame(ticks: usize) -> [&'static str; 4] {
     }
 }
 
-fn count_failures_tf(state: &AppState) -> usize {
-    state
-        .tf_store
-        .state()
+fn count_failures_tf(terraforms: &[Arc<Terraform>]) -> usize {
+    terraforms
         .iter()
         .filter(|tf| {
             crate::util::classify_ready(tf.status.as_ref().and_then(|s| s.conditions.as_ref()))
@@ -663,10 +666,8 @@ fn count_failures_tf(state: &AppState) -> usize {
         .count()
 }
 
-fn count_failures_ks(state: &AppState) -> usize {
-    state
-        .ks_store
-        .state()
+fn count_failures_ks(kustomizations: &[Arc<Kustomization>]) -> usize {
+    kustomizations
         .iter()
         .filter(|ks| {
             crate::util::classify_ready(ks.status.as_ref().and_then(|s| s.conditions.as_ref()))
@@ -678,8 +679,12 @@ fn count_failures_ks(state: &AppState) -> usize {
 // Old render_tabs and render_container_tabs replaced by render_header_block above.
 
 fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
-    match state.current_view().clone() {
-        ViewState::List(tab) => match tab {
+    let list_tab = match state.current_view() {
+        ViewState::List(tab) => Some(tab.clone()),
+        _ => None,
+    };
+    if let Some(tab) = list_tab {
+        match tab {
             TabKind::Controller => {
                 controller_dashboard::render(f, area, state);
             }
@@ -695,20 +700,14 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
             TabKind::CustomTab(i) => {
                 custom_tab::render_custom_tab(f, area, state, i);
             }
-        },
-        ViewState::TerraformDetail {
-            ref namespace,
-            ref name,
-        } => {
-            let tf = state
-                .tf_store
-                .state()
-                .iter()
-                .find(|t| {
-                    t.metadata.namespace.as_deref() == Some(namespace)
-                        && t.metadata.name.as_deref() == Some(name)
-                })
-                .cloned();
+        }
+        return;
+    }
+
+    match state.current_view() {
+        ViewState::List(_) => unreachable!("list views return before detail rendering"),
+        ViewState::TerraformDetail { namespace, name } => {
+            let tf = state.tf_store.get(&ObjectRef::new(name).within(namespace));
 
             if let Some(tf) = tf {
                 let runner_logs = state
@@ -747,19 +746,8 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
                 f.render_widget(para, area);
             }
         }
-        ViewState::KustomizationDetail {
-            ref namespace,
-            ref name,
-        } => {
-            let ks = state
-                .ks_store
-                .state()
-                .iter()
-                .find(|k| {
-                    k.metadata.namespace.as_deref() == Some(namespace)
-                        && k.metadata.name.as_deref() == Some(name)
-                })
-                .cloned();
+        ViewState::KustomizationDetail { namespace, name } => {
+            let ks = state.ks_store.get(&ObjectRef::new(name).within(namespace));
 
             if let Some(ks) = ks {
                 let source_gr = if matches!(
@@ -782,7 +770,7 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
                 f.render_widget(para, area);
             }
         }
-        ViewState::PlanViewer { ref content } => {
+        ViewState::PlanViewer { content } => {
             let vp = ViewerParams {
                 scroll: state.plan_scroll,
                 hscroll: state.horizontal_scroll,
@@ -791,7 +779,7 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
             };
             render_plan_viewer(f, area, content, &vp);
         }
-        ViewState::JsonViewer { ref content } => {
+        ViewState::JsonViewer { content } => {
             let vp = ViewerParams {
                 scroll: state.plan_scroll,
                 hscroll: state.horizontal_scroll,
@@ -800,7 +788,7 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
             };
             render_json_viewer(f, area, content, &vp);
         }
-        ViewState::EventsViewer { ref content } => {
+        ViewState::EventsViewer { content } => {
             let vp = ViewerParams {
                 scroll: state.plan_scroll,
                 hscroll: state.horizontal_scroll,
@@ -809,7 +797,7 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
             };
             render_events_viewer(f, area, content, &vp);
         }
-        ViewState::OutputsViewer { ref content } => {
+        ViewState::OutputsViewer { content } => {
             let vp = ViewerParams {
                 scroll: state.plan_scroll,
                 hscroll: state.horizontal_scroll,
@@ -818,7 +806,7 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
             };
             render_json_viewer(f, area, content, &vp);
         }
-        ViewState::ConditionsViewer { ref content } => {
+        ViewState::ConditionsViewer { content } => {
             let vp = ViewerParams {
                 scroll: state.plan_scroll,
                 hscroll: state.horizontal_scroll,
@@ -828,11 +816,11 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
             render_conditions_viewer(f, area, content, &vp);
         }
         ViewState::LogViewer {
-            ref namespace,
-            ref pod_name,
-            ref containers,
+            namespace,
+            pod_name,
+            containers,
             active_container,
-            ref content,
+            content,
             ..
         } => {
             let vp = ViewerParams {
@@ -853,7 +841,7 @@ fn render_body(f: &mut Frame, area: Rect, state: &mut AppState) {
                 namespace,
                 pod_name,
                 containers,
-                active_container,
+                *active_container,
             );
             render_viewer(f, chunks[1], content, &vp);
         }

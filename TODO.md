@@ -58,7 +58,8 @@ operational risk and user impact, not by implementation size.
 - [ ] Pin GitHub Actions to immutable versions or audited SHAs and add release provenance/signatures/checksums.
 - [ ] Decide whether Dockerfile and scripts are supported artifacts. If supported, track and test them, run the image as non-root, and include all required runtime tools.
 - [ ] Evaluate replacing deprecated `serde_yaml` and document the migration impact.
-- [ ] Bound large-cluster memory/CPU costs by avoiding full-store clones per frame, limiting payload sizes, and reducing broad runner log polling.
+- [x] Avoid deep-cloning every resource in reflector snapshots during list and dashboard rendering.
+- [ ] Bound remaining large-cluster memory/CPU costs by limiting payload sizes and reducing broad runner log polling.
 
 ## Current Baseline
 

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ratatui::{
     Frame,
     layout::{Constraint, Rect},
@@ -125,9 +127,9 @@ pub fn get_filtered_kustomizations(
     recently_acted: &std::collections::HashMap<(String, String), std::time::Instant>,
     sort_column: SortColumn,
     descending: bool,
-) -> Vec<Kustomization> {
-    let all: Vec<Kustomization> = store.state().iter().map(|arc| (**arc).clone()).collect();
-    let mut filtered: Vec<Kustomization> = all
+) -> Vec<Arc<Kustomization>> {
+    let mut filtered: Vec<Arc<Kustomization>> = store
+        .state()
         .into_iter()
         .filter(|ks| {
             if let Some(ns) = namespace_filter {
@@ -185,7 +187,7 @@ pub fn get_filtered_kustomizations(
             let ready_a = get_ready_str(a);
             let ready_b = get_ready_str(b);
             ready_a
-                .cmp(&ready_b)
+                .cmp(ready_b)
                 .then(a.metadata.name.cmp(&b.metadata.name))
         }),
         SortColumn::Revision => filtered.sort_by(|a, b| {
@@ -194,7 +196,7 @@ pub fn get_filtered_kustomizations(
             let rev_a = revision_str(a);
             let rev_b = revision_str(b);
             match (rev_a, rev_b) {
-                (Some(x), Some(y)) => x.cmp(&y).then(a.metadata.name.cmp(&b.metadata.name)),
+                (Some(x), Some(y)) => x.cmp(y).then(a.metadata.name.cmp(&b.metadata.name)),
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
                 (None, None) => a.metadata.name.cmp(&b.metadata.name),
@@ -232,19 +234,18 @@ fn applied_ts(ks: &Kustomization) -> Option<jiff::Timestamp> {
         .map(|c| c.last_transition_time.0)
 }
 
-fn revision_str(ks: &Kustomization) -> Option<String> {
+fn revision_str(ks: &Kustomization) -> Option<&str> {
     ks.status
         .as_ref()
         .and_then(|s| s.last_applied_revision.as_deref())
-        .map(|s| s.to_string())
 }
 
-fn get_ready_str(ks: &Kustomization) -> String {
+fn get_ready_str(ks: &Kustomization) -> &str {
     ks.status
         .as_ref()
         .and_then(|s| s.conditions.as_ref())
         .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready"))
-        .map(|c| c.status.clone())
+        .map(|c| c.status.as_str())
         .unwrap_or_default()
 }
 
@@ -283,4 +284,45 @@ fn get_last_applied_time(ks: &Kustomization) -> String {
         .and_then(|cs| cs.iter().find(|c| c.type_ == "Ready" && c.status == "True"))
         .map(|c| util::format_duration_ago(util::secs_since(c.last_transition_time.0)))
         .unwrap_or_else(|| "-".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filtered_kustomizations_reuse_store_arcs() {
+        let ks: Kustomization = serde_json::from_value(serde_json::json!({
+            "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+            "kind": "Kustomization",
+            "metadata": {"name": "shared", "namespace": "ns"},
+            "spec": {
+                "interval": "1m",
+                "prune": false,
+                "sourceRef": {"kind": "GitRepository", "name": "source"}
+            }
+        }))
+        .expect("minimal Kustomization should deserialize");
+        let (store, mut writer) = crate::k8s::watcher::create_ks_store();
+        writer.apply_watcher_event(&kube::runtime::watcher::Event::Apply(ks));
+        let stored = store
+            .get(&kube::runtime::reflector::ObjectRef::new("shared").within("ns"))
+            .expect("Kustomization should be present");
+
+        let filtered = get_filtered_kustomizations(
+            &store,
+            &None,
+            "",
+            false,
+            false,
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            SortColumn::Name,
+            false,
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert!(Arc::ptr_eq(&stored, &filtered[0]));
+    }
 }

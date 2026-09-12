@@ -7,7 +7,6 @@ use ratatui::{
 };
 
 use crate::config::{CustomColumn, CustomColumnSource, CustomTab};
-use crate::k8s::terraform::Terraform;
 use crate::k8s::watcher::TfStore;
 use crate::state::store::{AppState, SelectionIdentity, TabKind};
 use crate::ui::theme;
@@ -121,10 +120,9 @@ pub fn get_filtered_entries(
     search_query: &str,
     tab: &CustomTab,
 ) -> Vec<CustomTabEntry> {
-    let all: Vec<Terraform> = store.state().iter().map(|arc| (**arc).clone()).collect();
     let mut entries = Vec::new();
 
-    for tf in all {
+    for tf in store.state() {
         let annotation_value = tf
             .metadata
             .annotations
@@ -241,9 +239,11 @@ fn entry_value<'a>(entry: &'a CustomTabEntry, source: &CustomColumnSource) -> &'
 }
 
 /// Count how many TF resources match the custom tab annotation filter (for tab badge).
-pub fn count_entries(store: &TfStore, tab: &CustomTab) -> usize {
-    store
-        .state()
+pub(crate) fn count_entries(
+    terraforms: &[std::sync::Arc<crate::k8s::terraform::Terraform>],
+    tab: &CustomTab,
+) -> usize {
+    terraforms
         .iter()
         .filter(|tf| {
             tf.metadata
@@ -256,7 +256,7 @@ pub fn count_entries(store: &TfStore, tab: &CustomTab) -> usize {
         .count()
 }
 
-fn get_ready_status(tf: &Terraform) -> (String, Style) {
+fn get_ready_status(tf: &crate::k8s::terraform::Terraform) -> (String, Style) {
     let conditions = tf.status.as_ref().and_then(|s| s.conditions.as_ref());
     crate::ui::resource_list::ready_label_and_style(crate::util::classify_ready(conditions))
 }
