@@ -395,6 +395,13 @@ impl App {
     pub async fn run(&mut self, terminal: &mut crate::tui::Tui) -> anyhow::Result<()> {
         let mut event_stream = EventStream::new();
         let mut tick_interval = tokio::time::interval(Duration::from_millis(250));
+        // Without this, a starved loop (e.g. the action flood when a
+        // break-the-glass runner catches up on exit) lets the default
+        // `Burst` behavior fire every missed tick back-to-back once the
+        // loop recovers. `tick_count` then jumps many steps in a fraction
+        // of a second, sending the gecko and spinner racing. `Skip` keeps
+        // the heartbeat on its 250 ms grid no matter how long we stalled.
+        tick_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let started_at = tokio::time::Instant::now();
         self.draw(terminal)?;
         let mut render_schedule = RenderSchedule::after_render(started_at);
