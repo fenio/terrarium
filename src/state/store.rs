@@ -1944,15 +1944,15 @@ mod tests {
     #[test]
     fn compiled_when_matches_by_context() {
         let state = state_with_context_and_shortcuts(
-            "pl-labkrk-2-flux-devcloud-01",
+            "flux-staging-01",
             vec![
                 shortcut(
                     'b',
-                    "grafana-devcloud",
+                    "grafana-staging",
                     Some(When {
                         name: None,
                         namespace: None,
-                        context: Some("devcloud".into()),
+                        context: Some("staging".into()),
                     }),
                 ),
                 shortcut('b', "grafana-prod", None),
@@ -1961,19 +1961,19 @@ mod tests {
         assert_eq!(
             state.resolve_shortcut_for('b', "ns", "anything"),
             Some(0),
-            "devcloud-context should pick the devcloud-gated shortcut first"
+            "staging context should pick the staging-gated shortcut first"
         );
 
         let state_prod = state_with_context_and_shortcuts(
-            "prod-lax-01",
+            "prod-01",
             vec![
                 shortcut(
                     'b',
-                    "grafana-devcloud",
+                    "grafana-staging",
                     Some(When {
                         name: None,
                         namespace: None,
-                        context: Some("devcloud".into()),
+                        context: Some("staging".into()),
                     }),
                 ),
                 shortcut('b', "grafana-prod", None),
@@ -1982,7 +1982,7 @@ mod tests {
         assert_eq!(
             state_prod.resolve_shortcut_for('b', "ns", "anything"),
             Some(1),
-            "non-devcloud context should fall through to the unfiltered shortcut"
+            "non-staging context should fall through to the unfiltered shortcut"
         );
     }
 
@@ -1992,14 +1992,17 @@ mod tests {
         // per key wins, but keys the override doesn't define should
         // still come from the catch-all.
         let state = state_with_context_vars(
-            "pl-labkrk-2-flux-devcloud-01",
+            "flux-staging-01",
             vec![
-                ("devcloud", vec![("grafana_host", "grafana-shared.x.net")]),
+                (
+                    "staging",
+                    vec![("grafana_host", "grafana-staging.example.net")],
+                ),
                 (
                     ".*",
                     vec![
-                        ("grafana_host", "grafana-prod.x.net"),
-                        ("linode_host", "admin.linode.com"),
+                        ("grafana_host", "grafana-prod.example.net"),
+                        ("cloud_admin_host", "cloud-admin.example.net"),
                     ],
                 ),
             ],
@@ -2007,20 +2010,19 @@ mod tests {
         let merged = state.vars_for_context();
         assert_eq!(
             merged.get("grafana_host").map(String::as_str),
-            Some("grafana-shared.x.net"),
+            Some("grafana-staging.example.net"),
             "override entry should win"
         );
         assert_eq!(
-            merged.get("linode_host").map(String::as_str),
-            Some("admin.linode.com"),
+            merged.get("cloud_admin_host").map(String::as_str),
+            Some("cloud-admin.example.net"),
             "catch-all should fill in keys the override omits"
         );
     }
 
     #[test]
     fn vars_for_context_returns_empty_when_no_match() {
-        let state =
-            state_with_context_vars("prod-lax-01", vec![("^staging-", vec![("env", "stg")])]);
+        let state = state_with_context_vars("prod-01", vec![("^staging-", vec![("env", "stg")])]);
         assert!(
             state.vars_for_context().is_empty(),
             "no matching [[context_vars]] entry should yield an empty map"

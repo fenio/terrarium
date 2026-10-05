@@ -249,7 +249,7 @@ url = "https://internal.example.com/terrarium/config.toml"
 # git over SSH — cloned with your SSH key, no HTTPS token/SSO needed.
 # Format: git+ssh://<git-ssh-url>#<path/to/file/in/repo>
 [config_sync]
-url = "git+ssh://git@github.example.com/armada/kupala-tools#terrarium-config/config.toml"
+url = "git+ssh://git@github.example.com/org/config-repo#terrarium-config/config.toml"
 ```
 
 Then:
@@ -489,14 +489,14 @@ either:
 # matching entry that defines that key wins; the catch-all fills in
 # any keys the override doesn't set.
 [[context_vars]]
-match = "devcloud"
-vars  = { grafana_host = "grafana-mom-shared-ord.cloud-observability.akadns.net",
-          linode_host  = "admin.devcloud.linode.com" }
+match = "staging"
+vars  = { grafana_host = "grafana-staging.example.net",
+          cloud_admin_host = "cloud-admin-staging.example.net" }
 
 [[context_vars]]
 match = ".*"
-vars  = { grafana_host = "grafana-mom-prod-lax.cloud-observability.akadns.net",
-          linode_host  = "admin.linode.com" }
+vars  = { grafana_host = "grafana-prod.example.net",
+          cloud_admin_host = "cloud-admin.example.net" }
 
 # Single shortcut for Grafana — the host swaps automatically based on
 # whichever kube context you're pointed at when you press `b`.

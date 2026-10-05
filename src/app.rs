@@ -4589,7 +4589,7 @@ mod tests {
         let result = resolve_var_placeholders(
             "https://{var.grafana_host}/d/x?cluster={name}",
             &vars,
-            "devcloud",
+            "staging",
             &mut warned,
         );
         // Note: {name} isn't substituted by this helper — it's resolved
