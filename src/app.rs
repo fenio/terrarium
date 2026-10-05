@@ -3486,6 +3486,17 @@ impl App {
             }
         }
 
+        // {repo.url|host|path|branch} resolve the Flux GitRepository that
+        // backs the selected resource (via its sourceRef). It's already in
+        // the reflector store, so no lazy fetch is needed. This lets a link
+        // follow wherever the tenant's source actually lives — e.g. GitLab
+        // for not-yet-migrated tenants vs the self-hosted GitHub for
+        // migrated ones — without hardcoding the host.
+        if url.contains("{repo.") {
+            let gr = self.state.gitrepo_for(namespace, name);
+            url = resolve_repo_placeholders(&url, gr.as_deref());
+        }
+
         if needs_outputs && let Some((_, outputs)) = &self.state.cached_outputs {
             url = resolve_output_placeholders(&url, outputs);
         }
@@ -4089,6 +4100,27 @@ fn resolve_map_placeholders(
     }
     result.push_str(rest);
     result
+}
+
+/// Substitute `{repo.url}`, `{repo.host}`, `{repo.path}`, and
+/// `{repo.branch}` from the resource's Flux GitRepository. Missing fields
+/// (including when `gr` is `None`, e.g. the source isn't a GitRepository or
+/// hasn't synced) resolve to empty strings, matching the other resolvers.
+fn resolve_repo_placeholders(url: &str, gr: Option<&crate::k8s::source::GitRepository>) -> String {
+    let (host, path, branch, raw) = match gr {
+        Some(gr) => (
+            gr.repo_host().unwrap_or_default(),
+            gr.repo_path().unwrap_or_default(),
+            gr.repo_branch().unwrap_or_default(),
+            gr.spec.url.clone(),
+        ),
+        None => (String::new(), String::new(), String::new(), String::new()),
+    };
+    // Replace {repo.url} last so it can't clobber the more specific keys.
+    url.replace("{repo.host}", &host)
+        .replace("{repo.path}", &path)
+        .replace("{repo.branch}", &branch)
+        .replace("{repo.url}", &raw)
 }
 
 /// Substitute `{secret.<name>.<key>}` placeholders in a URL. The secret
