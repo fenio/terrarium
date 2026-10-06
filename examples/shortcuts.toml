@@ -160,10 +160,10 @@ url = "https://git.example.com/platform/-/tree/main/{label.environment}/{label.p
 
 # ---------- Per-environment hosts ([[context_vars]] + {var.KEY}) ----------
 #
-# Some shared services (Grafana, Linode admin, ArgoCD, Vault, …) live
-# on a different host depending on which kube context is active. Rather
-# than duplicating each shortcut once per environment, define a table
-# of host names keyed by a regex against the kube-context name, and
+# Some shared services (Grafana, a cloud admin console, ArgoCD, Vault, …)
+# live on a different host depending on which kube context is active.
+# Rather than duplicating each shortcut once per environment, define a
+# table of host names keyed by a regex against the kube-context name, and
 # reference them in URL templates as {var.KEY}.
 #
 # Entries are checked top-to-bottom; per key, the first matching entry
@@ -172,19 +172,19 @@ url = "https://git.example.com/platform/-/tree/main/{label.environment}/{label.p
 # defaults for the keys it doesn't override. A missing key substitutes
 # as the empty string and logs a tracing::warn! once per (context, key).
 #
-# This example: contexts containing "devcloud" route Grafana to the
-# shared host and Linode to the devcloud admin; every other context
-# inherits the prod defaults.
+# This example: contexts containing "staging" route Grafana and the cloud
+# admin console to their staging hosts; every other context inherits the
+# prod defaults.
 
 [[context_vars]]
-match = "devcloud"
-vars  = { grafana_host = "grafana-mom-shared-ord.cloud-observability.akadns.net",
-          linode_host  = "admin.devcloud.linode.com" }
+match = "staging"
+vars  = { grafana_host = "grafana-staging.example.net",
+          cloud_admin_host = "cloud-admin-staging.example.net" }
 
 [[context_vars]]
 match = ".*"
-vars  = { grafana_host = "grafana-mom-prod-lax.cloud-observability.akadns.net",
-          linode_host  = "admin.linode.com" }
+vars  = { grafana_host = "grafana-prod.example.net",
+          cloud_admin_host = "cloud-admin.example.net" }
 
 # Single shortcut for Grafana — same key in every environment, but
 # the host swaps automatically based on which cluster you're pointed at.
@@ -195,13 +195,13 @@ description = "dashboard for this resource (env-aware)"
 group = "Observability"
 url = "https://{var.grafana_host}/d/terraform?var-cluster={context}&var-resource={name}&var-namespace={namespace}"
 
-# Linode admin — same pattern.
+# Cloud admin console — same pattern.
 [[shortcuts]]
 key = "l"
-label = "Linode admin"
-description = "Linode console (env-aware)"
+label = "Cloud admin"
+description = "cloud provider console (env-aware)"
 group = "Cloud"
-url = "https://{var.linode_host}/linodes?label={output.cluster_id}"
+url = "https://{var.cloud_admin_host}/instances?label={output.cluster_id}"
 
 # ---------- when.context — completely different URL per environment ----------
 #
@@ -212,11 +212,11 @@ url = "https://{var.linode_host}/linodes?label={output.cluster_id}"
 
 [[shortcuts]]
 key = "T"
-label = "Tempo (devcloud)"
-description = "shared Tempo instance only available in devcloud"
+label = "Tempo (staging)"
+description = "shared Tempo instance only available in staging"
 group = "Observability"
-when = { context = "devcloud" }
-url = "https://tempo-shared.devcloud.example.net/search?service={name}"
+when = { context = "staging" }
+url = "https://tempo-shared.staging.example.net/search?service={name}"
 
 [[shortcuts]]
 key = "T"

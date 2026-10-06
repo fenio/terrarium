@@ -58,14 +58,14 @@ pub struct Config {
     ///
     /// Example:
     ///   [[context_vars]]
-    ///   match = "devcloud"
-    ///   vars  = { grafana_host = "grafana-shared.example.net",
-    ///             linode_host  = "admin.devcloud.linode.com" }
+    ///   match = "staging"
+    ///   vars  = { grafana_host = "grafana-staging.example.net",
+    ///             cloud_admin_host = "cloud-admin-staging.example.net" }
     ///
     ///   [[context_vars]]
     ///   match = ".*"
     ///   vars  = { grafana_host = "grafana-prod.example.net",
-    ///             linode_host  = "admin.linode.com" }
+    ///             cloud_admin_host = "cloud-admin.example.net" }
     #[serde(default)]
     pub context_vars: Vec<ContextVars>,
 
@@ -131,7 +131,7 @@ pub struct Switcher {
 ///   [config_sync]
 ///   url = "https://internal.example.com/terrarium/config.toml"
 ///   # or, over SSH:
-///   url = "git+ssh://git@github.example.com/armada/kupala-tools#terrarium-config/config.toml"
+///   url = "git+ssh://git@github.example.com/org/config-repo#terrarium-config/config.toml"
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigSync {
@@ -197,7 +197,7 @@ pub struct When {
     #[serde(default)]
     pub namespace: Option<String>,
     /// Regex matched against the active kubeconfig context name
-    /// (e.g. `devcloud` to gate a shortcut to QA-style contexts).
+    /// (e.g. `staging` to gate a shortcut to QA-style contexts).
     #[serde(default)]
     pub context: Option<String>,
 }
