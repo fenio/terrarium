@@ -163,8 +163,13 @@ pub struct Shortcut {
     /// render in an unnamed first section.
     #[serde(default)]
     pub group: Option<String>,
-    /// URL template with {context}, {namespace}, {name}, {var.KEY},
-    /// {output.KEY} placeholders. Leaf shortcuts must have a url;
+    /// URL template with `{context}`, `{namespace}`, `{name}`,
+    /// `{var.KEY}`, `{label.KEY}`, `{annotation.KEY}`, `{output.KEY}`,
+    /// `{secret.NAME.KEY}`, and `{repo.url|host|path|branch}`
+    /// placeholders. The `{repo.*}` set resolves the Flux GitRepository
+    /// backing the selected resource, so a link can point at wherever the
+    /// tenant's source actually lives (e.g. GitLab vs a self-hosted
+    /// GitHub) without hardcoding it. Leaf shortcuts must have a url;
     /// submenu shortcuts (with `children`) leave it absent and drill
     /// into their children instead.
     #[serde(default)]
@@ -200,6 +205,14 @@ pub struct When {
     /// (e.g. `staging` to gate a shortcut to QA-style contexts).
     #[serde(default)]
     pub context: Option<String>,
+    /// Regex matched against the `spec.url` of the Flux GitRepository
+    /// backing the selected resource (resolved via its `sourceRef`).
+    /// Lets a shortcut target whichever forge a resource's source lives
+    /// on — e.g. match one host for repos still on the old forge and
+    /// another for those moved to a new one. A resource with no
+    /// resolvable GitRepository never matches a `repo_url` filter.
+    #[serde(default)]
+    pub repo_url: Option<String>,
 }
 
 /// A context-scoped set of variables exposed to shortcut URL templates

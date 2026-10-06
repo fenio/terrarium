@@ -396,6 +396,10 @@ popup. Shortcuts without a group render at the top in an unnamed first section.
 | `{secret.NAME.KEY}` | Value from any other Secret in the resource's namespace |
 | `{label.KEY}` | Value from `metadata.labels[KEY]` on the Terraform resource |
 | `{annotation.KEY}` | Value from `metadata.annotations[KEY]` on the Terraform resource |
+| `{repo.url}` | `spec.url` of the Flux GitRepository backing the resource |
+| `{repo.host}` | Host of that repo URL (e.g. `gitlab.example.com`) |
+| `{repo.path}` | Path below the host, no leading slash or trailing `.git` |
+| `{repo.branch}` | Checked-out ref (branch, else tag, else semver, else commit) |
 
 For `{output.KEY}`, `KEY` is a top-level entry in the secret written via the
 controller's `spec.writeOutputsToSecret`. If the value is itself a JSON object,
@@ -419,6 +423,16 @@ extra fetch — the values come from the in-memory watcher store. Label
 keys with dots and slashes work as-is, so
 `{label.kustomize.toolkit.fluxcd.io/name}` resolves correctly.
 Missing labels/annotations substitute as empty strings.
+
+`{repo.url|host|path|branch}` resolve the Flux **GitRepository** backing
+the selected resource — terrarium follows the Terraform CR's `sourceRef`
+to the GitRepository it already watches and reads `spec.url` / `spec.ref`.
+No extra fetch. This lets a repo link point at wherever the source
+*actually* lives rather than a hardcoded host, which is handy mid-migration
+when some tenants' sources have moved (e.g. GitLab → a self-hosted GitHub)
+and others haven't. When the resource's source isn't a GitRepository, or it
+hasn't synced yet, these substitute as empty strings. See
+[Switching repo links per tenant](#switching-repo-links-per-tenant) below.
 
 **Activating a shortcut:**
 
@@ -464,13 +478,46 @@ label = "GitOps tree (fallback)"
 url = "https://git.example.com/repo/-/tree/main/other/{name}"
 ```
 
-`when.name`, `when.namespace`, and `when.context` are Rust regex
-strings (the [`regex` crate](https://docs.rs/regex)); use anchors
-`^`/`$` for prefix/exact matches. All three fields are optional; when
+`when.name`, `when.namespace`, `when.context`, and `when.repo_url` are
+Rust regex strings (the [`regex` crate](https://docs.rs/regex)); use
+anchors `^`/`$` for prefix/exact matches. All fields are optional; when
 multiple are present, they're combined with AND. `when.context` matches
 against the active kubeconfig context name — handy for routing the same
-key to different URLs in QA vs prod environments. Invalid regexes are
-skipped with a stderr warning at startup rather than crashing.
+key to different URLs in QA vs prod environments. `when.repo_url` matches
+against the `spec.url` of the resource's Flux GitRepository (see below).
+Invalid regexes are skipped with a stderr warning at startup rather than
+crashing.
+
+### Switching repo links per tenant
+
+Mid-migration, a tenant's source repo can move hosts (for example from
+GitLab to a self-hosted GitHub) while its neighbors stay put. Because the
+live Flux `GitRepository.spec.url` already reflects that move, you can make
+a single `key` open the right link per tenant — no per-tenant config, and it
+self-heals as more tenants migrate. Combine `when.repo_url` (to pick the
+URL *grammar* — GitLab uses `/-/tree/`, GitHub uses `/tree/`) with the
+`{repo.*}` placeholders (to fill in the actual host/path/branch):
+
+```toml
+# Resources whose source is still on the GitLab host.
+[[shortcuts]]
+key = "r"
+label = "Repo"
+when = { repo_url = "gitlab\\.example\\.com" }
+url  = "https://{repo.host}/{repo.path}/-/tree/{repo.branch}"
+
+# Resources whose source has moved to the GitHub host.
+[[shortcuts]]
+key = "r"
+label = "Repo"
+when = { repo_url = "github\\.example\\.com" }
+url  = "https://{repo.host}/{repo.path}/tree/{repo.branch}"
+```
+
+Press `r` on any resource and terrarium resolves its GitRepository, matches
+the first `when.repo_url` that fits, and builds the link from the repo's
+real host and path. A resource whose source isn't a GitRepository (or whose
+GitRepository hasn't synced) matches neither `when.repo_url` entry.
 
 ### Context-aware shortcuts
 

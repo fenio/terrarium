@@ -158,6 +158,32 @@ description = "look up parent cluster via metadata.labels"
 group = "Repos"
 url = "https://git.example.com/platform/-/tree/main/{label.environment}/{label.parent_cluster_name}"
 
+# ---------- Repo link by source host ({repo.*} + when.repo_url) ----------
+#
+# When some resources' source repos live on a different host than others —
+# e.g. mid-migration from GitLab to a GitHub host — the live Flux
+# GitRepository.spec.url already reflects where each one's source lives, so a
+# single `r` key can open the correct link with no per-resource config.
+# `when.repo_url` matches that spec.url to pick the URL grammar (GitLab
+# `/-/tree/` vs GitHub `/tree/`); the {repo.*} placeholders fill in the
+# repo's real host/path/branch. It self-heals as sources move.
+
+[[shortcuts]]
+key = "r"
+label = "Repo"
+description = "source on the GitLab host"
+group = "Repos"
+when = { repo_url = "gitlab\\.example\\.com" }
+url = "https://{repo.host}/{repo.path}/-/tree/{repo.branch}"
+
+[[shortcuts]]
+key = "r"
+label = "Repo"
+description = "source on the GitHub host"
+group = "Repos"
+when = { repo_url = "github\\.example\\.com" }
+url = "https://{repo.host}/{repo.path}/tree/{repo.branch}"
+
 # ---------- Per-environment hosts ([[context_vars]] + {var.KEY}) ----------
 #
 # Some shared services (Grafana, a cloud admin console, ArgoCD, Vault, …)

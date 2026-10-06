@@ -217,12 +217,22 @@ pub struct CompiledWhen {
     pub name: Option<regex::Regex>,
     pub namespace: Option<regex::Regex>,
     pub context: Option<regex::Regex>,
+    pub repo_url: Option<regex::Regex>,
 }
 
 impl CompiledWhen {
     /// True when this filter allows the given resource. All specified
-    /// fields must match; missing fields impose no constraint.
-    pub fn matches(&self, namespace: &str, name: &str, context: &str) -> bool {
+    /// fields must match; missing fields impose no constraint. `repo_url`
+    /// is the `spec.url` of the resource's GitRepository, resolved by the
+    /// caller only when this filter actually constrains it (`None` means
+    /// unresolved — which never satisfies a `repo_url` constraint).
+    pub fn matches(
+        &self,
+        namespace: &str,
+        name: &str,
+        context: &str,
+        repo_url: Option<&str>,
+    ) -> bool {
         if let Some(re) = &self.name
             && !re.is_match(name)
         {
@@ -235,6 +245,11 @@ impl CompiledWhen {
         }
         if let Some(re) = &self.context
             && !re.is_match(context)
+        {
+            return false;
+        }
+        if let Some(re) = &self.repo_url
+            && !repo_url.is_some_and(|u| re.is_match(u))
         {
             return false;
         }
@@ -505,15 +520,21 @@ fn compile_shortcut_filters(shortcuts: &[crate::config::Shortcut]) -> Vec<Option
                 .as_deref()
                 .map(|r| compile_or_warn(r, "context", s.key, &s.label))
                 .unwrap_or(None);
+            let repo_url = when
+                .repo_url
+                .as_deref()
+                .map(|r| compile_or_warn(r, "repo_url", s.key, &s.label))
+                .unwrap_or(None);
             // If every field is absent (or all failed to compile),
             // there's nothing to enforce — fall back to "always match".
-            if name.is_none() && namespace.is_none() && context.is_none() {
+            if name.is_none() && namespace.is_none() && context.is_none() && repo_url.is_none() {
                 None
             } else {
                 Some(CompiledWhen {
                     name,
                     namespace,
                     context,
+                    repo_url,
                 })
             }
         })
@@ -854,9 +875,47 @@ impl AppState {
     /// shortcuts without a `when` always match.
     pub fn shortcut_applies(&self, idx: usize, namespace: &str, name: &str) -> bool {
         match self.compiled_shortcut_filters.get(idx) {
-            Some(Some(filter)) => filter.matches(namespace, name, &self.context_name),
+            Some(Some(filter)) => {
+                // Only resolve the (two store lookups) repo URL when the
+                // filter actually constrains it.
+                let repo_url = filter
+                    .repo_url
+                    .is_some()
+                    .then(|| self.gitrepo_for(namespace, name))
+                    .flatten()
+                    .map(|gr| gr.spec.url.clone());
+                filter.matches(namespace, name, &self.context_name, repo_url.as_deref())
+            }
             _ => true,
         }
+    }
+
+    /// Resolve the Flux GitRepository backing a Terraform resource by
+    /// following its `sourceRef`. Returns `None` when the resource isn't
+    /// in the store, its source isn't a GitRepository, or the referenced
+    /// GitRepository hasn't been observed yet. Shared by `when.repo_url`
+    /// matching and `{repo.*}` URL-template resolution.
+    pub fn gitrepo_for(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> Option<std::sync::Arc<crate::k8s::source::GitRepository>> {
+        let tf = self
+            .tf_store
+            .get(&kube::runtime::reflector::ObjectRef::new(name).within(namespace))?;
+        let src = &tf.spec.source_ref;
+        if !matches!(
+            src.kind,
+            crate::k8s::terraform::TerraformSourceRefKind::GitRepository
+        ) {
+            return None;
+        }
+        crate::ui::source_summary::find_gitrepo(
+            &self.gr_store,
+            src.namespace.as_deref(),
+            namespace,
+            &src.name,
+        )
     }
 
     /// Find the index of the first shortcut bound to `key` whose `when`
@@ -1412,6 +1471,7 @@ mod tests {
                     name: Some("^cluster-".into()),
                     namespace: None,
                     context: None,
+                    repo_url: None,
                 }),
             ),
             shortcut(
@@ -1421,6 +1481,7 @@ mod tests {
                     name: Some("^gtm-automation-".into()),
                     namespace: None,
                     context: None,
+                    repo_url: None,
                 }),
             ),
             // Fallback with no when — should win for anything that
@@ -1459,6 +1520,7 @@ mod tests {
                     name: Some("^cluster-".into()),
                     namespace: None,
                     context: None,
+                    repo_url: None,
                 }),
             ),
             shortcut(
@@ -1468,6 +1530,7 @@ mod tests {
                     name: Some("^gtm-".into()),
                     namespace: None,
                     context: None,
+                    repo_url: None,
                 }),
             ),
             shortcut('g', "fallback", None),
@@ -1501,6 +1564,7 @@ mod tests {
                 name: Some("^cluster-".into()),
                 namespace: None,
                 context: None,
+                repo_url: None,
             }),
         )]);
         assert_eq!(
@@ -1518,6 +1582,7 @@ mod tests {
                 name: Some("^cluster-".into()),
                 namespace: Some("^flux-prod-".into()),
                 context: None,
+                repo_url: None,
             }),
         )]);
         assert_eq!(
@@ -1537,6 +1602,32 @@ mod tests {
     }
 
     #[test]
+    fn compiled_when_repo_url_matches_and_requires_resolution() {
+        let filter = CompiledWhen {
+            name: None,
+            namespace: None,
+            context: None,
+            repo_url: Some(regex::Regex::new("github\\.example\\.com").unwrap()),
+        };
+        // Matches when the resolved URL is on the target host.
+        assert!(filter.matches(
+            "ns",
+            "res",
+            "ctx",
+            Some("https://github.example.com/org/repo.git")
+        ));
+        // Does not match a repo on a different host.
+        assert!(!filter.matches(
+            "ns",
+            "res",
+            "ctx",
+            Some("https://gitlab.example.com/group/project.git")
+        ));
+        // An unresolved repo (None) never satisfies a repo_url constraint.
+        assert!(!filter.matches("ns", "res", "ctx", None));
+    }
+
+    #[test]
     fn invalid_regex_falls_back_to_always_match() {
         // A bad regex should not crash; the entry should just match
         // anything (lenient config behavior consistent with the rest of
@@ -1548,6 +1639,7 @@ mod tests {
                 name: Some("[bad-regex".into()),
                 namespace: None,
                 context: None,
+                repo_url: None,
             }),
         )]);
         assert_eq!(state.resolve_shortcut_for('g', "ns", "anything"), Some(0));
@@ -1953,6 +2045,7 @@ mod tests {
                         name: None,
                         namespace: None,
                         context: Some("staging".into()),
+                        repo_url: None,
                     }),
                 ),
                 shortcut('b', "grafana-prod", None),
@@ -1974,6 +2067,7 @@ mod tests {
                         name: None,
                         namespace: None,
                         context: Some("staging".into()),
+                        repo_url: None,
                     }),
                 ),
                 shortcut('b', "grafana-prod", None),
