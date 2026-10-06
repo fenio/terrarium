@@ -236,12 +236,20 @@ When a team shares one `config.toml`, `terrarium sync-config` fetches the latest
 copy from a central URL and installs it — so nobody has to manually download and
 update the file.
 
-Point it at a `config.toml` served over HTTPS (an internal artifact store, a raw
-git URL, etc.):
+Point it at a shared `config.toml`. Terrarium picks the transport from the URL
+scheme, so either style works:
 
 ```toml
+# HTTPS (internal artifact store, raw git URL, etc.) — fetched with curl.
 [config_sync]
 url = "https://internal.example.com/terrarium/config.toml"
+```
+
+```toml
+# git over SSH — cloned with your SSH key, no HTTPS token/SSO needed.
+# Format: git+ssh://<git-ssh-url>#<path/to/file/in/repo>
+[config_sync]
+url = "git+ssh://git@github.example.com/org/config-repo#terrarium-config/config.toml"
 ```
 
 Then:
@@ -256,8 +264,13 @@ terrarium sync-config
 
 How it works:
 
-- fetches with `curl`, so it transparently uses your proxy, VPN, `.netrc`, and
-  any SSO/mTLS your environment already provides;
+- picks the transport from the URL scheme:
+  - `https://` / `file://` — fetched with `curl`, so it transparently uses your
+    proxy, VPN, `.netrc`, and any SSO/mTLS your environment already provides;
+  - `git+ssh://` (or `git://`) — shallow-clones the repo over SSH and reads the
+    named file out, authenticating with your SSH key. Handy where HTTPS requires
+    tokens/SSO/OIDC but SSH access is already set up. (`git archive --remote` is
+    disabled on GitHub/GHE, so a shallow clone is used.)
 - **validates** the download parses as a Terrarium config *before* touching disk,
   and writes atomically — a failed sync never leaves a broken config;
 - backs up the previous file to `config.toml.bak`;
@@ -265,7 +278,7 @@ How it works:
 
 > **Security:** a synced config can define `[switcher] builder`, which runs a
 > shell command. Only sync from a URL you trust. Plaintext `http://` is refused;
-> use `https://` (or a local `file://` path).
+> use `https://`, a local `file://` path, or `git+ssh://`.
 
 ### Detail Fields
 
@@ -523,14 +536,14 @@ either:
 # matching entry that defines that key wins; the catch-all fills in
 # any keys the override doesn't set.
 [[context_vars]]
-match = "devcloud"
-vars  = { grafana_host = "grafana-mom-shared-ord.cloud-observability.akadns.net",
-          linode_host  = "admin.devcloud.linode.com" }
+match = "staging"
+vars  = { grafana_host = "grafana-staging.example.net",
+          cloud_admin_host = "cloud-admin-staging.example.net" }
 
 [[context_vars]]
 match = ".*"
-vars  = { grafana_host = "grafana-mom-prod-lax.cloud-observability.akadns.net",
-          linode_host  = "admin.linode.com" }
+vars  = { grafana_host = "grafana-prod.example.net",
+          cloud_admin_host = "cloud-admin.example.net" }
 
 # Single shortcut for Grafana — the host swaps automatically based on
 # whichever kube context you're pointed at when you press `b`.

@@ -341,15 +341,15 @@ mod tests {
         let yaml = r#"
 apiVersion: v1
 kind: Config
-current-context: us-ord-flux-internal-02
+current-context: flux-prod-01
 clusters:
-- name: us-ord-flux-internal-02
+- name: flux-prod-01
   cluster:
-    server: https://api-us-ord-flux-internal-02.example.net:443
+    server: https://api-flux-prod-01.example.net:443
 contexts:
-- name: us-ord-flux-internal-02
+- name: flux-prod-01
   context:
-    cluster: us-ord-flux-internal-02
+    cluster: flux-prod-01
     user: oidc-admin
 users:
 - name: oidc-admin
@@ -359,15 +359,9 @@ users:
         let serialized = serde_yaml::to_string(&kc).expect("serialize");
         let reparsed = kube::config::Kubeconfig::from_yaml(&serialized).expect("reparse");
         assert!(
-            reparsed
-                .contexts
-                .iter()
-                .any(|c| c.name == "us-ord-flux-internal-02"),
+            reparsed.contexts.iter().any(|c| c.name == "flux-prod-01"),
             "context must survive the round-trip"
         );
-        assert_eq!(
-            reparsed.current_context.as_deref(),
-            Some("us-ord-flux-internal-02")
-        );
+        assert_eq!(reparsed.current_context.as_deref(), Some("flux-prod-01"));
     }
 }

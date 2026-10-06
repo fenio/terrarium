@@ -58,14 +58,14 @@ pub struct Config {
     ///
     /// Example:
     ///   [[context_vars]]
-    ///   match = "devcloud"
-    ///   vars  = { grafana_host = "grafana-shared.example.net",
-    ///             linode_host  = "admin.devcloud.linode.com" }
+    ///   match = "staging"
+    ///   vars  = { grafana_host = "grafana-staging.example.net",
+    ///             cloud_admin_host = "cloud-admin-staging.example.net" }
     ///
     ///   [[context_vars]]
     ///   match = ".*"
     ///   vars  = { grafana_host = "grafana-prod.example.net",
-    ///             linode_host  = "admin.linode.com" }
+    ///             cloud_admin_host = "cloud-admin.example.net" }
     #[serde(default)]
     pub context_vars: Vec<ContextVars>,
 
@@ -106,10 +106,17 @@ pub struct Switcher {
 /// Configures `terrarium sync-config`, which refreshes this config file
 /// from a central location so a team can distribute one shared config.
 ///
-/// The URL points at a `config.toml` served over HTTPS (an internal
-/// artifact store, a raw git URL, etc.). `sync-config` fetches it with
-/// `curl`, validates that it parses as a Terrarium config, backs up the
-/// current file to `config.toml.bak`, then atomically replaces it.
+/// The URL points at a shared `config.toml`. The transport is chosen from
+/// the URL scheme:
+///   * `https://` / `file://`  — fetched with `curl` (works with any HTTPS
+///     artifact store, raw git URL, etc.).
+///   * `git+ssh://git@host/owner/repo#path/to/config.toml` — shallow-cloned
+///     over SSH and the named file read out, for restricted environments
+///     where SSH key auth is easier than HTTPS tokens/SSO.
+///
+/// Either way `sync-config` validates that the file parses as a Terrarium
+/// config, backs up the current file to `config.toml.bak`, then atomically
+/// replaces it.
 ///
 /// Because the downloaded config carries its own `[config_sync] url`, a
 /// first-time user bootstraps with an explicit URL
@@ -118,16 +125,19 @@ pub struct Switcher {
 ///
 /// SECURITY: a synced config can set `[switcher] builder`, which runs a
 /// shell command. Only sync from a URL you trust. `http://` is rejected;
-/// use `https://` (or a local `file://` path).
+/// use `https://`, a local `file://` path, or `git+ssh://`.
 ///
 /// Example:
 ///   [config_sync]
 ///   url = "https://internal.example.com/terrarium/config.toml"
+///   # or, over SSH:
+///   url = "git+ssh://git@github.example.com/org/config-repo#terrarium-config/config.toml"
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigSync {
-    /// HTTPS (or `file://`) URL of the shared `config.toml`. Used by
-    /// `terrarium sync-config` when no URL is passed on the command line.
+    /// URL of the shared `config.toml`. `https://`/`file://` are fetched with
+    /// `curl`; `git+ssh://git@host/owner/repo#path` is cloned over SSH. Used
+    /// by `terrarium sync-config` when no URL is passed on the command line.
     #[serde(default)]
     pub url: Option<String>,
 }
@@ -192,7 +202,7 @@ pub struct When {
     #[serde(default)]
     pub namespace: Option<String>,
     /// Regex matched against the active kubeconfig context name
-    /// (e.g. `devcloud` to gate a shortcut to QA-style contexts).
+    /// (e.g. `staging` to gate a shortcut to QA-style contexts).
     #[serde(default)]
     pub context: Option<String>,
     /// Regex matched against the `spec.url` of the Flux GitRepository
@@ -332,8 +342,10 @@ impl Config {
 ///
 /// URL resolution: `url_override` (from the command line) wins; otherwise
 /// the `[config_sync] url` of the currently-installed config is used.
-/// The download is fetched with `curl`, validated by parsing it as a
-/// [`Config`], and only then written — the previous file is copied to
+/// The transport is picked from the URL scheme (`https://`/`file://` via
+/// `curl`, `git+ssh://` via a shallow clone; see [`fetch_shared_config`]),
+/// validated by parsing it as a [`Config`], and only then written — the
+/// previous file is copied to
 /// `config.toml.bak` and the new one is put in place via a temp + rename
 /// so a failed or interrupted sync never leaves a half-written config.
 pub fn sync_config(url_override: Option<String>) -> anyhow::Result<()> {
@@ -352,27 +364,12 @@ pub fn sync_config(url_override: Option<String>) -> anyhow::Result<()> {
         )?,
     };
 
-    // Only fetch over a transport we trust; a synced config can run shell
-    // commands via [switcher] builder, so plaintext http is refused.
-    if !(url.starts_with("https://") || url.starts_with("file://")) {
-        anyhow::bail!("refusing to sync from `{url}` — use https:// (or file://)");
-    }
-
-    // -f: fail on HTTP errors; -sS: quiet but still show errors; -L: follow
-    // redirects. `--` guards against a URL that looks like a flag.
+    // Fetch over a transport we trust. A synced config can run shell commands
+    // via [switcher] builder, so plaintext http is refused; https://, a local
+    // file://, and authenticated git+ssh:// (SSH key auth, no token/SSO) are
+    // allowed.
     eprintln!("Fetching config from {url} …");
-    let output = std::process::Command::new("curl")
-        .args(["-fsSL", "--", &url])
-        .output()
-        .context("failed to run curl (is it installed and on PATH?)")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "curl failed ({}): {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    let contents = String::from_utf8(output.stdout).context("downloaded config was not UTF-8")?;
+    let contents = fetch_shared_config(&url)?;
 
     // Validate before touching disk: it must parse as a Terrarium config.
     let parsed: Config =
@@ -402,6 +399,93 @@ pub fn sync_config(url_override: Option<String>) -> anyhow::Result<()> {
         parsed.context_vars.len(),
     );
     Ok(())
+}
+
+/// Download the shared `config.toml` bytes, picking the transport from the
+/// URL scheme so the same `[config_sync] url` works for either style:
+///   * `https://` / `file://`  → fetched with `curl` (unchanged behaviour)
+///   * `git+ssh://` / `git://`  → shallow-cloned over SSH, file read out
+///
+/// Plaintext `http://` is rejected: a synced config can run shell commands
+/// via `[switcher] builder`, so we only accept transports that are encrypted
+/// (https), local (file), or key-authenticated (ssh).
+fn fetch_shared_config(url: &str) -> anyhow::Result<String> {
+    if let Some(spec) = url
+        .strip_prefix("git+ssh://")
+        .or_else(|| url.strip_prefix("git://"))
+    {
+        fetch_via_git(spec)
+    } else if url.starts_with("https://") || url.starts_with("file://") {
+        fetch_via_curl(url)
+    } else {
+        anyhow::bail!("refusing to sync from `{url}` — use https://, file://, or git+ssh://")
+    }
+}
+
+/// Fetch over HTTPS (or a local file) with `curl`. This is the original
+/// transport and its behaviour is unchanged.
+fn fetch_via_curl(url: &str) -> anyhow::Result<String> {
+    use anyhow::Context;
+
+    // -f: fail on HTTP errors; -sS: quiet but still show errors; -L: follow
+    // redirects. `--` guards against a URL that looks like a flag.
+    let output = std::process::Command::new("curl")
+        .args(["-fsSL", "--", url])
+        .output()
+        .context("failed to run curl (is it installed and on PATH?)")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "curl failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    String::from_utf8(output.stdout).context("downloaded config was not UTF-8")
+}
+
+/// Fetch a single file from a git repo over SSH. The URL carries the repo and
+/// the in-repo file path separated by `#`, e.g.
+///   `git+ssh://git@host/owner/repo#path/to/config.toml`
+///
+/// `git archive --remote` is disabled on GitHub/GHE, so we shallow-clone the
+/// default branch into a temp dir, read the file, and clean up. Auth is left
+/// to the user's SSH setup — no token or SSO is involved.
+fn fetch_via_git(spec: &str) -> anyhow::Result<String> {
+    use anyhow::Context;
+
+    let (repo, file) = spec.split_once('#').context(
+        "git+ssh:// URL must name the file after '#', e.g.\n\
+         git+ssh://git@host/owner/repo#path/to/config.toml",
+    )?;
+    if file.is_empty() {
+        anyhow::bail!("git+ssh:// URL has an empty file path after '#'");
+    }
+    // The file path is joined onto a temp dir, so keep it inside the clone.
+    if file.starts_with('/') || file.split('/').any(|c| c == "..") {
+        anyhow::bail!("file path in git+ssh:// URL must be relative and not contain '..'");
+    }
+    let clone_url = format!("ssh://{repo}");
+
+    // Unique temp dir; remove any leftover from a previously-crashed run.
+    let tmpdir = std::env::temp_dir().join(format!("terrarium-sync-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmpdir);
+
+    eprintln!("Cloning {clone_url} over SSH …");
+    let status = std::process::Command::new("git")
+        .args(["clone", "--depth", "1", "--quiet", "--", &clone_url])
+        .arg(&tmpdir)
+        .status()
+        .context("failed to run git (is it installed and on PATH?)")?;
+    if !status.success() {
+        let _ = std::fs::remove_dir_all(&tmpdir);
+        anyhow::bail!("git clone failed ({status}) for {clone_url}");
+    }
+
+    // Read the file, then always clean up the clone regardless of outcome.
+    let result = std::fs::read_to_string(tmpdir.join(file))
+        .with_context(|| format!("reading `{file}` from {clone_url}"));
+    let _ = std::fs::remove_dir_all(&tmpdir);
+    result
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -459,6 +543,46 @@ mod tests {
             Some(OsStr::new("other")),
         ] {
             assert_eq!(config_filename(name), "config.toml");
+        }
+    }
+
+    #[test]
+    fn untrusted_schemes_are_refused() {
+        // Plaintext http and anything unrecognised bail before any fetch.
+        for url in [
+            "http://example.com/config.toml",
+            "ftp://example.com/config.toml",
+            "example.com/config.toml",
+        ] {
+            let err = super::fetch_shared_config(url).unwrap_err().to_string();
+            assert!(err.contains("refusing to sync"), "{url}: {err}");
+        }
+    }
+
+    #[test]
+    fn git_ssh_url_must_name_a_file() {
+        // No '#' fragment at all.
+        let err = super::fetch_via_git("git@host/owner/repo")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("must name the file after '#'"), "{err}");
+
+        // Empty fragment.
+        let err = super::fetch_via_git("git@host/owner/repo#")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("empty file path"), "{err}");
+    }
+
+    #[test]
+    fn git_ssh_file_path_must_stay_in_clone() {
+        for file in ["/etc/passwd", "../outside.toml", "a/../../b.toml"] {
+            let spec = format!("git@host/owner/repo#{file}");
+            let err = super::fetch_via_git(&spec).unwrap_err().to_string();
+            assert!(
+                err.contains("must be relative and not contain '..'"),
+                "{file}: {err}"
+            );
         }
     }
 }
