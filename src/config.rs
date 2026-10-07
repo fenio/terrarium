@@ -213,6 +213,11 @@ pub struct When {
     /// resolvable GitRepository never matches a `repo_url` filter.
     #[serde(default)]
     pub repo_url: Option<String>,
+    /// Regex matched against any GitRepository `spec.url` in the selected
+    /// resource's namespace. This is useful when migration state is signaled
+    /// by a namespace-level source rather than the Terraform's own sourceRef.
+    #[serde(default)]
+    pub namespace_repo_url: Option<String>,
 }
 
 /// A context-scoped set of variables exposed to shortcut URL templates
