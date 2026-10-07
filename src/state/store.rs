@@ -218,6 +218,7 @@ pub struct CompiledWhen {
     pub namespace: Option<regex::Regex>,
     pub context: Option<regex::Regex>,
     pub repo_url: Option<regex::Regex>,
+    pub namespace_repo_url: Option<regex::Regex>,
 }
 
 impl CompiledWhen {
@@ -232,6 +233,7 @@ impl CompiledWhen {
         name: &str,
         context: &str,
         repo_url: Option<&str>,
+        namespace_repo_url_matches: bool,
     ) -> bool {
         if let Some(re) = &self.name
             && !re.is_match(name)
@@ -251,6 +253,9 @@ impl CompiledWhen {
         if let Some(re) = &self.repo_url
             && !repo_url.is_some_and(|u| re.is_match(u))
         {
+            return false;
+        }
+        if self.namespace_repo_url.is_some() && !namespace_repo_url_matches {
             return false;
         }
         true
@@ -525,9 +530,19 @@ fn compile_shortcut_filters(shortcuts: &[crate::config::Shortcut]) -> Vec<Option
                 .as_deref()
                 .map(|r| compile_or_warn(r, "repo_url", s.key, &s.label))
                 .unwrap_or(None);
+            let namespace_repo_url = when
+                .namespace_repo_url
+                .as_deref()
+                .map(|r| compile_or_warn(r, "namespace_repo_url", s.key, &s.label))
+                .unwrap_or(None);
             // If every field is absent (or all failed to compile),
             // there's nothing to enforce — fall back to "always match".
-            if name.is_none() && namespace.is_none() && context.is_none() && repo_url.is_none() {
+            if name.is_none()
+                && namespace.is_none()
+                && context.is_none()
+                && repo_url.is_none()
+                && namespace_repo_url.is_none()
+            {
                 None
             } else {
                 Some(CompiledWhen {
@@ -535,6 +550,7 @@ fn compile_shortcut_filters(shortcuts: &[crate::config::Shortcut]) -> Vec<Option
                     namespace,
                     context,
                     repo_url,
+                    namespace_repo_url,
                 })
             }
         })
@@ -884,7 +900,20 @@ impl AppState {
                     .then(|| self.gitrepo_for(namespace, name))
                     .flatten()
                     .map(|gr| gr.spec.url.clone());
-                filter.matches(namespace, name, &self.context_name, repo_url.as_deref())
+                let namespace_repo_url_matches =
+                    filter.namespace_repo_url.as_ref().is_none_or(|re| {
+                        self.gr_store.state().iter().any(|gr| {
+                            gr.metadata.namespace.as_deref() == Some(namespace)
+                                && re.is_match(&gr.spec.url)
+                        })
+                    });
+                filter.matches(
+                    namespace,
+                    name,
+                    &self.context_name,
+                    repo_url.as_deref(),
+                    namespace_repo_url_matches,
+                )
             }
             _ => true,
         }
@@ -1472,6 +1501,7 @@ mod tests {
                     namespace: None,
                     context: None,
                     repo_url: None,
+                    namespace_repo_url: None,
                 }),
             ),
             shortcut(
@@ -1482,6 +1512,7 @@ mod tests {
                     namespace: None,
                     context: None,
                     repo_url: None,
+                    namespace_repo_url: None,
                 }),
             ),
             // Fallback with no when — should win for anything that
@@ -1521,6 +1552,7 @@ mod tests {
                     namespace: None,
                     context: None,
                     repo_url: None,
+                    namespace_repo_url: None,
                 }),
             ),
             shortcut(
@@ -1531,6 +1563,7 @@ mod tests {
                     namespace: None,
                     context: None,
                     repo_url: None,
+                    namespace_repo_url: None,
                 }),
             ),
             shortcut('g', "fallback", None),
@@ -1565,6 +1598,7 @@ mod tests {
                 namespace: None,
                 context: None,
                 repo_url: None,
+                namespace_repo_url: None,
             }),
         )]);
         assert_eq!(
@@ -1583,6 +1617,7 @@ mod tests {
                 namespace: Some("^flux-prod-".into()),
                 context: None,
                 repo_url: None,
+                namespace_repo_url: None,
             }),
         )]);
         assert_eq!(
@@ -1608,23 +1643,39 @@ mod tests {
             namespace: None,
             context: None,
             repo_url: Some(regex::Regex::new("github\\.example\\.com").unwrap()),
+            namespace_repo_url: None,
         };
         // Matches when the resolved URL is on the target host.
         assert!(filter.matches(
             "ns",
             "res",
             "ctx",
-            Some("https://github.example.com/org/repo.git")
+            Some("https://github.example.com/org/repo.git"),
+            false
         ));
         // Does not match a repo on a different host.
         assert!(!filter.matches(
             "ns",
             "res",
             "ctx",
-            Some("https://gitlab.example.com/group/project.git")
+            Some("https://gitlab.example.com/group/project.git"),
+            false
         ));
         // An unresolved repo (None) never satisfies a repo_url constraint.
-        assert!(!filter.matches("ns", "res", "ctx", None));
+        assert!(!filter.matches("ns", "res", "ctx", None, false));
+    }
+
+    #[test]
+    fn compiled_when_namespace_repo_url_matches_namespace_sources() {
+        let filter = CompiledWhen {
+            name: None,
+            namespace: None,
+            context: None,
+            repo_url: None,
+            namespace_repo_url: Some(regex::Regex::new("bits\\.linode\\.com").unwrap()),
+        };
+        assert!(filter.matches("ns", "res", "ctx", None, true));
+        assert!(!filter.matches("ns", "res", "ctx", None, false));
     }
 
     #[test]
@@ -1640,6 +1691,7 @@ mod tests {
                 namespace: None,
                 context: None,
                 repo_url: None,
+                namespace_repo_url: None,
             }),
         )]);
         assert_eq!(state.resolve_shortcut_for('g', "ns", "anything"), Some(0));
@@ -2046,6 +2098,7 @@ mod tests {
                         namespace: None,
                         context: Some("staging".into()),
                         repo_url: None,
+                        namespace_repo_url: None,
                     }),
                 ),
                 shortcut('b', "grafana-prod", None),
@@ -2068,6 +2121,7 @@ mod tests {
                         namespace: None,
                         context: Some("staging".into()),
                         repo_url: None,
+                        namespace_repo_url: None,
                     }),
                 ),
                 shortcut('b', "grafana-prod", None),

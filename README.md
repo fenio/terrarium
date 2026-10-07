@@ -478,13 +478,18 @@ label = "GitOps tree (fallback)"
 url = "https://git.example.com/repo/-/tree/main/other/{name}"
 ```
 
-`when.name`, `when.namespace`, `when.context`, and `when.repo_url` are
+`when.name`, `when.namespace`, `when.context`, `when.repo_url`, and
+`when.namespace_repo_url` are
 Rust regex strings (the [`regex` crate](https://docs.rs/regex)); use
 anchors `^`/`$` for prefix/exact matches. All fields are optional; when
 multiple are present, they're combined with AND. `when.context` matches
 against the active kubeconfig context name — handy for routing the same
 key to different URLs in QA vs prod environments. `when.repo_url` matches
 against the `spec.url` of the resource's Flux GitRepository (see below).
+`when.namespace_repo_url` matches when any Flux GitRepository in the
+resource's namespace has a matching `spec.url`; use it when the migration
+signal comes from a shared namespace source rather than the selected
+Terraform's `sourceRef`.
 Invalid regexes are skipped with a stderr warning at startup rather than
 crashing.
 
