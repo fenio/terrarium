@@ -9,7 +9,36 @@ permissions:
   contents: write
 
 jobs:
+  verify-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify tag matches Cargo package version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "terrarium") | .version')"
+
+          if [[ -z "$package_version" || "$package_version" == "null" ]]; then
+            echo "Could not determine the terrarium package version" >&2
+            exit 1
+          fi
+
+          if [[ "$tag_version" != "$package_version" ]]; then
+            echo "Release tag v${tag_version} does not match Cargo.toml version ${package_version}" >&2
+            echo "Bump Cargo.toml/Cargo.lock and merge that change before tagging." >&2
+            exit 1
+          fi
+
+          echo "Release tag v${tag_version} matches the terrarium package version."
+
   build:
+    needs: verify-version
     strategy:
       matrix:
         include:
