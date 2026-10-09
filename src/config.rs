@@ -15,8 +15,8 @@ pub struct Config {
     #[serde(default)]
     pub custom_tabs: Vec<CustomTab>,
 
-    /// Custom keyboard shortcuts that open a URL in the browser.
-    /// Each shortcut binds a single key and defines a URL template,
+    /// Custom keyboard shortcuts that open a URL or launch an interactive process.
+    /// Each shortcut binds a single key and defines a URL or command template,
     /// or nests further shortcuts under it as a submenu.
     ///
     /// Available template variables:
@@ -123,8 +123,9 @@ pub struct Switcher {
 /// (`terrarium sync-config <URL>`) and thereafter just runs
 /// `terrarium sync-config`.
 ///
-/// SECURITY: a synced config can set `[switcher] builder`, which runs a
-/// shell command. Only sync from a URL you trust. `http://` is rejected;
+/// SECURITY: a synced config can set `[switcher] builder` or shortcut
+/// launchers, which run commands. Only sync from a URL you trust.
+/// `http://` is rejected;
 /// use `https://`, a local `file://` path, or `git+ssh://`.
 ///
 /// Example:
@@ -169,11 +170,21 @@ pub struct Shortcut {
     /// placeholders. The `{repo.*}` set resolves the Flux GitRepository
     /// backing the selected resource, so a link can point at wherever the
     /// tenant's source actually lives (e.g. GitLab vs a self-hosted
-    /// GitHub) without hardcoding it. Leaf shortcuts must have a url;
+    /// GitHub) without hardcoding it. Leaf shortcuts must have a url or launcher;
     /// submenu shortcuts (with `children`) leave it absent and drill
     /// into their children instead.
     #[serde(default)]
     pub url: Option<String>,
+    /// Interactive command run in the current terminal while the TUI is
+    /// suspended. Quoting splits arguments before template substitution;
+    /// no shell expansion is performed. Supports {name}, {full_name},
+    /// {namespace}, and {context}. Mutually exclusive with `url`.
+    #[serde(default)]
+    pub launcher: Option<String>,
+    /// Optional literal prefix removed once from {name} for a launcher.
+    /// {full_name} always retains the original resource name.
+    #[serde(default)]
+    pub name_strip_prefix: Option<String>,
     /// Optional applicability filter. Multiple shortcuts can share a
     /// `key`; on activation terrarium picks the first one whose `when`
     /// matches the selected resource. Entries without a `when` always

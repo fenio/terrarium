@@ -319,6 +319,12 @@ pub enum Action {
         name: String,
         shortcut_idx: usize,
     },
+    /// Hand terminal ownership to an interactive shortcut process.
+    ExecLauncher {
+        namespace: String,
+        name: String,
+        shortcut_idx: usize,
+    },
     FetchPlan {
         namespace: String,
         name: String,
