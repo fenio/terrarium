@@ -4499,7 +4499,10 @@ mod tests {
                     &mut slave_fd,
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
-                    &mut size,
+                    // macOS takes *mut winsize; Linux takes *const winsize.
+                    // A raw mutable pointer coerces to either without passing
+                    // an unnecessary mutable reference on Linux.
+                    &raw mut size,
                 )
             },
             0
