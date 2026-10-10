@@ -21,7 +21,7 @@ A terminal dashboard for managing [tofu-controller](https://github.com/flux-iac/
 - **Sorting** by namespace, name, ready status, revision, last applied, or age — with direction toggle (Runners tab sorts by namespace, name, terraform, phase, or age)
 - **Configurable custom tabs** — filter resources by annotation with custom columns
 - **Configurable detail fields** — show extra data from Terraform outputs in the detail view
-- **Custom keyboard shortcuts** — open URLs in the browser with template variables
+- **Custom keyboard shortcuts** — open URLs or launch interactive tools for the selected Terraform
 - **Vim-style navigation** throughout — press `?` for the full help screen
 - **Mouse support** — optional, toggle with `m` or start with `--mouse`
 - **Header gecko** — a two-pose animated ASCII resident for wide terminals (no water required)
@@ -276,8 +276,8 @@ How it works:
 - backs up the previous file to `config.toml.bak`;
 - writes to `$TERRARIUM_CONFIG` if set, otherwise `~/.config/terrarium/config.toml`.
 
-> **Security:** a synced config can define `[switcher] builder`, which runs a
-> shell command. Only sync from a URL you trust. Plaintext `http://` is refused;
+> **Security:** a synced config can define `[switcher] builder` or shortcut
+> launchers, which run commands. Only sync from a URL you trust. Plaintext `http://` is refused;
 > use `https://`, a local `file://` path, or `git+ssh://`.
 
 ### Detail Fields
@@ -345,8 +345,8 @@ including a deployment tracker and a team-ownership tab.
 
 ### Custom Shortcuts
 
-Define keyboard shortcuts that open URLs in the browser. Useful for linking to
-dashboards, log viewers, secret managers, or cloud consoles.
+Define keyboard shortcuts that open URLs in the browser or launch interactive
+tools. Useful for dashboards, log viewers, secret managers, or cluster shells.
 
 ```toml
 [[shortcuts]]
@@ -383,7 +383,79 @@ url = "..."
 Consecutive shortcuts sharing a group render under one section header in the
 popup. Shortcuts without a group render at the top in an unnamed first section.
 
-**Template variables:**
+**Interactive launchers:**
+
+Use `launcher` instead of `url` to run a tool in the current terminal. Terrarium
+suspends its TUI and input reader while the process runs, then restores the UI
+when it exits. No terminal emulator, new window, or Kubernetes exec is assumed.
+On Unix, Ctrl-C interrupts the launched session rather than Terrarium itself.
+
+```toml
+[[shortcuts]]
+key = "J"
+label = "Cluster shell"
+description = "connect with cluster-switcher"
+launcher = "cluster-switcher {name}"
+
+[shortcuts.name_transform]
+pattern = "^cluster-"
+replacement = ""
+
+[shortcuts.when]
+name = "^cluster-"
+```
+
+Select `cluster-us-ord-tsdb-aclp01-prod` and press `J` (or choose the shortcut
+from `S`) to run `cluster-switcher us-ord-tsdb-aclp01-prod`.
+
+Launcher placeholders are `{name}`, `{full_name}`, `{namespace}`, and `{context}`.
+`name_transform` is an optional regex substitution for `{name}`. It can remove
+prefixes/suffixes, extract parts, rearrange capture groups, or replace text.
+The first match is replaced by default; set `replace_all = true` to replace
+every match. An absent/nonmatching transformation leaves the name unchanged.
+`{full_name}` always keeps the original name. Invalid patterns and empty results
+are rejected before launching. `when.name` matches the original name, not the
+transformed one. URL placeholders are unaffected.
+
+| Purpose | `pattern` | `replacement` |
+|---------|-----------|---------------|
+| Strip prefix | `^cluster-` | `""` |
+| Strip suffix | `-terraform$` | `""` |
+| Extract middle | `^cluster-(.*)-terraform$` | `"$1"` |
+| Rearrange parts | `^(.*)-(prod\|dev)$` | `"$2-$1"` |
+| Replace separators | `-` | `"_"` (with `replace_all = true`) |
+
+Patterns use Rust's `regex` syntax (no look-around or backreferences in the
+pattern). Replacements support numbered captures such as `$1`, named captures
+such as `${cluster}`, and `$$` for a literal dollar sign. Use `${1}` before
+literal letters to disambiguate the capture name. For example:
+
+```toml
+[shortcuts.name_transform]
+pattern = '^cluster-(?P<cluster>.*)-terraform$'
+replacement = '${cluster}'
+```
+
+Arguments are split using shell-style quoting **before** substitution, so values
+containing spaces or shell metacharacters stay within their original argument.
+The executable must be a literal name/path. No shell expansion, pipes,
+redirection, environment assignments, or `~` expansion is performed; use an
+executable script if you need these. For example, `launcher = "bash /path/to/connect.sh {name}"`
+passes the name to the script as `$1`. Do not interpolate resource values into
+a `sh -c`/`bash -c` script string; pass them as positional arguments instead.
+Only the four launcher placeholders above are supported; unknown placeholders
+or invalid quoting produce an error without launching anything.
+
+The child inherits Terrarium's environment and current directory. Any shell or
+environment changes in the child do not change Terrarium's process. If your tool
+only updates credentials and exits, use a wrapper script that then starts an
+interactive shell to keep the session open. A missing executable or unsuccessful
+exit is reported in the TUI. A launcher cannot also define `url` or `children`.
+Only use launcher commands from configuration sources you trust.
+
+`L` is already reserved for runner logs; choose an unused key such as `J`.
+
+**URL template variables:**
 
 | Variable | Description |
 |----------|-------------|
@@ -436,7 +508,7 @@ hasn't synced yet, these substitute as empty strings. See
 
 **Activating a shortcut:**
 
-- Press the configured `key` directly to open the URL — the keybind from
+- Press the configured `key` directly to open the URL or run the launcher — the keybind from
   `key = "b"` opens that shortcut from any TF list, custom tab, or TF detail
   view.
 - Or press `S` to open a popup listing every configured shortcut with the

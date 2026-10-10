@@ -1,4 +1,4 @@
-# Example: Custom keyboard shortcuts that open URLs in the browser.
+# Example: Custom keyboard shortcuts that open URLs or launch interactive tools.
 #
 # Press a configured key directly while a Terraform resource is selected
 # (list or detail view), or press 'S' to open a popup listing every
@@ -13,7 +13,9 @@
 #                           multiple shortcuts share a label
 #   group       (optional)  groups entries under a section header in the
 #                           popup, in config order
-#   url         (required for leaf entries) URL template, see below
+#   url         (one of url/launcher for leaf entries) URL template, see below
+#   launcher    (optional) interactive command; cannot also define url/children
+#   name_transform (optional table) regex pattern/replacement for launcher {name}
 #   children    (optional)  nested submenu — accepted but the popup
 #                           doesn't drill into them yet (planned)
 #
@@ -44,6 +46,24 @@
 #   - URLs are opened with: open (macOS), xdg-open (Linux), start (Windows).
 #   - The 'description' field exists since v0.1.0; older configs without
 #     it still work — the popup just shows the label alone.
+
+# ---------- Interactive cluster shell ----------
+# Runs in the current terminal; restores Terrarium when the tool exits.
+# Only {name}, {full_name}, {namespace}, {context} are supported here.
+# Shell-style quotes group arguments; no shell expansion is performed.
+[[shortcuts]]
+key = "J"
+label = "Cluster shell"
+description = "connect with cluster-switcher"
+group = "Interactive"
+launcher = "cluster-switcher {name}"
+
+[shortcuts.name_transform]
+pattern = "^cluster-"
+replacement = ""
+
+[shortcuts.when]
+name = "^cluster-"
 
 # ---------- Observability ----------
 

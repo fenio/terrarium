@@ -169,7 +169,7 @@ fn entry_line(
             Style::default()
                 .fg(Color::Rgb(240, 200, 60))
                 .add_modifier(Modifier::ITALIC)
-        } else if sc.url.is_some() {
+        } else if sc.url.is_some() || sc.launcher.is_some() {
             desc_style
         } else {
             dim_style
@@ -220,7 +220,7 @@ fn render_footer(f: &mut Frame, area: Rect) {
 }
 
 /// Body text shown after the label. Prefer the user-supplied
-/// description; fall back to a hint about submenu/no-url states so
+/// description; fall back to a hint about launcher/submenu/no-action states so
 /// the entry isn't bare.
 fn description_for(sc: &Shortcut) -> String {
     if let Some(d) = &sc.description {
@@ -229,8 +229,11 @@ fn description_for(sc: &Shortcut) -> String {
     if !sc.children.is_empty() {
         return format!("submenu ({} entries)", sc.children.len());
     }
+    if let Some(launcher) = &sc.launcher {
+        return format!("run: {launcher}");
+    }
     if sc.url.is_none() {
-        return "(no url)".to_string();
+        return "(no url or launcher)".to_string();
     }
     String::new()
 }

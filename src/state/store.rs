@@ -1474,6 +1474,8 @@ mod tests {
             description: None,
             group: None,
             url: Some(format!("https://example.com/{label}")),
+            launcher: None,
+            name_transform: None,
             when,
             children: Vec::new(),
         }

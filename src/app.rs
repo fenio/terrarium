@@ -393,7 +393,7 @@ impl App {
     }
 
     pub async fn run(&mut self, terminal: &mut crate::tui::Tui) -> anyhow::Result<()> {
-        let mut event_stream = EventStream::new();
+        let mut event_stream = Some(EventStream::new());
         let mut tick_interval = tokio::time::interval(Duration::from_millis(250));
         // Without this, a starved loop (e.g. the action flood when a
         // break-the-glass runner catches up on exit) lets the default
@@ -419,7 +419,7 @@ impl App {
                 // stream from starving a frame once this deadline is due.
                 _ = tokio::time::sleep_until(render_schedule.next_render_at),
                     if render_schedule.needs_redraw => {}
-                event = event_stream.next() => {
+                event = event_stream.as_mut().expect("active terminal event stream").next() => {
                     let needs_redraw = match event {
                         Some(Ok(evt)) => self
                             .run_terminal_event(evt, &mut event_stream, terminal)
@@ -431,7 +431,7 @@ impl App {
                 }
                 action = self.action_rx.recv() => {
                     let needs_redraw = match action {
-                        Some(action) => self.run_action(action, terminal).await,
+                        Some(action) => self.run_action(action, &mut event_stream, terminal).await,
                         None => return Ok(()),
                     };
                     render_schedule.request(needs_redraw);
@@ -458,7 +458,7 @@ impl App {
     async fn run_terminal_event(
         &mut self,
         first_event: Event,
-        event_stream: &mut EventStream,
+        event_stream: &mut Option<EventStream>,
         terminal: &mut crate::tui::Tui,
     ) -> anyhow::Result<bool> {
         let refresh_terminal = matches!(&first_event, Event::FocusGained);
@@ -468,7 +468,12 @@ impl App {
             let mut idle_polls = 0;
 
             for _ in 0..256 {
-                let Some(next) = event_stream.next().now_or_never() else {
+                let Some(next) = event_stream
+                    .as_mut()
+                    .expect("active terminal event stream")
+                    .next()
+                    .now_or_never()
+                else {
                     if idle_polls >= 2 {
                         break;
                     }
@@ -507,11 +512,11 @@ impl App {
             if let Some(event) = deferred_event
                 && let Some(action) = self.handle_crossterm_event(event)
             {
-                self.run_action(action, terminal).await;
+                self.run_action(action, event_stream, terminal).await;
             }
             Ok(true)
         } else if let Some(action) = self.handle_crossterm_event(first_event) {
-            Ok(self.run_action(action, terminal).await)
+            Ok(self.run_action(action, event_stream, terminal).await)
         } else {
             Ok(refresh_terminal)
         }
@@ -555,12 +560,26 @@ impl App {
     /// Route an action, intercepting the few that must run with access to
     /// the terminal handle (they temporarily suspend the TUI); everything
     /// else goes through the normal `dispatch`.
-    async fn run_action(&mut self, action: Action, terminal: &mut crate::tui::Tui) -> bool {
+    async fn run_action(
+        &mut self,
+        action: Action,
+        event_stream: &mut Option<EventStream>,
+        terminal: &mut crate::tui::Tui,
+    ) -> bool {
         let mut needs_redraw = false;
         let mut next_action = Some(action);
 
         while let Some(action) = next_action {
             match action {
+                Action::ExecLauncher {
+                    namespace,
+                    name,
+                    shortcut_idx,
+                } => {
+                    self.exec_launcher(terminal, event_stream, &namespace, &name, shortcut_idx)
+                        .await;
+                    needs_redraw = true;
+                }
                 Action::ExecBreakTheGlass { target } => {
                     self.exec_break_the_glass(terminal, &target).await;
                     needs_redraw = true;
@@ -2381,6 +2400,7 @@ impl App {
 
             // ExecBreakTheGlass is handled directly in the run loop (needs terminal access)
             Action::ExecBreakTheGlass { .. } => {}
+            Action::ExecLauncher { .. } => {}
 
             Action::StreamRunnerLogs { namespace, name } => {
                 self.state.bump_view_revision();
@@ -3317,6 +3337,15 @@ impl App {
             None => return,
         };
 
+        if shortcut.launcher.is_some() {
+            self.follow_up_action = Some(Action::ExecLauncher {
+                namespace: namespace.to_string(),
+                name: name.to_string(),
+                shortcut_idx,
+            });
+            return;
+        }
+
         // Submenu branches are config-allowed but the popup doesn't drill
         // into them yet — flash and bail rather than panic.
         let Some(url_template) = shortcut.url.clone() else {
@@ -3528,6 +3557,80 @@ impl App {
                 ));
             }
         }
+    }
+
+    async fn exec_launcher(
+        &mut self,
+        terminal: &mut crate::tui::Tui,
+        event_stream: &mut Option<EventStream>,
+        namespace: &str,
+        name: &str,
+        shortcut_idx: usize,
+    ) {
+        let Some(shortcut) = self.state.config.shortcuts.get(shortcut_idx) else {
+            return;
+        };
+        let label = shortcut.label.clone();
+        let command = if self
+            .state
+            .tf_store
+            .get(&kube::runtime::reflector::ObjectRef::new(name).within(namespace))
+            .is_none()
+        {
+            Err(anyhow::anyhow!(
+                "Terraform {namespace}/{name} no longer exists"
+            ))
+        } else {
+            crate::launcher::command(shortcut, namespace, name, &self.state.context_name)
+        };
+        let mut command = match command {
+            Ok(command) => command,
+            Err(e) => {
+                self.state.flash_message = Some((
+                    format!("Cannot launch {label}: {e:#}"),
+                    Instant::now(),
+                    FlashKind::Error,
+                ));
+                return;
+            }
+        };
+
+        // Dropping the stream wakes/stops crossterm's background reader.
+        // Creating its replacement synchronizes on crossterm's reader lock.
+        // Leave the new stream unpolled until the child exits, so no TUI
+        // reader can consume keystrokes meant for the interactive tool.
+        drop(event_stream.take());
+        *event_stream = Some(EventStream::new());
+        let suspended = crate::tui::restore();
+        let status = match suspended {
+            Ok(()) => tokio::task::spawn_blocking(move || {
+                command
+                    .stdin(std::process::Stdio::inherit())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit());
+                crate::launcher::run_interactive(&mut command)
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|status| status.map_err(anyhow::Error::from)),
+            Err(e) => Err(anyhow::anyhow!("failed to suspend TUI: {e}")),
+        };
+
+        // Resume even if spawning or suspending failed. A fresh terminal
+        // forces a complete redraw and restores mouse/paste and logging modes.
+        if let Err(e) = crate::tui::resume(terminal, self.state.mouse_enabled) {
+            eprintln!("Failed to restore TUI: {e}");
+            self.should_quit = true;
+            return;
+        }
+        let (message, kind) = match status {
+            Ok(status) if status.success() => {
+                (format!("{label} session ended"), FlashKind::Success)
+            }
+            Ok(status) => (format!("{label} exited with {status}"), FlashKind::Error),
+            Err(e) => (format!("Failed to run {label}: {e:#}"), FlashKind::Error),
+        };
+        self.state.flash_message = Some((message, Instant::now(), kind));
     }
 
     async fn exec_break_the_glass(
@@ -4247,6 +4350,244 @@ mod tests {
 
     fn test_app() -> App {
         test_app_with_capacity(ACTION_CHANNEL_CAPACITY)
+    }
+
+    #[tokio::test]
+    async fn launcher_shortcuts_follow_up_without_self_sending() {
+        let mut app = test_app_with_capacity(1);
+        app.state.config = toml::from_str(
+            r#"
+            [[shortcuts]]
+            key = "J"
+            label = "Cluster shell"
+            launcher = "cluster-switcher {name}"
+            [shortcuts.name_transform]
+            pattern = "^cluster-"
+            replacement = ""
+            "#,
+        )
+        .unwrap();
+        app.action_tx.try_send(Action::None).unwrap();
+        assert!(matches!(
+            app.resolve_tf_action(
+                crossterm::event::KeyCode::Char('J'),
+                Some(&"ns".into()),
+                Some(&"cluster-demo".into()),
+            ),
+            Some(Action::OpenShortcut {
+                shortcut_idx: 0,
+                ..
+            })
+        ));
+        app.dispatch(Action::OpenShortcut {
+            namespace: "ns".into(),
+            name: "cluster-demo".into(),
+            shortcut_idx: 0,
+        })
+        .await;
+        assert!(matches!(
+            app.follow_up_action.take(),
+            Some(Action::ExecLauncher { namespace, name, shortcut_idx: 0 })
+                if namespace == "ns" && name == "cluster-demo"
+        ));
+
+        app.state.input_mode = InputMode::ShortcutsPopup;
+        app.state.shortcuts_popup_resource = Some(("ns".into(), "cluster-demo".into()));
+        app.state.shortcuts_popup_visible = vec![0];
+        app.dispatch(Action::ShortcutsPopupSelect).await;
+        assert_eq!(app.state.input_mode, InputMode::Normal);
+        assert!(app.state.shortcuts_popup_resource.is_none());
+        assert!(matches!(
+            app.follow_up_action,
+            Some(Action::ExecLauncher { .. })
+        ));
+    }
+
+    /// Run the terminal-owning part in an isolated subprocess attached to a
+    /// PTY, so this test neither needs a real terminal nor affects other tests.
+    #[cfg(unix)]
+    #[test]
+    fn launcher_terminal_handoff() {
+        use std::io::{Read, Write};
+        use std::os::fd::{AsRawFd, FromRawFd};
+        use std::os::unix::process::CommandExt;
+
+        const CHILD_ENV: &str = "TERRARIUM_LAUNCHER_PTY_TEST";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let mut app = test_app();
+                let (store, mut writer) = create_tf_store();
+                let tf = serde_json::from_value(serde_json::json!({
+                    "apiVersion": "infra.contrib.fluxcd.io/v1alpha2",
+                    "kind": "Terraform",
+                    "metadata": {"name": "cluster-demo", "namespace": "ns"},
+                    "spec": {"interval": "1m", "sourceRef": {"kind": "GitRepository", "name": "source"}}
+                }))
+                .unwrap();
+                writer.apply_watcher_event(&kube::runtime::watcher::Event::Apply(tf));
+                app.state.tf_store = store;
+                app.state.config = toml::from_str(
+                    r#"
+                    [[shortcuts]]
+                    key = "J"
+                    label = "Interactive test"
+                    launcher = "sh -c 'printf LAUNCHER_READY; read answer; test \"$answer\" = typed'"
+                    [[shortcuts]]
+                    key = "K"
+                    label = "Missing executable"
+                    launcher = "/terrarium-test-missing-command"
+                    [[shortcuts]]
+                    key = "Z"
+                    label = "Nonzero exit"
+                    launcher = "sh -c 'exit 7'"
+                    [[shortcuts]]
+                    key = "I"
+                    label = "Interrupted child"
+                    launcher = "sh -c 'printf INTERRUPT_READY; exec sleep 30'"
+                    "#,
+                )
+                .unwrap();
+                app.state.mouse_enabled = true;
+                let mut terminal = crate::tui::init(true).unwrap();
+                let mut stream = Some(crossterm::event::EventStream::new());
+                for index in 0..4 {
+                    // Arm the reader before suspension: this is the state
+                    // that would otherwise steal the child's keyboard input.
+                    use futures::{FutureExt, StreamExt};
+                    let _ = stream.as_mut().unwrap().next().now_or_never();
+                    app.run_action(
+                        Action::OpenShortcut {
+                            namespace: "ns".into(),
+                            name: "cluster-demo".into(),
+                            shortcut_idx: index,
+                        },
+                        &mut stream,
+                        &mut terminal,
+                    )
+                    .await;
+                    assert!(!app.should_quit);
+                    assert!(stream.is_some());
+                    assert!(crossterm::terminal::is_raw_mode_enabled().unwrap());
+                    let (_, _, kind) = app.state.flash_message.as_ref().unwrap();
+                    assert_eq!(
+                        *kind,
+                        if index == 0 {
+                            crate::state::store::FlashKind::Success
+                        } else {
+                            crate::state::store::FlashKind::Error
+                        }
+                    );
+                }
+                drop(stream);
+                crate::tui::restore().unwrap();
+            });
+            return;
+        }
+
+        let mut master_fd = -1;
+        let mut slave_fd = -1;
+        let mut size = libc::winsize {
+            ws_row: 40,
+            ws_col: 120,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        // SAFETY: output pointers and window size are valid; openpty assigns
+        // two new descriptors, each immediately owned by one File below.
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master_fd,
+                    &mut slave_fd,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    // macOS takes *mut winsize; Linux takes *const winsize.
+                    // A raw mutable pointer coerces to either without passing
+                    // an unnecessary mutable reference on Linux.
+                    &raw mut size,
+                )
+            },
+            0
+        );
+        let mut master = unsafe { std::fs::File::from_raw_fd(master_fd) };
+        let slave = unsafe { std::fs::File::from_raw_fd(slave_fd) };
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "app::tests::launcher_terminal_handoff",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_ENV, "1")
+            .stdin(slave.try_clone().unwrap())
+            .stdout(slave.try_clone().unwrap())
+            .stderr(slave);
+        // SAFETY: only async-signal-safe syscalls run in the child before exec.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0
+                    || libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) < 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = command.spawn().unwrap();
+        // Command retains its Stdio handles; close the parent's slave copies.
+        drop(command);
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let mut output = Vec::new();
+        let mut replied = false;
+        let mut interrupted = false;
+        let mut queries_answered = 0;
+        loop {
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!(
+                    "launcher PTY test timed out: {}",
+                    String::from_utf8_lossy(&output)
+                );
+            }
+            let mut poll_fd = libc::pollfd {
+                fd: master.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: poll_fd is a valid one-element pollfd array.
+            if unsafe { libc::poll(&mut poll_fd, 1, 100) } > 0 {
+                let mut buffer = [0; 4096];
+                match master.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => output.extend_from_slice(&buffer[..count]),
+                    Err(e) if e.raw_os_error() == Some(libc::EIO) => break,
+                    Err(e) => panic!("PTY read failed: {e}"),
+                }
+                // Answer ratatui's cursor queries just as a terminal would.
+                let queries = output.windows(4).filter(|w| *w == b"\x1b[6n").count();
+                for _ in queries_answered..queries {
+                    master.write_all(b"\x1b[1;1R").unwrap();
+                }
+                queries_answered = queries;
+                if !replied && output.windows(14).any(|w| w == b"LAUNCHER_READY") {
+                    master.write_all(b"typed\n").unwrap();
+                    replied = true;
+                }
+                if !interrupted && output.windows(15).any(|w| w == b"INTERRUPT_READY") {
+                    master.write_all(b"\x03").unwrap();
+                    interrupted = true;
+                }
+            }
+        }
+        assert!(
+            child.wait().unwrap().success(),
+            "{}",
+            String::from_utf8_lossy(&output)
+        );
+        assert!(replied, "child never requested keyboard input");
+        assert!(interrupted, "child never requested an interrupt");
     }
 
     fn test_app_with_capacity(capacity: usize) -> App {
