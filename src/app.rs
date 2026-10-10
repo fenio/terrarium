@@ -4361,7 +4361,9 @@ mod tests {
             key = "J"
             label = "Cluster shell"
             launcher = "cluster-switcher {name}"
-            name_strip_prefix = "cluster-"
+            [shortcuts.name_transform]
+            pattern = "^cluster-"
+            replacement = ""
             "#,
         )
         .unwrap();

@@ -82,16 +82,24 @@ pub(crate) fn command(
     if program.is_empty() || program.contains(['{', '}']) {
         bail!("launcher executable must be a non-empty literal, not a placeholder");
     }
-    let name = match shortcut.name_strip_prefix.as_deref() {
-        Some(prefix) => full_name.strip_prefix(prefix).unwrap_or(full_name),
-        None => full_name,
+    let name = match &shortcut.name_transform {
+        Some(transform) => {
+            let pattern =
+                regex::Regex::new(&transform.pattern).context("invalid name_transform pattern")?;
+            if transform.replace_all {
+                pattern.replace_all(full_name, transform.replacement.as_str())
+            } else {
+                pattern.replace(full_name, transform.replacement.as_str())
+            }
+        }
+        None => std::borrow::Cow::Borrowed(full_name),
     };
     if name.is_empty() {
-        bail!("name_strip_prefix would leave an empty resource name");
+        bail!("name_transform would leave an empty resource name");
     }
     let mut command = std::process::Command::new(program);
     for arg in args {
-        command.arg(expand(arg, name, full_name, namespace, context)?);
+        command.arg(expand(arg, &name, full_name, namespace, context)?);
     }
     Ok(command)
 }
@@ -128,7 +136,7 @@ fn expand(
 mod tests {
     use super::*;
 
-    fn shortcut(template: &str, prefix: Option<&str>) -> Shortcut {
+    fn shortcut(template: &str, pattern: Option<&str>) -> Shortcut {
         Shortcut {
             key: 'J',
             label: "Cluster shell".into(),
@@ -136,7 +144,11 @@ mod tests {
             group: None,
             url: None,
             launcher: Some(template.into()),
-            name_strip_prefix: prefix.map(str::to_owned),
+            name_transform: pattern.map(|pattern| crate::config::NameTransform {
+                pattern: pattern.to_owned(),
+                replacement: String::new(),
+                replace_all: false,
+            }),
             when: None,
             children: Vec::new(),
         }
@@ -152,7 +164,7 @@ mod tests {
     #[test]
     fn strips_configured_prefix_once() {
         let cmd = command(
-            &shortcut("cluster-switcher {name} {full_name}", Some("cluster-")),
+            &shortcut("cluster-switcher {name} {full_name}", Some("^cluster-")),
             "ns",
             "cluster-us-ord-tsdb-aclp01-prod",
             "ctx",
@@ -164,7 +176,7 @@ mod tests {
             ["us-ord-tsdb-aclp01-prod", "cluster-us-ord-tsdb-aclp01-prod"]
         );
         let cmd = command(
-            &shortcut("tool {name}", Some("cluster-")),
+            &shortcut("tool {name}", Some("^cluster-")),
             "ns",
             "cluster-cluster-demo",
             "ctx",
@@ -174,10 +186,10 @@ mod tests {
     }
 
     #[test]
-    fn absent_or_nonmatching_prefix_preserves_name() {
-        for prefix in [None, Some("other-")] {
+    fn absent_or_nonmatching_transform_preserves_name() {
+        for pattern in [None, Some("^other-")] {
             let cmd = command(
-                &shortcut("tool {name}", prefix),
+                &shortcut("tool {name}", pattern),
                 "ns",
                 "cluster-demo",
                 "ctx",
@@ -185,6 +197,73 @@ mod tests {
             .unwrap();
             assert_eq!(args(&cmd), ["cluster-demo"]);
         }
+    }
+
+    #[test]
+    fn transforms_suffixes_captures_and_arbitrary_text() {
+        for (pattern, replacement, input, expected) in [
+            ("-terraform$", "", "cluster-demo-terraform", "cluster-demo"),
+            (
+                "^cluster-(.*)-terraform$",
+                "$1",
+                "cluster-demo-terraform",
+                "demo",
+            ),
+            ("^(.*)-(prod|dev)$", "$2-$1", "demo-prod", "prod-demo"),
+            (
+                "^cluster-(?P<cluster>.*)$",
+                "${cluster}",
+                "cluster-demo",
+                "demo",
+            ),
+            ("^(.*)$", "${1}suffix", "demo", "demosuffix"),
+            ("^demo$", "$$demo", "demo", "$demo"),
+            ("^équipe-", "", "équipe-démo", "démo"),
+        ] {
+            let mut s = shortcut("tool {name} {full_name}", Some(pattern));
+            s.name_transform.as_mut().unwrap().replacement = replacement.into();
+            let cmd = command(&s, "ns", input, "ctx").unwrap();
+            assert_eq!(args(&cmd), [expected, input], "pattern: {pattern}");
+        }
+    }
+
+    #[test]
+    fn replaces_first_or_all_matches() {
+        let mut s = shortcut("tool {name}", Some("-"));
+        let transform = s.name_transform.as_mut().unwrap();
+        transform.replacement = "_".into();
+        let cmd = command(&s, "ns", "cluster-demo-prod", "ctx").unwrap();
+        assert_eq!(args(&cmd), ["cluster_demo-prod"]);
+        s.name_transform.as_mut().unwrap().replace_all = true;
+        let cmd = command(&s, "ns", "cluster-demo-prod", "ctx").unwrap();
+        assert_eq!(args(&cmd), ["cluster_demo_prod"]);
+    }
+
+    #[test]
+    fn transformed_values_remain_literal_arguments() {
+        let mut s = shortcut("tool {name} {namespace}", Some("^cluster-(.*)$"));
+        s.name_transform.as_mut().unwrap().replacement = "$1 space; $$(echo nope) {context}".into();
+        let cmd = command(&s, "ns", "cluster-demo", "ctx").unwrap();
+        assert_eq!(args(&cmd), ["demo space; $(echo nope) {context}", "ns"]);
+    }
+
+    #[test]
+    fn rejects_invalid_patterns_and_empty_results() {
+        let invalid =
+            command(&shortcut("tool {name}", Some("[")), "ns", "demo", "ctx").unwrap_err();
+        assert!(
+            invalid
+                .to_string()
+                .contains("invalid name_transform pattern")
+        );
+        let empty = command(
+            &shortcut("tool {name}", Some("^demo$")),
+            "ns",
+            "demo",
+            "ctx",
+        )
+        .unwrap_err();
+        assert!(empty.to_string().contains("empty resource name"));
     }
 
     #[test]
@@ -235,17 +314,26 @@ mod tests {
             key = "J"
             label = "Cluster shell"
             launcher = "cluster-switcher {name}"
-            name_strip_prefix = "cluster-"
+            [shortcuts.name_transform]
+            pattern = "^cluster-"
+            replacement = ""
             [shortcuts.when]
             name = "^cluster-"
             "#,
         )
         .unwrap();
         assert_eq!(
-            config.shortcuts[0].name_strip_prefix.as_deref(),
-            Some("cluster-")
+            config.shortcuts[0].name_transform.as_ref().unwrap().pattern,
+            "^cluster-"
         );
         assert!(config.shortcuts[0].url.is_none());
+        assert!(
+            !config.shortcuts[0]
+                .name_transform
+                .as_ref()
+                .unwrap()
+                .replace_all
+        );
     }
 
     #[test]
@@ -263,7 +351,7 @@ mod tests {
         let mut cmd = command(
             &shortcut(
                 r#"sh -c 'printf "%s\n" "$1" "$2"' -- {context} {name}"#,
-                Some("cluster-"),
+                Some("^cluster-"),
             ),
             "ns",
             "cluster-demo",

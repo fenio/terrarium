@@ -15,7 +15,7 @@
 #                           popup, in config order
 #   url         (one of url/launcher for leaf entries) URL template, see below
 #   launcher    (optional) interactive command; cannot also define url/children
-#   name_strip_prefix (optional) literal prefix removed once from launcher {name}
+#   name_transform (optional table) regex pattern/replacement for launcher {name}
 #   children    (optional)  nested submenu — accepted but the popup
 #                           doesn't drill into them yet (planned)
 #
@@ -57,7 +57,10 @@ label = "Cluster shell"
 description = "connect with cluster-switcher"
 group = "Interactive"
 launcher = "cluster-switcher {name}"
-name_strip_prefix = "cluster-"
+
+[shortcuts.name_transform]
+pattern = "^cluster-"
+replacement = ""
 
 [shortcuts.when]
 name = "^cluster-"

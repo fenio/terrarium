@@ -396,7 +396,10 @@ key = "J"
 label = "Cluster shell"
 description = "connect with cluster-switcher"
 launcher = "cluster-switcher {name}"
-name_strip_prefix = "cluster-"
+
+[shortcuts.name_transform]
+pattern = "^cluster-"
+replacement = ""
 
 [shortcuts.when]
 name = "^cluster-"
@@ -406,10 +409,32 @@ Select `cluster-us-ord-tsdb-aclp01-prod` and press `J` (or choose the shortcut
 from `S`) to run `cluster-switcher us-ord-tsdb-aclp01-prod`.
 
 Launcher placeholders are `{name}`, `{full_name}`, `{namespace}`, and `{context}`.
-`name_strip_prefix` is an optional literal prefix removed **once** from `{name}`.
-An absent/nonmatching prefix leaves the name unchanged; `{full_name}` always
-keeps the original name. An empty result is rejected. `when.name` matches the
-original name, not the stripped one. URL placeholders are unaffected.
+`name_transform` is an optional regex substitution for `{name}`. It can remove
+prefixes/suffixes, extract parts, rearrange capture groups, or replace text.
+The first match is replaced by default; set `replace_all = true` to replace
+every match. An absent/nonmatching transformation leaves the name unchanged.
+`{full_name}` always keeps the original name. Invalid patterns and empty results
+are rejected before launching. `when.name` matches the original name, not the
+transformed one. URL placeholders are unaffected.
+
+| Purpose | `pattern` | `replacement` |
+|---------|-----------|---------------|
+| Strip prefix | `^cluster-` | `""` |
+| Strip suffix | `-terraform$` | `""` |
+| Extract middle | `^cluster-(.*)-terraform$` | `"$1"` |
+| Rearrange parts | `^(.*)-(prod\|dev)$` | `"$2-$1"` |
+| Replace separators | `-` | `"_"` (with `replace_all = true`) |
+
+Patterns use Rust's `regex` syntax (no look-around or backreferences in the
+pattern). Replacements support numbered captures such as `$1`, named captures
+such as `${cluster}`, and `$$` for a literal dollar sign. Use `${1}` before
+literal letters to disambiguate the capture name. For example:
+
+```toml
+[shortcuts.name_transform]
+pattern = '^cluster-(?P<cluster>.*)-terraform$'
+replacement = '${cluster}'
+```
 
 Arguments are split using shell-style quoting **before** substitution, so values
 containing spaces or shell metacharacters stay within their original argument.

@@ -181,10 +181,10 @@ pub struct Shortcut {
     /// {namespace}, and {context}. Mutually exclusive with `url`.
     #[serde(default)]
     pub launcher: Option<String>,
-    /// Optional literal prefix removed once from {name} for a launcher.
+    /// Optional regex transformation applied to {name} for a launcher.
     /// {full_name} always retains the original resource name.
     #[serde(default)]
-    pub name_strip_prefix: Option<String>,
+    pub name_transform: Option<NameTransform>,
     /// Optional applicability filter. Multiple shortcuts can share a
     /// `key`; on activation terrarium picks the first one whose `when`
     /// matches the selected resource. Entries without a `when` always
@@ -197,6 +197,18 @@ pub struct Shortcut {
     /// itself have children for deeper menus.
     #[serde(default)]
     pub children: Vec<Shortcut>,
+}
+
+/// Regex substitution for a launcher name. The first match is replaced by
+/// default; a nonmatching pattern leaves the original name unchanged.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NameTransform {
+    pub pattern: String,
+    /// Rust regex replacement syntax: $1, ${name}, and $$ for a literal $.
+    pub replacement: String,
+    #[serde(default)]
+    pub replace_all: bool,
 }
 
 /// Resource-applicability filter for a shortcut. Field values are
