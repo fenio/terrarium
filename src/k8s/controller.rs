@@ -150,14 +150,16 @@ async fn fetch_controller_info(client: &kube::Client, ns: &str) -> ControllerInf
 }
 
 fn populate_from_deploy(info: &mut ControllerInfo, deploy: &Deployment) {
-    let spec = deploy.spec.as_ref();
-    info.replicas_desired = spec.and_then(|s| s.replicas).unwrap_or(1);
+    let spec = &deploy.spec;
+    info.replicas_desired = spec.replicas.unwrap_or(1);
 
     let status = deploy.status.as_ref();
     info.replicas_ready = status.and_then(|s| s.ready_replicas).unwrap_or(0);
 
     let container = spec
-        .and_then(|s| s.template.spec.as_ref())
+        .template
+        .spec
+        .as_ref()
         .and_then(|ps| ps.containers.first());
 
     info.image = container.and_then(|c| c.image.clone()).unwrap_or_default();
