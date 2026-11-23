@@ -399,7 +399,7 @@ fn render_backlog(f: &mut Frame, area: Rect, state: &mut AppState, all_tfs: &[Ar
         .filter(|(_, (w, f, _))| *w + *f > 0)
         .map(|(ns, (w, f, t))| (ns, w, f, t))
         .collect();
-    backlog_entries.sort_by(|a, b| (b.1 + b.2).cmp(&(a.1 + a.2))); // most stale first
+    backlog_entries.sort_by_key(|b| std::cmp::Reverse(b.1 + b.2)); // most stale first
     state.backlog_namespaces = backlog_entries;
     let backlog_identities: Vec<SelectionIdentity> = state
         .backlog_namespaces

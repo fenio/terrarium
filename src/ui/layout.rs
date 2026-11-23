@@ -649,7 +649,7 @@ fn gecko_frame(ticks: usize) -> [&'static str; 4] {
         r"   (_,-==( ______  .'",
         r"        '/,      7(,",
     ];
-    if (ticks / POSE_TICKS) % 2 == 0 {
+    if (ticks / POSE_TICKS).is_multiple_of(2) {
         FRAME_A
     } else {
         FRAME_B
