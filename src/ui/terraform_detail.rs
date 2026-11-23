@@ -34,7 +34,7 @@ pub fn render(f: &mut Frame, area: Rect, tf: &Terraform, ctx: &RenderCtx<'_>) {
     let spec_status_height = 7_u16;
     let conditions_height = 7_u16;
 
-    if ctx.runner_logs.is_some() {
+    if let Some(runner_logs) = ctx.runner_logs {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -50,7 +50,7 @@ pub fn render(f: &mut Frame, area: Rect, tf: &Terraform, ctx: &RenderCtx<'_>) {
         let conditions = tf.status.as_ref().and_then(|s| s.conditions.as_ref());
         detail::render_conditions(f, chunks[2], conditions);
         let runner_pod = format!("{name}-tf-runner");
-        render_runner_logs(f, chunks[3], ctx.runner_logs.unwrap(), &runner_pod);
+        render_runner_logs(f, chunks[3], runner_logs, &runner_pod);
     } else {
         let chunks = Layout::default()
             .direction(Direction::Vertical)

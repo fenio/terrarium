@@ -89,6 +89,7 @@ pub async fn run_tf_watcher(
                     log_tf_condition_snapshot(w, obj);
                 }
 
+                #[allow(clippy::collapsible_match)]
                 match store_notification(&event) {
                     Some(StoreNotification::Updated) => {
                         update_wake.send_update(&tx, Action::TerraformStoreUpdated);
@@ -167,6 +168,7 @@ pub async fn run_ks_watcher(
 
     while let Some(item) = stream.next().await {
         match item {
+            #[allow(clippy::collapsible_match)]
             Ok(event) => match store_notification(&event) {
                 Some(StoreNotification::Updated) => {
                     update_wake.send_update(&tx, Action::KustomizationStoreUpdated);
@@ -208,6 +210,7 @@ pub async fn run_gitrepo_watcher(
 
     while let Some(item) = stream.next().await {
         match item {
+            #[allow(clippy::collapsible_match)]
             Ok(event) => match store_notification(&event) {
                 Some(StoreNotification::Updated) => {
                     update_wake.send_update(&tx, Action::GitRepoStoreUpdated);

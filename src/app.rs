@@ -1694,17 +1694,17 @@ impl App {
                 }
                 self.select_list_index(Some(0));
             }
-            Action::ToggleDriftingOnly => {
-                if self.state.active_tab == TabKind::Terraform {
-                    self.state.show_drifting_only = !self.state.show_drifting_only;
-                    if self.state.show_drifting_only {
-                        self.state.show_failures_only = false;
-                        self.state.show_waiting_only = false;
-                        self.state.show_progressing_only = false;
-                        self.state.show_deleting_only = false;
-                    }
-                    self.select_list_index(Some(0));
+            Action::ToggleDriftingOnly
+                if self.state.active_tab == TabKind::Terraform =>
+            {
+                self.state.show_drifting_only = !self.state.show_drifting_only;
+                if self.state.show_drifting_only {
+                    self.state.show_failures_only = false;
+                    self.state.show_waiting_only = false;
+                    self.state.show_progressing_only = false;
+                    self.state.show_deleting_only = false;
                 }
+                self.select_list_index(Some(0));
             }
             Action::ToggleWaitingOnly => {
                 self.state.show_waiting_only = !self.state.show_waiting_only;
@@ -2044,10 +2044,10 @@ impl App {
             Action::SearchPush(c) => {
                 self.state.search_query.push(c);
             }
-            Action::SearchPaste(text) => {
-                if self.state.input_mode == InputMode::Search {
-                    self.state.search_query.push_str(&text);
-                }
+            Action::SearchPaste(text)
+                if self.state.input_mode == InputMode::Search =>
+            {
+                self.state.search_query.push_str(&text);
             }
             Action::SearchPop => {
                 self.state.search_query.pop();
@@ -2250,20 +2250,20 @@ impl App {
                 self.state.viewer_search_matches.clear();
                 self.state.viewer_search_index = 0;
             }
-            Action::ViewerSearchNext => {
-                if !self.state.viewer_search_matches.is_empty() {
-                    self.state.viewer_search_index = (self.state.viewer_search_index + 1)
-                        % self.state.viewer_search_matches.len();
-                    self.jump_to_viewer_search_match();
-                }
+            Action::ViewerSearchNext
+                if !self.state.viewer_search_matches.is_empty() =>
+            {
+                self.state.viewer_search_index = (self.state.viewer_search_index + 1)
+                    % self.state.viewer_search_matches.len();
+                self.jump_to_viewer_search_match();
             }
-            Action::ViewerSearchPrev => {
-                if !self.state.viewer_search_matches.is_empty() {
-                    let len = self.state.viewer_search_matches.len();
-                    self.state.viewer_search_index =
-                        (self.state.viewer_search_index + len - 1) % len;
-                    self.jump_to_viewer_search_match();
-                }
+            Action::ViewerSearchPrev
+                if !self.state.viewer_search_matches.is_empty() =>
+            {
+                let len = self.state.viewer_search_matches.len();
+                self.state.viewer_search_index =
+                    (self.state.viewer_search_index + len - 1) % len;
+                self.jump_to_viewer_search_match();
             }
 
             // Bulk selection
@@ -2907,37 +2907,35 @@ impl App {
             Action::DismissError => {
                 self.state.connection_error = None;
             }
-            Action::AuthExpired => {
-                // Idempotent: the first failing task tears things down; later
-                // AuthExpired sends from sibling tasks are ignored.
-                if !self.state.needs_reauth {
-                    self.state.needs_reauth = true;
-                    self.state.invalidate_connection();
-                    if let Some(handle) = self.state.log_stream_handle.take() {
-                        handle.abort();
-                    }
-                    if let Some(handle) = self.state.metrics_task.take() {
-                        handle.abort();
-                    }
-                    self.state.metrics_enabled = false;
-                    self.state.metrics_snapshot = None;
-                    self.state.metrics_prev = crate::k8s::metrics::PrevCounters::default();
-                    self.state.metrics_last_error = None;
-                    self.state.cancel_log_stream();
-                    // Stop every background task so kube-rs stops re-running
-                    // the OIDC plugin (which keeps opening browser tabs).
-                    if let Ok(mut tasks) = self.conn_tasks.lock() {
-                        for h in tasks.drain(..) {
-                            h.abort();
-                        }
-                    }
-                    self.client = None;
-                    self.state.connection_error = Some(
-                        "Cluster authentication expired — no browser logins will be opened. \
-                         Press Ctrl-X to re-authenticate."
-                            .to_string(),
-                    );
+            // Idempotent: the first failing task tears things down; later
+            // AuthExpired sends from sibling tasks are ignored.
+            Action::AuthExpired if !self.state.needs_reauth => {
+                self.state.needs_reauth = true;
+                self.state.invalidate_connection();
+                if let Some(handle) = self.state.log_stream_handle.take() {
+                    handle.abort();
                 }
+                if let Some(handle) = self.state.metrics_task.take() {
+                    handle.abort();
+                }
+                self.state.metrics_enabled = false;
+                self.state.metrics_snapshot = None;
+                self.state.metrics_prev = crate::k8s::metrics::PrevCounters::default();
+                self.state.metrics_last_error = None;
+                self.state.cancel_log_stream();
+                // Stop every background task so kube-rs stops re-running
+                // the OIDC plugin (which keeps opening browser tabs).
+                if let Ok(mut tasks) = self.conn_tasks.lock() {
+                    for h in tasks.drain(..) {
+                        h.abort();
+                    }
+                }
+                self.client = None;
+                self.state.connection_error = Some(
+                    "Cluster authentication expired — no browser logins will be opened. \
+                     Press Ctrl-X to re-authenticate."
+                        .to_string(),
+                );
             }
 
             // CRD missing indicators
