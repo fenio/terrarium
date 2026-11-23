@@ -2,7 +2,7 @@
 name = "terrarium"
 version = "0.3.7"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.95"
 default-run = "terrarium"
 description = "A terminal dashboard for managing tofu-controller Terraform and Flux Kustomization resources in Kubernetes"
 license = "GPL-3.0-or-later"
