@@ -1694,9 +1694,7 @@ impl App {
                 }
                 self.select_list_index(Some(0));
             }
-            Action::ToggleDriftingOnly
-                if self.state.active_tab == TabKind::Terraform =>
-            {
+            Action::ToggleDriftingOnly if self.state.active_tab == TabKind::Terraform => {
                 self.state.show_drifting_only = !self.state.show_drifting_only;
                 if self.state.show_drifting_only {
                     self.state.show_failures_only = false;
@@ -2044,9 +2042,7 @@ impl App {
             Action::SearchPush(c) => {
                 self.state.search_query.push(c);
             }
-            Action::SearchPaste(text)
-                if self.state.input_mode == InputMode::Search =>
-            {
+            Action::SearchPaste(text) if self.state.input_mode == InputMode::Search => {
                 self.state.search_query.push_str(&text);
             }
             Action::SearchPop => {
@@ -2250,19 +2246,14 @@ impl App {
                 self.state.viewer_search_matches.clear();
                 self.state.viewer_search_index = 0;
             }
-            Action::ViewerSearchNext
-                if !self.state.viewer_search_matches.is_empty() =>
-            {
-                self.state.viewer_search_index = (self.state.viewer_search_index + 1)
-                    % self.state.viewer_search_matches.len();
+            Action::ViewerSearchNext if !self.state.viewer_search_matches.is_empty() => {
+                self.state.viewer_search_index =
+                    (self.state.viewer_search_index + 1) % self.state.viewer_search_matches.len();
                 self.jump_to_viewer_search_match();
             }
-            Action::ViewerSearchPrev
-                if !self.state.viewer_search_matches.is_empty() =>
-            {
+            Action::ViewerSearchPrev if !self.state.viewer_search_matches.is_empty() => {
                 let len = self.state.viewer_search_matches.len();
-                self.state.viewer_search_index =
-                    (self.state.viewer_search_index + len - 1) % len;
+                self.state.viewer_search_index = (self.state.viewer_search_index + len - 1) % len;
                 self.jump_to_viewer_search_match();
             }
 
